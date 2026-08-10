@@ -1,0 +1,92 @@
+{
+  "currency": "CNY",
+  "price_basis": "raw",
+  "next_review_at": "2026-08-31",
+  "earnings": {
+    "eps": {
+      "bear": "1.14",
+      "base": "1.43",
+      "bull": "1.51"
+    }
+  },
+  "valuation": {
+    "pe": {
+      "optimistic": "29.5",
+      "neutral": "26.5",
+      "pessimistic": "24.0"
+    },
+    "sample_window": {
+      "from": "2023-08-10",
+      "to": "2026-08-10",
+      "note": "PE 刻度为 3 年样本（设计 §3.2 强制标注），引用更早历史视为样本外"
+    },
+    "panic_floor_scales": [
+      {"date": "2023-10-20", "pe_ttm": 26.8},
+      {"date": "2024-01-09", "pe_ttm": 26.43},
+      {"date": "2024-07-05", "pe_ttm": 25.75},
+      {"date": "2024-09-23", "pe_ttm": 27.71},
+      {"date": "2026-02-02", "pe_ttm": 27.17}
+    ],
+    "regime": "缓慢降档尾段：2023-08 的 33.86 为旧体系余波，此后 5 次探底稳定 26–28；2026-06-22 日内 31.60 折算 PE≈24.1 刺穿底部带下沿（周线未破，样本外证据）；底部带 24–28、中枢 26，悲观 PE 取最新事实刻度 24"
+  },
+  "price_tiers": {
+    "tiers": [
+      {"tier": 1, "zone_low": "36.40", "zone_high": "37.90"},
+      {"tier": 2, "zone_low": "32.50", "zone_high": "34.20"},
+      {"tier": 3, "zone_low": "27.40", "zone_high": "29.50"}
+    ]
+  },
+  "invalidation": {
+    "line": "27.40",
+    "note": "收盘有效跌破=极悲情景被击穿（连续 2 日收盘低于线 1%），冻结仓位重做基本面判断，禁止继续摊低成本"
+  },
+  "swing_box": {
+    "box_low": "31.60",
+    "box_high": "39.00",
+    "buy_zone_low": "31.60",
+    "buy_zone_high": "33.50",
+    "sell_zone_low": "37.00",
+    "sell_zone_high": "39.00",
+    "box_invalidation": "31.60"
+  },
+  "right_side_trigger": {
+    "trigger_level": "39.00",
+    "stop_level": "37.00"
+  },
+  "input_snapshot": {
+    "created_via": "fred-valuation-card-skill 交互生成（第三张真实卡）",
+    "demo": false,
+    "data_cutoff": "2026-08-10",
+    "eps_scenario_detail": {
+      "base_neutral": {"eps": "1.43", "assumption": "裂口收敛（0.91pp），按实际趋势 +9%（TTM 1.3094 × 1.09），与券商 FY1 78.74 亿基本一致"},
+      "bear_mid": {"eps": "1.29", "assumption": "中性 -10%（增速归零；用于第二档锚）"},
+      "worst": {"eps": "1.14", "assumption": "中性 -20%（回到 2024 年盈利水平，餐饮渠道需求恶化；用于第三档锚与证伪线）"},
+      "bull_recovery": {"eps": "1.51", "assumption": "提速至 +15%"}
+    },
+    "matrix_source": "build_schedule.py --eps 1.43,1.29,1.14 --pe 29.5,26.5,24.0 --price 36.78 --winrate 60,70,75",
+    "earnings_basis": {
+      "ttm_net_profit_yi": 72.8,
+      "ttm_eps": 1.3094,
+      "latest_quarter": "2026Q1 归母 24.44 亿，同比 +10.96%（连续稳定 +10~11%）",
+      "forecast_gap": "FY1 一致预期 78.74 亿（+11.87%）vs 2026Q1 实际 +10.96%，裂口 0.91pp 已收敛，中性情景参考一致预期"
+    },
+    "win_rate_estimate": {
+      "tier_ranges": {"1": "60%-70%", "2": "70%-80%", "3": "75%-85%"},
+      "kelly_caps": {"1": "0%", "2": "12.4%", "3": "18.3%"},
+      "note": "现价 36.78 落在第一档价区内（≈中性EPS×PE 25.7，已定价坏消息）基准 55-60%；盈利稳定 +5、裂口收敛 0、体系 0~-5（2026-06 刺穿一次）、质地 +5；第一档 Kelly=0：保守修复目标（p50 29.5）下赔率 0.52 非正期望，T1 建仓需接受 p75 修复假设并按固定比例下限小仓，主力仓位等第二、三档+衰竭信号≥2 项"
+    },
+    "exhaustion_params": {
+      "anchor": "底稿锚 2026-02-02 前低 35.28 已被 2026-06-22 的 31.60 击穿（周线收盘未破，系统锚未切换）；人工以 31.60 为实际前低参照",
+      "vol_base_shares_adj": 81866675,
+      "panic_volume_threshold_adj": 163733350,
+      "dryup_volume_range_adj": [32746670, 49120005],
+      "front_low_raw": 35.28,
+      "front_low_actual_raw": 31.6,
+      "active_signals_now": [],
+      "note": "当前完成周 2026-08-07 活跃信号 0 项，第二、三档未释放"
+    },
+    "swing_box_notes": "箱体 31.60-39.00（2026-06-22 低点以来底部结构，8-03 反弹高点 39.00）；现价 36.78 接近卖出区下沿 37.00，箱体当前不是开仓点；独立记账",
+    "right_side_notes": "触发位 39.00=箱体上沿/8-03 高点，止损 37.00=卖出区下沿；与左侧仓/波段仓分开记账，触发前不动",
+    "review_triggers": "2026 中报披露（next_review_at 2026-08-31）：增速是否维持 +10%（跌破 +5% 降档）、周线锚是否切换至 2026-06 低点、裂口是否维持收敛；毛利率异常下滑/渠道库存恶化/现金流背离净利立即复核"
+  }
+}
