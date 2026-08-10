@@ -147,3 +147,38 @@
   - 附带：runs 页两个表格补详情列缺失的表头。
   - 验证：262 项 pytest 全绿（161 + UI 101）；node --check 4 个改动 JS 通过；重启服务后实测 9 页面全 200、/api/reports?report_run_id=1 返回正确记录、首页无筛选条/列表页有、对比 API 逗号参数正常。遗留未修（打磨级）：执行记录买卖颜色不一致、首页"今日"标签实为最新交易日、信号页 timeline 固定 200 条窗口、默认日期 90 日历日 vs 设计 90 交易日、pe_status 徽章口径不一致、JS 无测试。
   - gitignore 增加 .opencode/（工具状态）；docs/tasks/（UI 任务分解文档）随 UI 一并入库。
+
+## 2026-08-10（晚，盘后首个正式 daily）
+
+- **EOD 发布延迟**：stock_finance_data 当日日线约 20:00 后才发布（15:55–17:00 每 2 分钟探测 30 次均无；close_summary 盘后 EMPTY；指数 get_price EMPTY 改走 yahoo 000300.SS 且当日 bar 已有）。20:07 单次探测成功，重采 6 只 none+forward（窗口 2026-08-01..08-10）。run_id=run_20260810_1555，_meta.json 已记录。
+- **发现管线缺陷（因子检查误报，已绕过未修代码）**：daily 先入库新 bar（price_adj_factor 占位 1.0）再做 check_factor_change，占位行进入重叠窗口比对 → 有历史分红（内部因子≠1.0）的 5 只每日必误报"平台段位移"触发全量重建，而窗口 forward 文件（6 行）不含 origin 日 → apply_adjustment 抛 ValueError 整股回滚（600029.SH 因子恒 1.0 不受影响）。且若绕过误报判"一致"，新 bar 会滞留占位因子 1.0 与邻日脱节——"新 bar 因子赋值"在一致路径上无实现，属设计缺口（§3.3 待补：一致路径应给新 bar 赋当前平台段因子；变化路径应要求全量 forward 而非窗口文件）。
+- **本次处置（不改代码）**：窗口 forward 文件（含 08-10）+ 新采 segA（origin→08-04）按日期去重合并为 `{ticker}_forward_3y.csv`（字符串级拼接，无数值改动；>3 年上限 1095 天故分段，skill 已有分段约定）。daily 取 sorted[-1] 用 3y 文件 → 误报触发全量重建（version_id 7–11），因子/周线/指标/信号全部正确重算，6 只全 ok。报告 revision=2（首跑 revision=1 为 5 只 failed 的降级版，§9.5 重跑行为）。注意：该误报意味着分红股每个交易日都会全量重建一次（结果正确、版本号日增），是否修代码待人工决定。
+- **结果**：daily_2026-08-10 汇总 ok=6。603605.SH 报告 complete（卡片 603605SH_120ca661 今日生效），其余 5 只 degraded(no_active_card) 属预期。沪深300 入 index_bars（yahoo，08-10 收 4702.02）。日报 reports/daily/2026-08-10.md：P4 一条（珀莱雅距 T2 上沿 57.60 还差 2.5%），无 P1/P2/P3。
+
+## 2026-08-10（UI 返工）
+
+- **起因**：用户反馈第一版 UI "交互根本用不起来"——6 只股票的池子却要搜索/下拉选股；"信号时间轴"直接倒 signal_facts 原始表（state=holding_active 等机器字段）。拍板方向：单股页为核心，其余页面合并为一个"数据"入口。
+- **导航重构（navbar.html + app.py）**：导航 = watchlist 全部股票页签（中文名，`request.path` 判定当前高亮，移动端横向滚动）+ 最右"数据"入口；股票列表由 context processor 服务端注入（`nav_stocks`，复用 queries.get_watchlist）。旧导航项（首页/股票列表/指标分析/信号时间轴/多股对比/卡片列表/运行状态）全部删除。
+- **首页 `/` = 股票启动台**（重写 index.html，服务端渲染，删除 index.js）：6 张大卡片 = 名称/symbol + 最新收盘（不复权，千分位）+ 涨跌幅（红涨绿跌）+ 档位/箱体位置一句话（有卡"T2 价区内"/"档外·距 T2 上沿 2.5% · 箱体内"，无卡"无卡片"）+ 最近 5 日触发信号数；最新 pipeline_runs 有 failed/degraded 时顶部警示 banner。新增 `queries.list_run_alerts` 与模板过滤器 `fmt`（千分位 + 缺失"—"）；`list_stocks` 新增 `box_state` 字段（`compute_box_state`，与 daily_watch.box_position_state 同口径纯函数）。
+- **`/stocks` 302 到 `/`**；stocks.html / stocks.js / partials/filter_bar.html / index.js 删除，base.html 的 show_filter_bar 条件 include 一并移除。
+- **单股页重设计（stock.html + stock.js）**：首屏 = 头部（名称/卡片链接）+ 8 个关键数字卡片（现价/涨跌幅/PE(TTM) 带 pe_status 角标/当前档位/箱体位置/右侧状态/吸筹形态/活跃衰竭信号 n/5，全部由新 API 填充，null 显示"—"）+ 主图 + 副图（默认成交量 + MACD，空槽位隐藏、下拉可加）+ 信号摘要 + 事件流 + 卡片与执行（位置下移）。已修口径纪律保留：卡片/执行标记仅非 fully_adjusted 叠加、setOption notMerge=true、指标折回逻辑不动。默认改为 MA5/20/60、execMarkers=true（URL `exec=0` 可关）。执行配色统一 A 股惯例买红卖绿（图表散点原卖红买绿已纠正，表格改中文买入/卖出）。
+- **新 API `GET /api/stocks/{symbol}/overview`**（queries.get_stock_overview，参数 event_limit/event_offset）：关键数字 + 信号中文摘要（11 类信号固定顺序：档位临近/档位触发/证伪线/箱体位置/右侧确认/吸筹形态 + 五项衰竭，中文名与状态中文映射，detail 从 details_json 提取关键数字——干涸型"当前周量 vs 阈值"、档位"距边界 %"、证伪线"连续跌破 n/2 日"、吸筹"破位日/箱体/试盘次数"；无卡股票省略卡片相关项，无数据给占位不编造）+ 事件流（triggered=1 或 state 转换的行，时间倒序，每条中文一句话 + fact_id 供详情弹窗）。衰竭计数 = 同 anchor 最近完成周 state=active 数/5。compute_tier_state 档外分支补 nearest_tier/nearest_side。
+- **`/data` 数据入口页**：信号查询/指标查看/多股对比/卡片版本/运行状态 5 个入口块（原页面保留可用，仅退出导航）。
+- **测试**：test_ui_layout.py 导航断言重写（股票页签 + /data + 旧标签消失）；test_ui_api.py 中 /stocks 改 302 断言、路由清单换 /data、JS 清单删 index/stocks、首页断言改启动台元素；新增 7 项（data 页、overview 有卡/无卡/事件流/分页/404、导航高亮）。**`uv run pytest -q` 269 项全绿**（262 + 7）。
+- **实测**（真实库临时端口）：/ /stock/603605.SH /stock/601318.SH /data /signals /indicators /compare /cards /runs 均 200，/stocks 302→/，旧导航标签消失；603605 overview 返回"档外·距 T2 上沿 2.5%/箱体内/活跃衰竭 1/5"与卡片一致；601318 卡片相关字段全 null。
+- **遗留**：① 事件流文本对 details_json 结构各异的信号做了常见键提取，未见过的结构回退"转为{状态中文}"（不编造）；② ma_comparison 状态映射 above/below/mixed→均线上方/下方/交叉为新增中文文案；③ 单股页 JS 无自动化测试（沿用既有惯例）；④ right_side 无数据行时显示"—"（2026-08-10 跑批后 603605 无 right_side 行，符合不猜原则）；⑤ 601318 等股 accumulation 无行同样显示"—"。
+
+## 2026-08-10（UI 三联图定稿落地）
+
+- **起因**：用户评审并定稿交互原型（`docs/prototype/stock_page_template.html` + `generate.py` + 样例 `stock_603605.html`），要求按原型 1:1 改造真实单股页 `/stock/<symbol>`。
+- **图表改为单 ECharts 实例三 grid 联动**（stock.js 整体重写）：grid0 蜡烛图（红涨绿跌 [open,close,low,high]）+ MA5/20/60（legend 可开关）；grid1 成交量柱（对前收涨红跌绿，÷10000 万单位）+ 均量20 黄线；grid2 MACD（DIF/DEA + 柱正红负绿）。`axisPointer.link xAxisIndex:'all'`；dataZoom inside+slider 均绑 [0,1,2]；y 轴右侧、boundaryGap、仅底部 grid 显日期；自定义 tooltip（蜡烛开/收/低/高、量带"万"）。卡片标记改原型样式：三档 yAxis 横带 markArea（极浅底色 + insideLeft 9px 小标签）+ 证伪/箱体上下沿/右侧触发细 markLine（insideStartTop 小字）；执行买红卖绿带"买/卖+价格"小字；信号 pin 无文字悬停见名（SIGNAL_NAMES 中文映射）。口径纪律保留：fully_adjusted 模式不叠加卡片/执行/信号标记；日/周切换保留（周线同结构）；setOption notMerge=true。加载全部历史（start=2000-01-01），dataZoom 初始定位最近约 120 根。
+- **控制区精简**：仅口径（不复权/完全复权）+ 周期（日线/周线）两个切换 + 一行口径说明；删除 chartType/panel 选择器/日期输入/marker 复选框/quick 按钮（MA 开关交给 legend）；URL 同步只剩 granularity/price。
+- **导航改股票下拉框**（navbar.html）：select 列全部 watchlist（按 market、symbol 排序，app.py context processor 内排序），当前股票 selected，onchange 跳 /stock/<symbol>；"数据"入口保留。
+- **首屏 8 张数字卡片改原型结构**（label/value/sub 三行，CSS 入 app.css：.num-card/.up/.down）：PE 副行 pe_status 中文映射 JS 实现（ok 开头→"正常"、含 degraded_available_at→追加"·披露日降级"、含 degraded→"降级"、其他非空→"数据缺失"）；档位 "Tn 内"+价区 / "档外"+"距 Tn 上/下沿 x.x%"；箱体副行箱体区间；右侧副行"触发 x"；衰竭"n/5 活跃"+副行"完成周 <date>"；现价副行数据截止日。
+- **事件流面板 → 资讯流面板**：渲染空态占位"资讯源二期接入，标签由 LLM 打标后存档"（真实资讯二期接入，不写死示例数据）；overview API 的 events 字段保留不动。
+- **排期卡面板扩充**（数据源 /api/cards/<card_version_id>）：三档价区表 + "反推口径"列（T3 用悲观 EPS、其他档中性 EPS，价区÷EPS 得隐含 PE，纯算术）；情景假设（EPS/PE 三情景、恐慌底刻度序列、样本窗口、体系判断 regime）；交易框架（证伪线+note、波段箱体买/卖区/失效线、右侧触发/止损）；保留"查看完整 JSON"。
+- **信号现状面板保持现状**（overview 摘要 + 详情弹窗不动）。
+- **顺带修复**：`GET /api/stocks/{s}/indicators` 不传 fields 时 500——`fields_arg` 缺省返回 `[]`，`get_stock_indicators` 只判 `is None`，拼出 `SELECT date, FROM` 语法错误。改为 `if not fields`（空列表等同 None 返回全部列），与"不填 fields 即返回全部列"语义一致（旧 stock.js 同样路径，该 bug 自第一期存在）。
+- **测试**：test_ui_layout.py 导航断言改下拉框（option selected）；新增 test_page_stock_prototype_elements（新结构 ID 全在 + 已删控件 ID 全不在 + 资讯流空态文案）。**`uv run pytest -q` 270 项全绿**；`node --check stock.js` 通过。
+- **实测**（真实库 test client + 临时端口）：/ /stock/603605.SH /stock/601318.SH /data 均 200；下拉框 selected 正确；指标 API 全历史 727 行含 ma5/20/60、vol_mean20、dif/dea/macd_hist（周线 154 行同）；信号 pins 数据 11 条 triggered；卡片详情 eps/regime/scales 齐备。
+- **与原型出入**：① 信号 pin 数据来自 /api/stocks/{s}/signals（limit=2000 覆盖全历史），按 (observed_on, signal) 去重，等价原型 DISTINCT 语义；② 执行记录表保留既有五列（时间/动作/档位/价格/数量），未改原型四列；③ 资讯流为纯空态占位（原型为示例数据，按要求不写死）；④ grid/高度/tooltip 文案照抄原型。
