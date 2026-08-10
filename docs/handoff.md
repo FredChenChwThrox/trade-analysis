@@ -1,7 +1,7 @@
 # 项目交接文档（给其他智能体）
 
 > 一句话：个人股票监测系统。Python/SQLite 确定性管线（采集 → 复权 → 周线 → 指标 → 信号 → 报告），LLM 只在排期卡生成等少数环节消费结构化底稿，不产生规范化数字。
-> 读文档顺序：`docs/system_design.md`（设计基线，章节号下文以 § 引用）→ `docs/implementation_plan.md`（D 阶段计划）→ `docs/execution_log.md`（逐次执行记录与偏差决定）→ 本文件。
+> 读文档顺序：`docs/system_design.md`（设计基线，章节号下文以 § 引用）→ `docs/implementation_plan.md`（D 阶段计划）→ `docs/execution_log.md`（逐次执行记录与偏差决定）→ 本文件。数据库逐表逐字段说明见 `docs/database_schema.md`。
 
 ## 1. 环境
 
