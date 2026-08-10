@@ -13,7 +13,7 @@ import sqlite3
 from importlib.metadata import version
 from pathlib import Path
 
-from flask import Flask, g, jsonify, render_template, request
+from flask import Flask, g, jsonify, redirect, render_template, request
 
 from scripts.ui.config import load_ui_config
 from scripts.ui.db import DEFAULT_DB_PATH, get_connection
@@ -46,6 +46,8 @@ def create_app(db_path: str | Path | None = None, ui_config: dict | None = None)
 
     @app.context_processor
     def inject_footer():
+        from scripts.ui import queries
+
         try:
             last_bar = get_db().execute("SELECT MAX(updated_at) AS u FROM daily_bars").fetchone()["u"]
             last_run = get_db().execute(
@@ -53,13 +55,30 @@ def create_app(db_path: str | Path | None = None, ui_config: dict | None = None)
         except sqlite3.Error:
             last_bar = last_run = None
         try:
+            nav = [{"symbol": r["symbol"], "name": r["name"]}
+                   for r in sorted(queries.get_watchlist(get_db()),
+                                   key=lambda x: (x["market"], x["symbol"]))]
+        except sqlite3.Error:
+            nav = []
+        try:
             flask_ver = version("flask")
         except Exception:  # noqa: BLE001
             flask_ver = "?"
         return {"footer": {
             "db_path": _UI_DB_PATH, "db_last_update": last_bar, "run_last": last_run,
             "flask_version": flask_ver,
-        }}
+        }, "nav_stocks": nav}
+
+    def _fmt_num(v, precision: int = 2) -> str:
+        """模板数字格式化：千分位 + 缺失占位（不猜，缺数据显示"—"）。"""
+        if v is None or v == "":
+            return "—"
+        try:
+            return f"{float(v):,.{precision}f}"
+        except (TypeError, ValueError):
+            return str(v)
+
+    app.add_template_filter(_fmt_num, "fmt")
 
     @app.get("/health")
     def health():
@@ -121,6 +140,19 @@ def _register_routes(app: Flask) -> None:
         if meta is None:
             return jsonify({"error": f"unknown symbol: {symbol}", "code": 404}), 404
         return jsonify(meta)
+
+    @app.get("/api/stocks/<symbol>/overview")
+    def api_stock_overview(symbol):
+        try:
+            limit = min(pa.int_arg(request.args, "event_limit", 20), 100)
+            offset = pa.int_arg(request.args, "event_offset", 0)
+        except ValueError as exc:
+            return jsonify({"error": str(exc), "code": 400}), 400
+        data = queries.get_stock_overview(get_db(), symbol,
+                                          event_limit=limit, event_offset=offset)
+        if data is None:
+            return jsonify({"error": f"unknown symbol: {symbol}", "code": 404}), 404
+        return jsonify(data)
 
     @app.get("/api/stocks/<symbol>/bars")
     def api_stock_bars(symbol):
@@ -298,12 +330,15 @@ def _register_routes(app: Flask) -> None:
     # ---------------------------------------------------------------- 页面路由
     @app.get("/")
     def page_home():
-        return render_template("index.html", cfg=app.config["UI_CONFIG"], active="home")
+        launcher = queries.list_stocks(get_db(), {}, page=1, page_size=200)["items"]
+        run_alerts = queries.list_run_alerts(get_db())
+        return render_template("index.html", cfg=app.config["UI_CONFIG"],
+                               active="home", stocks=launcher, run_alerts=run_alerts)
 
     @app.get("/stocks")
     def page_stocks():
-        return render_template("stocks.html", cfg=app.config["UI_CONFIG"],
-                               active="stocks", show_filter_bar=True)
+        # 旧股票列表页已由首页启动台取代
+        return redirect("/", code=302)
 
     @app.get("/stock/<symbol>")
     def page_stock(symbol):
@@ -312,6 +347,10 @@ def _register_routes(app: Flask) -> None:
             return render_template("404.html", reason=f"未知股票 {symbol}"), 404
         return render_template("stock.html", cfg=app.config["UI_CONFIG"],
                                active="stock", symbol=symbol, meta=meta)
+
+    @app.get("/data")
+    def page_data():
+        return render_template("data.html", cfg=app.config["UI_CONFIG"], active="data")
 
     @app.get("/indicators")
     def page_indicators():

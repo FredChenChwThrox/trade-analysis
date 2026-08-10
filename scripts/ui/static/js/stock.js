@@ -1,21 +1,14 @@
-/* 单股仪表板（task-04）：主图 + 副图 + 信号 + 卡片 + 执行，ECharts 联动缩放。 */
+/* 单股页（2026-08-10 原型定稿落地）：关键数字卡 + 三联图（单实例三 grid）+ 信号现状 + 排期卡 + 执行。
+   口径纪律（§5.1）：卡片价区/证伪线/箱体/执行价为不复权口径，完全复权模式下不叠加标记。 */
 (function () {
   'use strict';
   const UI = window.UI;
-  const GROUP = 'stock-dashboard';
 
   const state = {
     symbol: document.getElementById('stock-page').dataset.symbol,
     meta: JSON.parse(document.getElementById('stock-page').dataset.meta || '{}'),
     granularity: 'daily',
     price: 'unadjusted',
-    chartType: 'line',
-    start: null,
-    end: null,
-    ma: ['ma5', 'ma10', 'ma20', 'ma60'],
-    panels: ['volume', 'macd', 'rsi', 'kdj'],
-    cardMarkers: true,
-    execMarkers: false,
   };
 
   let bars = [];
@@ -23,289 +16,134 @@
   let signals = [];
   let executions = [];
 
+  const RED = '#dc2626', GREEN = '#16a34a';
+  const ZOOM_BARS = 120;  // dataZoom 初始窗口：最近约 120 根
+
+  const SIGNAL_NAMES = {
+    panic: '恐慌型', dry_up: '干涸型', no_new_low_3w: '三周不创新低',
+    divergence: '周线底背离', duration: '持续时间',
+    tier_proximity: '档位临近', tier_triggered: '档位触发',
+    falsification_breach: '证伪线', box_position: '箱体位置',
+    right_side: '右侧确认', accumulation: '吸筹形态',
+    daily_watch: '日度观察', ma_comparison: '均线对比', card_conversion: '卡片换算',
+  };
+
   const PRICE_NOTE = {
-    unadjusted: '当前显示：不复权价格；指标已按当日复权因子折回（可与卡片价区/证伪线对比）',
-    fully_adjusted: '当前显示：完全复权价格；指标为原始复权值（技术面连续比较）；卡片/执行标记为不复权口径，本模式下不显示（§5.1 口径纪律）',
+    unadjusted: '不复权口径 · 价区底色为卡片三档 · 标线为证伪/箱体/右侧',
+    fully_adjusted: '完全复权口径 · 卡片/执行/信号标记为不复权口径，本模式不叠加（§5.1 口径纪律）',
   };
 
   function readURL() {
     const p = new URLSearchParams(location.search);
     if (p.get('granularity')) state.granularity = p.get('granularity');
     if (p.get('price')) state.price = p.get('price');
-    if (p.get('chart')) state.chartType = p.get('chart');
-    state.start = p.get('start');
-    state.end = p.get('end');
-    if (p.get('ma')) state.ma = p.get('ma').split(',');
-    if (p.get('panels')) state.panels = p.get('panels').split(',');
-    state.cardMarkers = p.get('cards') !== '0';
-    state.execMarkers = p.get('exec') === '1';
   }
 
   function syncURL() {
-    const params = {
-      start: state.start, end: state.end,
-      granularity: state.granularity, price: state.price, chart: state.chartType,
-      ma: state.ma.length ? state.ma.join(',') : null,
-      panels: state.panels.join(','),
-      cards: state.cardMarkers ? '1' : '0', exec: state.execMarkers ? '1' : '0',
-    };
-    history.replaceState(null, '', '/stock/' + state.symbol + UI.buildQueryString(params));
+    history.replaceState(null, '', '/stock/' + state.symbol + UI.buildQueryString({
+      granularity: state.granularity, price: state.price,
+    }));
   }
 
   function applyControls() {
     document.getElementById('ctl-granularity').value = state.granularity;
     document.getElementById('ctl-price').value = state.price;
-    document.getElementById('ctl-chart-type').value = state.chartType;
-    document.getElementById('ctl-start').value = state.start || '';
-    document.getElementById('ctl-end').value = state.end || '';
-    document.querySelectorAll('.ma-cb').forEach((cb) => { cb.checked = state.ma.includes(cb.value); });
-    document.querySelectorAll('.panel-select').forEach((sel) => {
-      sel.value = state.panels[parseInt(sel.dataset.panel, 10)] || '';
-    });
-    document.getElementById('ctl-card-markers').checked = state.cardMarkers;
-    document.getElementById('ctl-exec-markers').checked = state.execMarkers;
   }
 
   async function loadAll() {
     const q = UI.buildQueryString({
-      granularity: state.granularity, price: state.price, start: state.start, end: state.end,
+      granularity: state.granularity, price: state.price, start: '2000-01-01',
     });
-    const [barsData, indData, sigData, cardsData, execData] = await Promise.all([
+    const sigQ = UI.buildQueryString({ start: '2000-01-01', limit: 2000 });
+    const [barsData, indData, sigData, execData, ovData] = await Promise.all([
       UI.fetchJSON('/api/stocks/' + state.symbol + '/bars' + q),
       UI.fetchJSON('/api/stocks/' + state.symbol + '/indicators' + q),
-      UI.fetchJSON('/api/stocks/' + state.symbol + '/signals'),
-      UI.fetchJSON('/api/stocks/' + state.symbol + '/cards'),
+      UI.fetchJSON('/api/stocks/' + state.symbol + '/signals' + sigQ),
       UI.fetchJSON('/api/stocks/' + state.symbol + '/executions'),
+      UI.fetchJSON('/api/stocks/' + state.symbol + '/overview'),
     ]);
     bars = barsData.bars;
     indicators = indData.indicators;
     signals = sigData.items;
     executions = execData.items;
-    document.getElementById('price-note').textContent = PRICE_NOTE[state.price] || '';
-    renderSignals();
-    renderCardDetail(cardsData.items);
+    document.getElementById('chart-note').textContent = PRICE_NOTE[state.price] || '';
+    renderNumCards(ovData);
+    renderSummary(ovData);
+    renderCardPanel(ovData).catch((e) => UI.showToast(e.message, 'error'));
     renderExec();
-    renderPriceChart();
-    renderPanels();
+    renderChart();
     syncURL();
   }
 
-  function chartBase() {
-    const colors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272'];
-    return { color: colors, textStyle: { fontSize: 11 } };
+  // ---------------------------------------------------------------- 数字卡片
+  function g(v) {  // Python :g 风格：'54.70' -> '54.7'
+    const n = parseFloat(v);
+    return Number.isNaN(n) ? String(v) : String(n);
   }
 
-  function xAxisConf() {
-    return {
-      type: 'category', data: bars.map((b) => b.trade_date),
-      axisLabel: { formatter: (v) => String(v).slice(5) },
-      axisPointer: { label: { formatter: (p) => p.value } },
-    };
+  function peStatusText(s) {
+    /* pe_status 原因码 → 人读中文（与 docs/prototype/generate.py 一致） */
+    if (!s) return '';
+    const str = String(s);
+    let parts;
+    if (str.indexOf('ok') === 0) parts = ['正常'];
+    else if (str.indexOf('degraded') >= 0) parts = ['降级'];
+    else return '数据缺失';
+    if (str.indexOf('degraded_available_at') >= 0) parts.push('披露日降级');
+    return parts.join('·');
   }
 
-  function renderPriceChart() {
-    const el = document.getElementById('price-chart');
-    const chart = echarts.getInstanceByDom(el) || echarts.init(el);
-    chart.group = GROUP;
-    const dates = bars.map((b) => b.trade_date);
-    const series = [];
-
-    if (state.chartType === 'candlestick') {
-      series.push({
-        name: 'K线', type: 'candlestick',
-        data: bars.map((b) => [b.open, b.close, b.low, b.high]),
-        itemStyle: { color: '#ef4444', color0: '#22c55e', borderColor: '#ef4444', borderColor0: '#22c55e' },
-      });
-    } else {
-      series.push({
-        name: '收盘', type: 'line', data: bars.map((b) => b.close),
-        showSymbol: false, lineStyle: { width: 1.5 }, itemStyle: { color: '#5470c6' },
-      });
-    }
-
-    // 均线（指标已按 price 模式折回/复权）
-    const indByDate = {};
-    indicators.forEach((r) => { indByDate[r.date] = r; });
-    const maColors = { ma5: '#f59e0b', ma10: '#3b82f6', ma20: '#a855f7', ma60: '#10b981', ma120: '#ef4444', ma250: '#64748b' };
-    state.ma.forEach((m) => {
-      const vals = dates.map((d) => { const r = indByDate[d]; return r ? r[m] : null; });
-      series.push({
-        name: m.toUpperCase(), type: 'line', data: vals, showSymbol: false,
-        connectNulls: true, lineStyle: { width: 1, color: maColors[m] || '#999' },
-      });
-    });
-
-    // 卡片与执行标记为不复权口径（卡片 price_basis=raw、执行价为原始成交价），
-    // 完全复权模式下不叠加，避免跨尺度错位（§5.1 口径纪律）
-    const rawCaliber = state.price !== 'fully_adjusted';
-
-    // 卡片标记
-    if (state.cardMarkers && rawCaliber && state.meta.active_card) {
-      const card = state.meta.active_card;
-      const markers = [];
-      const areas = [];
-      const tierColors = { 1: 'rgba(16,185,129,0.12)', 2: 'rgba(59,130,246,0.10)', 3: 'rgba(239,68,68,0.10)' };
-      (card.price_tiers_json ? card.price_tiers_json.tiers || [] : []).forEach((t) => {
-        areas.push([{ name: 'T' + t.tier, xAxis: dates[0], itemStyle: { color: tierColors[t.tier] || 'rgba(0,0,0,0.05)' } },
-                    { xAxis: dates[dates.length - 1] }]);
-        markers.push({ name: 'T' + t.tier + 'L', xAxis: dates[0], yAxis: parseFloat(t.zone_low),
-                       label: { formatter: 'T' + t.tier + ' ' + t.zone_low }, lineStyle: { color: '#0d9488', type: 'dashed', width: 1 } });
-        markers.push({ name: 'T' + t.tier + 'H', xAxis: dates[0], yAxis: parseFloat(t.zone_high),
-                       label: { formatter: 'T' + t.tier + ' ' + t.zone_high }, lineStyle: { color: '#0d9488', type: 'dashed', width: 1 } });
-      });
-      if (card.invalidation_json && card.invalidation_json.line) {
-        markers.push({ name: '证伪线', yAxis: parseFloat(card.invalidation_json.line),
-                       label: { formatter: '证伪 ' + card.invalidation_json.line, position: 'insideEndTop' },
-                       lineStyle: { color: '#dc2626', type: 'solid', width: 2 } });
-      }
-      if (card.swing_box_json) {
-        ['box_low', 'box_high'].forEach((k) => {
-          if (card.swing_box_json[k] != null) {
-            markers.push({ name: '箱体' + k, yAxis: parseFloat(card.swing_box_json[k]),
-                           label: { formatter: '箱体 ' + card.swing_box_json[k] },
-                           lineStyle: { color: '#16a34a', type: 'dotted', width: 1.5 } });
-          }
-        });
-      }
-      if (card.right_side_trigger_json) {
-        const rs = card.right_side_trigger_json;
-        [['trigger_level', '#2563eb'], ['stop_level', '#dc2626']].forEach(([k, col]) => {
-          if (rs[k] != null) {
-            markers.push({ name: k, yAxis: parseFloat(rs[k]),
-                           label: { formatter: (k === 'trigger_level' ? '触发 ' : '止损 ') + rs[k] },
-                           lineStyle: { color: col, type: 'solid', width: 1.5 } });
-          }
-        });
-      }
-      if (areas.length) series.push({ name: '价区', type: 'line', data: [], markArea: { silent: true, data: areas } });
-      if (markers.length) series[0].markLine = { silent: true, symbol: 'none', data: markers };
-    }
-
-    // 执行记录标记（closeByDate 供执行与信号散点共用，须在块外声明）
-    const closeByDate = {};
-    bars.forEach((b) => { closeByDate[b.trade_date] = b.close; });
-    if (state.execMarkers && rawCaliber && executions.length) {
-      const pts = executions
-        .filter((x) => closeByDate[x.executed_at.slice(0, 10)] != null)
-        .map((x) => ({
-          coord: [x.executed_at.slice(0, 10), closeByDate[x.executed_at.slice(0, 10)]],
-          value: (x.action_type === 'sell' ? '卖 ' : '买 ') + x.price,
-          itemStyle: { color: x.action_type === 'sell' ? '#ef4444' : '#22c55e' },
-        }));
-      if (pts.length) {
-        series.push({
-          name: '执行', type: 'scatter', data: pts,
-          symbolSize: 10, label: { show: true, formatter: (p) => p.data.value, position: 'top', fontSize: 10 },
-        });
-      }
-    }
-
-    // 信号标记（triggered）
-    const sigByDate = {};
-    signals.forEach((s) => { if (s.triggered) sigByDate[s.observed_on] = s.signal; });
-    const sigPts = Object.keys(sigByDate)
-      .filter((d) => closeByDate[d] != null)
-      .map((d) => ({ coord: [d, closeByDate[d]], value: sigByDate[d], itemStyle: { color: '#f59e0b' } }));
-    if (sigPts.length) {
-      series.push({ name: '信号', type: 'scatter', data: sigPts, symbolSize: 12,
-                    label: { show: true, formatter: (p) => p.data.value, position: 'bottom', fontSize: 9 } });
-    }
-
-    chart.setOption(Object.assign(chartBase(), {
-      tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-      legend: { data: series.map((s) => s.name), top: 0 },
-      grid: { left: 60, right: 16, top: 30, bottom: 70 },
-      xAxis: Object.assign(xAxisConf(), { gridIndex: 0 }),
-      yAxis: { scale: true, splitLine: { lineStyle: { type: 'dashed' } } },
-      dataZoom: [
-        { type: 'inside', xAxisIndex: 0, start: 0, end: 100 },
-        { type: 'slider', xAxisIndex: 0, bottom: 8, height: 22 },
-      ],
-      series: series,
-    }), true);  // notMerge：取消勾选/隐藏标记时清除残留 series 与 markLine
-    chart.resize();
+  function setCard(id, value, sub, cls) {
+    const v = document.getElementById('nc-' + id);
+    v.textContent = value;
+    v.className = 'value' + (cls ? ' ' + cls : '');
+    document.getElementById('nc-' + id + '-sub').textContent = sub || '';
   }
 
-  const PANEL_DEFS = {
-    volume: { name: '成交量', series: [{ name: '成交量', type: 'bar', key: 'volume' }] },
-    macd: { name: 'MACD', series: [
-      { name: 'DIF', type: 'line', key: 'dif' }, { name: 'DEA', type: 'line', key: 'dea' },
-      { name: '柱', type: 'bar', key: 'macd_hist' },
-    ] },
-    rsi: { name: 'RSI', series: [
-      { name: 'RSI6', type: 'line', key: 'rsi6' }, { name: 'RSI12', type: 'line', key: 'rsi12' },
-      { name: 'RSI24', type: 'line', key: 'rsi24' },
-    ] },
-    kdj: { name: 'KDJ', series: [
-      { name: 'K', type: 'line', key: 'kdj_k' }, { name: 'D', type: 'line', key: 'kdj_d' },
-      { name: 'J', type: 'line', key: 'kdj_j' },
-    ] },
-    boll: { name: 'BOLL', series: [
-      { name: '中轨', type: 'line', key: 'boll_mid' }, { name: '上轨', type: 'line', key: 'boll_upper' },
-      { name: '下轨', type: 'line', key: 'boll_lower' },
-    ] },
-    pe: { name: 'PE(TTM)', series: [{ name: 'PE', type: 'line', key: 'pe_ttm' }] },
-    pct_chg: { name: '涨跌幅', series: [{ name: 'pct_chg', type: 'bar', key: 'pct_chg' }] },
-  };
+  function renderNumCards(ov) {
+    setCard('close', ov.close_raw == null ? '—' : Number(ov.close_raw).toFixed(2),
+            ov.latest_trade_date || '');
+    const pct = ov.pct_chg;
+    setCard('pct', pct == null ? '—' : (pct > 0 ? '+' : '') + Number(pct).toFixed(2) + '%',
+            '', (pct || 0) >= 0 ? 'up' : 'down');
+    setCard('pe', ov.pe_ttm == null ? '—' : Number(ov.pe_ttm).toFixed(1),
+            peStatusText(ov.pe_status));
 
-  function renderPanels() {
-    const dates = bars.map((b) => b.trade_date);
-    const indByDate = {};
-    indicators.forEach((r) => { indByDate[r.date] = r; });
-    const barByDate = {};
-    bars.forEach((b) => { barByDate[b.trade_date] = b; });
+    const t = ov.tier;
+    if (t && t.tier) setCard('tier', 'T' + t.tier + ' 内', g(t.zone_low) + '–' + g(t.zone_high));
+    else if (t) setCard('tier', '档外',
+      '距 T' + t.nearest_tier + ' ' + (t.nearest_side === 'high' ? '上沿' : '下沿') +
+      ' ' + Number(t.dist_pct).toFixed(1) + '%');
+    else setCard('tier', '—', '');
 
-    state.panels.forEach((type, i) => {
-      const el = document.getElementById('panel-' + i);
-      const def = PANEL_DEFS[type];
-      const chart = echarts.getInstanceByDom(el) || echarts.init(el);
-      chart.group = GROUP;
-      if (!def) {
-        chart.clear();
-        return;
-      }
-      const series = def.series.map((s) => {
-        let data;
-        if (s.key === 'volume') data = dates.map((d) => (barByDate[d] ? barByDate[d].volume : null));
-        else data = dates.map((d) => { const r = indByDate[d]; return r ? r[s.key] : null; });
-        return Object.assign({}, s, { data, connectNulls: true, showSymbol: false,
-          itemStyle: { color: type === 'volume' ? '#93c5fd' : undefined } });
-      });
-      chart.setOption(Object.assign(chartBase(), {
-        title: { text: def.name, textStyle: { fontSize: 12 } },
-        tooltip: { trigger: 'axis' },
-        legend: { data: series.map((s) => s.name), top: 0 },
-        grid: { left: 60, right: 16, top: 30, bottom: 40 },
-        xAxis: Object.assign(xAxisConf(), { gridIndex: 0 }),
-        yAxis: { scale: true, splitLine: { lineStyle: { type: 'dashed' } } },
-        dataZoom: [{ type: 'inside', xAxisIndex: 0, start: 0, end: 100 }],
-        series: series,
-      }), true);  // notMerge：切换副图类型时清除残留 series
-      chart.resize();
-    });
-    echarts.connect(GROUP, 'dataZoom');
-    echarts.connect(GROUP, 'restore');
+    const card = state.meta.active_card || {};
+    const box = card.swing_box_json || {};
+    setCard('box', (ov.box && ov.box.text) || '—',
+            box.box_low != null ? g(box.box_low) + '–' + g(box.box_high) : '');
+    const rst = card.right_side_trigger_json || {};
+    setCard('right', (ov.right_side && ov.right_side.text) || '—',
+            rst.trigger_level != null ? '触发 ' + g(rst.trigger_level) : '');
+    setCard('accum', (ov.accumulation && ov.accumulation.text) || '—', '');
+    const ex = ov.exhaustion;
+    setCard('exhaust', ex ? ex.active + '/' + ex.total + ' 活跃' : '—',
+            ex ? '完成周 ' + ex.week_end : '');
   }
 
-  function renderSignals() {
-    const tbody = document.getElementById('signals-tbody');
-    if (!signals.length) {
-      tbody.innerHTML = '';
-      document.getElementById('signals-empty').classList.remove('hidden');
+  // ---------------------------------------------------------------- 信号现状
+  function renderSummary(ov) {
+    const box = document.getElementById('signal-summary');
+    if (!ov.summaries || !ov.summaries.length) {
+      box.innerHTML = '<p class="py-4 text-center text-gray-400">暂无信号数据</p>';
       return;
     }
-    document.getElementById('signals-empty').classList.add('hidden');
-    tbody.innerHTML = signals.map((s) => `
-      <tr>
-        <td>${UI.formatDate(s.observed_on)}</td>
-        <td>${UI.escapeHtml(s.signal)}</td>
-        <td>${UI.renderStatusBadge(s.state)}</td>
-        <td>${s.triggered ? '<span class="text-green-600">✓</span>' : '<span class="text-gray-400">—</span>'}</td>
-        <td>${UI.formatDate(s.active_until)}</td>
-        <td>${s.anchor_id || '—'}</td>
-        <td><button class="sig-detail text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-100" data-id="${s.fact_id}">详情</button></td>
-      </tr>`).join('');
-    tbody.querySelectorAll('.sig-detail').forEach((btn) => {
+    box.innerHTML = ov.summaries.map((s) => `
+      <div class="flex items-center gap-3 py-2">
+        <span class="w-28 shrink-0 font-medium">${UI.escapeHtml(s.name)}</span>
+        <span class="w-20 shrink-0">${UI.renderStatusBadge(s.state)}</span>
+        <span class="text-gray-600">${UI.escapeHtml(s.detail || '—')}</span>
+        ${s.fact_id ? `<button class="sig-detail ml-auto shrink-0 text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-100" data-id="${s.fact_id}">详情</button>` : ''}
+      </div>`).join('');
+    box.querySelectorAll('.sig-detail').forEach((btn) => {
       btn.addEventListener('click', () => showSignalDetail(btn.dataset.id));
     });
   }
@@ -322,30 +160,81 @@
     }
   }
 
-  function renderCardDetail(cards) {
+  // ---------------------------------------------------------------- 排期卡
+  function kv(label, value) {
+    return `<div class="flex gap-2 py-0.5"><span class="flex-none w-20 text-gray-400 text-xs leading-5">${UI.escapeHtml(label)}</span><span class="text-xs leading-5">${UI.escapeHtml(value)}</span></div>`;
+  }
+
+  function tierImplied(t, eps) {
+    /* 每档价区反推隐含 EPS×PE 口径（纯算术展示） */
+    const lo = parseFloat(t.zone_low), hi = parseFloat(t.zone_high);
+    const base = eps.base != null ? parseFloat(eps.base) : null;
+    const bear = eps.bear != null ? parseFloat(eps.bear) : null;
+    if (t.tier === 3 && bear) {
+      return '≈ 悲观EPS ' + g(bear) + ' × PE ' + (lo / bear).toFixed(1) + '–' + (hi / bear).toFixed(1);
+    }
+    if (base) {
+      return '≈ 中性EPS ' + g(base) + ' × PE ' + (lo / base).toFixed(1) + '–' + (hi / base).toFixed(1);
+    }
+    return '—';
+  }
+
+  async function renderCardPanel(ov) {
     const box = document.getElementById('card-detail');
-    const active = cards.find((c) => c.status === 'active');
-    if (!active) { box.innerHTML = '<p class="text-gray-400 text-sm">无 active 卡片</p>'; return; }
-    const tiers = (active.tier_summary || []).map((t) => {
-      const [n, lo, hi] = t;
-      return `<tr><td>T${n}</td><td class="font-mono">${lo}</td><td class="font-mono">${hi}</td></tr>`;
-    }).join('');
+    if (!ov.has_card) {
+      box.innerHTML = '<p class="text-gray-400 text-sm">无 active 卡片</p>';
+      return;
+    }
+    const d = await UI.fetchJSON('/api/cards/' + ov.card_id);
+    const tiers = (d.price_tiers_json || {}).tiers || [];
+    const eps = (d.earnings_scenarios_json || {}).eps || {};
+    const val = d.valuation_scenarios_json || {};
+    const pe = val.pe || {};
+    const scales = val.panic_floor_scales || [];
+    const win = val.sample_window || {};
+    const inv = d.invalidation_json || {};
+    const bx = d.swing_box_json || {};
+    const rst = d.right_side_trigger_json || {};
+
+    const trs = tiers.map((t) => `
+      <tr class="border-t border-gray-100"><td class="py-1">T${t.tier}</td>
+      <td class="font-mono">${UI.escapeHtml(t.zone_low)}–${UI.escapeHtml(t.zone_high)}</td>
+      <td class="text-xs text-gray-500">${UI.escapeHtml(tierImplied(t, eps))}</td></tr>`).join('');
+    const scalesTxt = scales.map((s) => `${s.date} PE ${s.pe_ttm}`).join(' → ');
+
     box.innerHTML = `
-      <div class="text-xs text-gray-500 mb-1">${active.card_version_id} · ${active.status} · ${UI.formatDate(active.effective_from)} → ${UI.formatDate(active.effective_to)} · next_review ${UI.formatDate(active.next_review_at)}</div>
-      <table class="data-table w-full"><thead><tr><th>档位</th><th>低</th><th>高</th></tr></thead><tbody>${tiers}</tbody></table>
+      <div class="text-xs text-gray-500 mb-2">${UI.escapeHtml(d.card_version_id)} · ${UI.escapeHtml(d.status)} ·
+        ${UI.formatDate(d.effective_from)} 生效 · 下次复核 ${UI.formatDate(d.next_review_at)} · 口径不复权</div>
+
+      <div class="text-xs font-medium text-gray-600 mt-2 mb-1">三档价区（估值锚定）</div>
+      <table class="text-sm w-full"><thead><tr class="text-left text-gray-500 text-xs">
+      <th>档位</th><th>价区</th><th>反推口径</th></tr></thead><tbody>${trs}</tbody></table>
+
+      <div class="text-xs font-medium text-gray-600 mt-3 mb-1">情景假设</div>
+      ${kv('EPS 三情景', `悲观 ${eps.bear || '—'} / 中性 ${eps.base || '—'} / 乐观 ${eps.bull || '—'}`)}
+      ${kv('PE 三情景', `悲观 ${pe.pessimistic || '—'} / 中性 ${pe.neutral || '—'} / 乐观 ${pe.optimistic || '—'}`)}
+      ${kv('恐慌底刻度', scalesTxt || '—')}
+      ${kv('样本窗口', `${win.from || '—'} ~ ${win.to || '—'}（${win.note || '—'}）`)}
+      ${kv('体系判断', val.regime || '—')}
+
+      <div class="text-xs font-medium text-gray-600 mt-3 mb-1">交易框架</div>
+      ${kv('证伪线', `${inv.line || '—'} —— ${inv.note || ''}`)}
+      ${kv('波段箱体', `${bx.box_low || '—'}–${bx.box_high || '—'}：买区 ${bx.buy_zone_low || '—'}–${bx.buy_zone_high || '—'}，卖区 ${bx.sell_zone_low || '—'}–${bx.sell_zone_high || '—'}，跌破 ${bx.box_invalidation || '—'} 箱体失效`)}
+      ${kv('右侧确认', `收盘站上 ${rst.trigger_level || '—'} 触发，止损 ${rst.stop_level || '—'}`)}
+
       <button id="btn-card-json" class="mt-2 text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-100">查看完整 JSON</button>`;
-    document.getElementById('btn-card-json').addEventListener('click', async () => {
-      const d = await UI.fetchJSON('/api/cards/' + active.card_version_id);
+    document.getElementById('btn-card-json').addEventListener('click', () => {
       const json = JSON.stringify({
         price_tiers_json: d.price_tiers_json, invalidation_json: d.invalidation_json,
         swing_box_json: d.swing_box_json, right_side_trigger_json: d.right_side_trigger_json,
         earnings_scenarios_json: d.earnings_scenarios_json,
         valuation_scenarios_json: d.valuation_scenarios_json,
       }, null, 2);
-      showModal('卡片 ' + active.card_version_id, `<pre class="json-view">${UI.escapeHtml(json)}</pre>`);
+      showModal('卡片 ' + d.card_version_id, `<pre class="json-view">${UI.escapeHtml(json)}</pre>`);
     });
   }
 
+  // ---------------------------------------------------------------- 执行记录
   function renderExec() {
     const tbody = document.getElementById('exec-tbody');
     if (!executions.length) {
@@ -354,16 +243,188 @@
       return;
     }
     document.getElementById('exec-empty').classList.add('hidden');
-    tbody.innerHTML = executions.map((x) => `
+    tbody.innerHTML = executions.map((x) => {
+      const isSell = x.action_type === 'sell';
+      return `
       <tr>
         <td>${UI.escapeHtml(String(x.executed_at).slice(0, 19))}</td>
-        <td class="${x.action_type === 'sell' ? 'text-green-600' : 'text-red-600'}">${x.action_type}</td>
+        <td class="${isSell ? 'down' : 'up'}">${isSell ? '卖出' : '买入'}</td>
         <td>${x.tier || '—'}</td>
         <td class="font-mono">${x.price}</td>
         <td class="font-mono">${x.quantity}</td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
   }
 
+  // ---------------------------------------------------------------- 三联图
+  function renderChart() {
+    const el = document.getElementById('chart-all');
+    const chart = echarts.getInstanceByDom(el) || echarts.init(el);
+    const dates = bars.map((b) => b.trade_date);
+    const closeByDate = {};
+    bars.forEach((b) => { closeByDate[b.trade_date] = b.close; });
+    const indByDate = {};
+    indicators.forEach((r) => { indByDate[r.date] = r; });
+    const ind = (key) => dates.map((d) => { const r = indByDate[d]; return r ? r[key] : null; });
+
+    const xBase = { type: 'category', data: dates, boundaryGap: true,
+                    axisLine: { lineStyle: { color: '#e5e7eb' } }, axisTick: { show: false } };
+    const yBase = { scale: true, position: 'right',
+                    splitLine: { lineStyle: { color: '#f3f4f6' } },
+                    axisLabel: { fontSize: 10, color: '#9ca3af' } };
+
+    // ---- grid 0：蜡烛图（红涨绿跌）+ MA5/20/60
+    const series = [{
+      name: 'K线', type: 'candlestick',
+      data: bars.map((b) => [b.open, b.close, b.low, b.high]),
+      itemStyle: { color: RED, color0: GREEN, borderColor: RED, borderColor0: GREEN },
+      z: 5,
+    }];
+    const maColors = { ma5: '#f59e0b', ma20: '#a855f7', ma60: '#64748b' };
+    ['ma5', 'ma20', 'ma60'].forEach((m) => series.push({
+      name: m.toUpperCase(), type: 'line', data: ind(m),
+      showSymbol: false, connectNulls: true, lineStyle: { width: 1, color: maColors[m] }, z: 4,
+    }));
+
+    // 卡片/执行/信号标记为不复权口径，完全复权模式下不叠加（§5.1 口径纪律）
+    const rawCaliber = state.price !== 'fully_adjusted';
+    const areas = [], markers = [];
+    const card = state.meta.active_card;
+    if (rawCaliber && card) {
+      const tierColors = { 1: 'rgba(22,163,74,0.07)', 2: 'rgba(37,99,235,0.07)', 3: 'rgba(220,38,38,0.07)' };
+      (card.price_tiers_json ? card.price_tiers_json.tiers || [] : []).forEach((t) => {
+        areas.push([{ name: 'T' + t.tier, yAxis: parseFloat(t.zone_low),
+                      itemStyle: { color: tierColors[t.tier] || 'rgba(0,0,0,0.05)' },
+                      label: { show: true, position: 'insideLeft', fontSize: 9, color: '#9ca3af',
+                               formatter: 'T' + t.tier + '  ' + t.zone_low + '–' + t.zone_high } },
+                    { yAxis: parseFloat(t.zone_high) }]);
+      });
+      const line = (y, text, color, type, width) => {
+        if (y == null) return;
+        markers.push({ yAxis: parseFloat(y),
+                       label: { show: true, position: 'insideStartTop', fontSize: 9, color, formatter: text },
+                       lineStyle: { color, type, width } });
+      };
+      const inv = card.invalidation_json || {};
+      line(inv.line, '证伪 ' + inv.line, RED, 'solid', 1.5);
+      const bx = card.swing_box_json || {};
+      line(bx.box_low, '箱体 ' + bx.box_low, GREEN, 'dotted', 1.2);
+      line(bx.box_high, '箱体 ' + bx.box_high, GREEN, 'dotted', 1.2);
+      const rst = card.right_side_trigger_json || {};
+      line(rst.trigger_level, '右侧触发 ' + rst.trigger_level, '#2563eb', 'dashed', 1);
+    }
+
+    // 执行标记：买红卖绿，带"买/卖+价格"小字
+    if (rawCaliber && executions.length) {
+      const pts = executions
+        .filter((x) => closeByDate[x.executed_at.slice(0, 10)] != null)
+        .map((x) => ({
+          coord: [x.executed_at.slice(0, 10), closeByDate[x.executed_at.slice(0, 10)]],
+          value: (x.action_type === 'sell' ? '卖' : '买') + x.price,
+          itemStyle: { color: x.action_type === 'sell' ? GREEN : RED },
+        }));
+      if (pts.length) {
+        series.push({ name: '执行', type: 'scatter', data: pts, symbolSize: 9, z: 8,
+          label: { show: true, formatter: (p) => p.data.value, position: 'top', fontSize: 9, color: '#6b7280' } });
+      }
+    }
+
+    // 触发信号：pin 不带文字，悬停见名
+    if (rawCaliber && signals.length) {
+      const seen = {};
+      const sigPts = [];
+      signals.forEach((s) => {
+        if (!s.triggered || closeByDate[s.observed_on] == null) return;
+        const key = s.observed_on + '|' + s.signal;
+        if (seen[key]) return;
+        seen[key] = true;
+        sigPts.push({ coord: [s.observed_on, closeByDate[s.observed_on]],
+                      value: SIGNAL_NAMES[s.signal] || s.signal,
+                      itemStyle: { color: '#f59e0b' } });
+      });
+      if (sigPts.length) {
+        series.push({ name: '信号', type: 'scatter', data: sigPts,
+                      symbol: 'pin', symbolSize: 14, z: 7, label: { show: false } });
+      }
+    }
+
+    // ---- grid 1：成交量（涨红跌绿，万单位）+ 均量20
+    const volData = bars.map((b, i) => ({
+      value: (b.volume || 0) / 10000,
+      itemStyle: { color: (i > 0 && b.close < bars[i - 1].close) ? 'rgba(22,163,74,0.65)' : 'rgba(220,38,38,0.65)' },
+    }));
+    series.push({ name: '成交量', type: 'bar', data: volData, xAxisIndex: 1, yAxisIndex: 1, barWidth: '60%' });
+    series.push({ name: '均量20', type: 'line',
+      data: ind('vol_mean20').map((v) => (v == null ? null : v / 10000)),
+      xAxisIndex: 1, yAxisIndex: 1, showSymbol: false, lineStyle: { width: 1, color: '#f59e0b' } });
+
+    // ---- grid 2：MACD（柱正红负绿）
+    const histData = ind('macd_hist').map((v) => ({
+      value: v,
+      itemStyle: { color: (v || 0) >= 0 ? 'rgba(220,38,38,0.6)' : 'rgba(22,163,74,0.6)' },
+    }));
+    series.push({ name: 'DIF', type: 'line', data: ind('dif'),
+      xAxisIndex: 2, yAxisIndex: 2, showSymbol: false, lineStyle: { width: 1, color: '#2563eb' } });
+    series.push({ name: 'DEA', type: 'line', data: ind('dea'),
+      xAxisIndex: 2, yAxisIndex: 2, showSymbol: false, lineStyle: { width: 1, color: '#f59e0b' } });
+    series.push({ name: 'MACD柱', type: 'bar', data: histData, xAxisIndex: 2, yAxisIndex: 2, barWidth: '60%' });
+
+    if (areas.length) series[0].markArea = { silent: true, data: areas };
+    if (markers.length) series[0].markLine = { silent: true, symbol: 'none', data: markers };
+
+    const n = dates.length;
+    const zoomStart = n > ZOOM_BARS ? Math.max(0, (1 - ZOOM_BARS / n) * 100) : 0;
+
+    chart.setOption({
+      animation: false,
+      axisPointer: { link: [{ xAxisIndex: 'all' }] },   // 三格十字线联动
+      tooltip: { trigger: 'axis', axisPointer: { type: 'cross', label: { fontSize: 10 } },
+                 textStyle: { fontSize: 11 },
+                 formatter: (ps) => {
+                   if (!ps.length) return '';
+                   const lines = [ps[0].axisValue];
+                   ps.forEach((p) => {
+                     if (p.seriesType === 'candlestick') {
+                       const d = p.data;   // [idx, open, close, low, high]
+                       lines.push(`开 ${d[1]}　收 ${d[2]}　低 ${d[3]}　高 ${d[4]}`);
+                     } else if (p.seriesName === '执行' || p.seriesName === '信号') {
+                       lines.push(`${p.marker}${p.seriesName} ${p.data.value}`);
+                     } else if (p.seriesName === '成交量' || p.seriesName === '均量20') {
+                       lines.push(`${p.marker}${p.seriesName} ${p.value == null ? '—' : Number(p.value).toFixed(0)}万`);
+                     } else {
+                       lines.push(`${p.marker}${p.seriesName} ${p.value == null ? '—' : Number(p.value).toFixed(2)}`);
+                     }
+                   });
+                   return lines.join('<br>');
+                 } },
+      legend: { data: ['K线', 'MA5', 'MA20', 'MA60', '执行', '信号'],
+                top: 0, textStyle: { fontSize: 11 }, itemWidth: 14, itemHeight: 8 },
+      grid: [
+        { left: 40, right: 52, top: 30, height: 290 },   // 价格
+        { left: 40, right: 52, top: 342, height: 82 },   // 成交量
+        { left: 40, right: 52, top: 442, height: 100 },  // MACD
+      ],
+      xAxis: [
+        Object.assign({}, xBase, { gridIndex: 0, axisLabel: { show: false } }),
+        Object.assign({}, xBase, { gridIndex: 1, axisLabel: { show: false } }),
+        Object.assign({}, xBase, { gridIndex: 2, axisLabel: { fontSize: 10, color: '#9ca3af', formatter: (v) => String(v).slice(5) } }),
+      ],
+      yAxis: [
+        Object.assign({}, yBase, { gridIndex: 0 }),
+        Object.assign({}, yBase, { gridIndex: 1, name: '量·万', nameTextStyle: { fontSize: 9, color: '#9ca3af' }, splitNumber: 2 }),
+        Object.assign({}, yBase, { gridIndex: 2, name: 'MACD', nameTextStyle: { fontSize: 9, color: '#9ca3af' }, splitNumber: 3 }),
+      ],
+      dataZoom: [
+        { type: 'inside', xAxisIndex: [0, 1, 2], start: zoomStart, end: 100 },
+        { type: 'slider', xAxisIndex: [0, 1, 2], bottom: 6, height: 16, start: zoomStart, end: 100,
+          borderColor: '#e5e7eb', fillerColor: 'rgba(37,99,235,0.08)' },
+      ],
+      series: series,
+    }, true);  // notMerge：口径/周期切换时清除残留 series 与 markLine/markArea
+    chart.resize();
+  }
+
+  // ---------------------------------------------------------------- 弹窗
   function showModal(title, bodyHtml) {
     let m = document.getElementById('modal');
     if (!m) {
@@ -399,62 +460,10 @@
       state.price = e.target.value;
       loadAll().catch((err) => UI.showToast(err.message, 'error'));
     });
-    document.getElementById('ctl-chart-type').addEventListener('change', (e) => {
-      state.chartType = e.target.value;
-      renderPriceChart();
-      syncURL();
-    });
-    document.getElementById('ctl-start').addEventListener('change', (e) => { state.start = e.target.value || null; reload(); });
-    document.getElementById('ctl-end').addEventListener('change', (e) => { state.end = e.target.value || null; reload(); });
-    document.querySelectorAll('.ma-cb').forEach((cb) => {
-      cb.addEventListener('change', () => {
-        state.ma = Array.from(document.querySelectorAll('.ma-cb:checked')).map((c) => c.value);
-        renderPriceChart();
-        syncURL();
-      });
-    });
-    document.querySelectorAll('.panel-select').forEach((sel) => {
-      sel.addEventListener('change', () => {
-        const i = parseInt(sel.dataset.panel, 10);
-        state.panels[i] = sel.value;
-        renderPanels();
-        syncURL();
-      });
-    });
-    document.getElementById('ctl-card-markers').addEventListener('change', (e) => {
-      state.cardMarkers = e.target.checked;
-      renderPriceChart();
-      syncURL();
-    });
-    document.getElementById('ctl-exec-markers').addEventListener('change', (e) => {
-      state.execMarkers = e.target.checked;
-      renderPriceChart();
-      syncURL();
-    });
-    document.querySelectorAll('.quick-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const n = parseInt(btn.dataset.quick, 10);
-        const end = new Date();
-        const start = new Date();
-        start.setDate(start.getDate() - n);
-        state.end = end.toISOString().slice(0, 10);
-        state.start = start.toISOString().slice(0, 10);
-        applyControls();
-        reload();
-      });
-    });
     window.addEventListener('resize', () => {
-      const pc = echarts.getInstanceByDom(document.getElementById('price-chart'));
-      if (pc) pc.resize();
-      state.panels.forEach((_, i) => {
-        const c = echarts.getInstanceByDom(document.getElementById('panel-' + i));
-        if (c) c.resize();
-      });
+      const c = echarts.getInstanceByDom(document.getElementById('chart-all'));
+      if (c) c.resize();
     });
-  }
-
-  function reload() {
-    loadAll().catch((e) => UI.showToast(e.message, 'error'));
   }
 
   document.addEventListener('DOMContentLoaded', init);

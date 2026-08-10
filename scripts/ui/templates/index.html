@@ -1,55 +1,49 @@
 {% extends "base.html" %}
 {% block title %}首页 - 股票监测系统{% endblock %}
 {% block content %}
-<div id="dashboard" class="space-y-6">
-  <!-- 状态卡片 -->
-  <div id="home-stats" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
-
-  <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
-    <!-- 运行趋势 -->
-    <div class="lg:col-span-8 card">
-      <h3 class="card-title">最近 7 天运行趋势</h3>
-      <div id="run-trend" class="chart-box-sm"></div>
-    </div>
-    <!-- 最近交易日 / 快速入口 -->
-    <div class="lg:col-span-4 space-y-4">
-      <div class="card">
-        <h3 class="card-title">最近交易日</h3>
-        <div id="trade-dates" class="text-sm space-y-1"></div>
-      </div>
-      <div class="card">
-        <h3 class="card-title">快速入口</h3>
-        <div class="grid grid-cols-2 gap-2 text-sm">
-          <a class="px-3 py-2 rounded border border-gray-300 hover:bg-gray-100 text-center" href="/stocks">股票列表</a>
-          <a class="px-3 py-2 rounded border border-gray-300 hover:bg-gray-100 text-center" href="/indicators">指标分析</a>
-          <a class="px-3 py-2 rounded border border-gray-300 hover:bg-gray-100 text-center" href="/signals">信号时间轴</a>
-          <a class="px-3 py-2 rounded border border-gray-300 hover:bg-gray-100 text-center" href="/runs">运行状态</a>
-        </div>
-      </div>
-    </div>
+{% set box_texts = {'above_box': '箱体上方', 'sell_zone': '箱体内·卖区', 'mid_box': '箱体内',
+                    'buy_zone': '箱体内·买区', 'below_box': '箱体下方', 'box_breached': '破位'} %}
+<div id="launcher" class="space-y-4">
+  {% if run_alerts %}
+  <div class="rounded border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+    <span class="font-semibold">管线告警：</span>
+    {% for a in run_alerts %}
+    <span class="inline-block mr-3">{{ a.started_at[:16] }} {{ a.stage }} {{ a.status }}{% if a.error %}（{{ a.error }}）{% endif %}</span>
+    {% endfor %}
+    <a class="underline" href="/runs">前往运行页</a>
   </div>
+  {% endif %}
 
-  <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
-    <!-- 最近 24h 运行列表 -->
-    <div class="lg:col-span-5 card">
-      <h3 class="card-title">最近 24 小时运行</h3>
-      <div class="overflow-x-auto"><table class="data-table">
-        <thead><tr><th>run_id</th><th>阶段</th><th>状态</th><th>时间</th></tr></thead>
-        <tbody id="recent-runs"></tbody>
-      </table></div>
-    </div>
-    <!-- 异常清单 -->
-    <div class="lg:col-span-7 card">
-      <h3 class="card-title">异常清单</h3>
-      <div class="overflow-x-auto"><table class="data-table">
-        <thead><tr><th>股票</th><th>类型</th><th>说明</th><th>链接</th></tr></thead>
-        <tbody id="alerts-tbody"></tbody>
-      </table></div>
-      <div id="alerts-empty" class="py-6 text-center text-gray-400 hidden">无异常</div>
-    </div>
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    {% for s in stocks %}
+    <a href="/stock/{{ s.symbol }}" class="card block hover:shadow-md transition-shadow">
+      <div class="flex items-baseline justify-between">
+        <span class="text-base font-semibold">{{ s.name }}</span>
+        <span class="text-xs text-gray-500 font-mono">{{ s.symbol }}</span>
+      </div>
+      <div class="mt-2 flex items-baseline gap-3">
+        <span class="text-2xl font-mono font-semibold">{{ s.latest_close | fmt }}</span>
+        {% if s.pct_chg is not none %}
+        <span class="text-sm font-mono {{ 'text-red-600' if s.pct_chg > 0 else ('text-green-600' if s.pct_chg < 0 else 'text-gray-500') }}">
+          {{ '+' if s.pct_chg > 0 else '' }}{{ s.pct_chg | fmt }}%</span>
+        {% else %}
+        <span class="text-sm text-gray-400">—</span>
+        {% endif %}
+      </div>
+      <div class="mt-2 text-xs text-gray-600">
+        {% if s.active_card_id %}
+          {%- if s.tier_state and s.tier_state.tier %}T{{ s.tier_state.tier }} 价区内
+          {%- elif s.tier_state %}档外·距 T{{ s.tier_state.nearest_tier }} {{ '上沿' if s.tier_state.nearest_side == 'high' else '下沿' }} {{ s.tier_state.dist_pct | fmt(1) }}%
+          {%- else %}档外{%- endif -%}
+          {%- if s.box_state %} · {{ box_texts.get(s.box_state, s.box_state) }}{% endif %}
+        {% else %}无卡片{% endif %}
+      </div>
+      <div class="mt-1 text-xs text-gray-400">
+        最近 5 日触发信号 {{ s.signal_count_5d or 0 }} 项
+        {% if s.latest_trade_date %} · 数据截止 {{ s.latest_trade_date }}{% endif %}
+      </div>
+    </a>
+    {% endfor %}
   </div>
 </div>
-{% endblock %}
-{% block scripts %}
-<script src="{{ url_for('static', filename='js/index.js') }}"></script>
 {% endblock %}

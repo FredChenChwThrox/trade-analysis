@@ -1,154 +1,75 @@
 {% extends "base.html" %}
 {% block title %}{{ meta.name }}（{{ symbol }}）- 股票监测系统{% endblock %}
 {% block content %}
-<div id="stock-page" class="space-y-4" data-symbol="{{ symbol }}"
+<div id="stock-page" class="space-y-5" data-symbol="{{ symbol }}"
      data-meta='{{ meta | tojson }}'>
 
-  <!-- 概览栏 -->
-  <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 text-sm">
-    <div class="card col-span-2 md:col-span-2 lg:col-span-3">
-      <div class="text-base font-semibold">{{ meta.name }}
-        <span class="text-xs font-normal text-gray-500">{{ symbol }}</span></div>
-      <div class="text-xs text-gray-500 mt-1">
-        {{ meta.market }}{% if meta.currency %} · {{ meta.currency }}{% endif %}
-        {% if meta.benchmark_code %} · 基准 {{ meta.benchmark_code }}{% endif %}
-      </div>
+  <!-- 头部 + 关键数字卡片行（stock.js 经 /api/stocks/{symbol}/overview 填充，缺失显示 —） -->
+  <section>
+    <div class="flex items-baseline gap-3 mb-2">
+      <h1 class="text-xl font-bold">{{ meta.name }}
+        <span class="text-sm font-normal text-gray-500">{{ symbol }}</span></h1>
+      <span class="text-xs text-gray-400">数据截止 {{ meta.latest.trade_date if meta.latest else '—' }}</span>
       {% if meta.active_card %}
-      <div class="text-xs mt-1">卡片 <a class="text-blue-600" href="/cards?q={{ meta.active_card.card_version_id }}">{{ meta.active_card.card_version_id }}</a></div>
+      <span class="text-xs">卡片 <a class="text-blue-600" href="/cards?q={{ meta.active_card.card_version_id }}">{{ meta.active_card.card_version_id }}</a></span>
       {% else %}
-      <div class="text-xs mt-1 text-yellow-600">无 active 卡片</div>
+      <span class="text-xs text-yellow-600">无 active 卡片</span>
       {% endif %}
     </div>
-    <div class="card">
-      <div class="text-xs text-gray-500">最新收盘（不复权）</div>
-      <div class="text-lg font-mono font-semibold" id="ov-close">{{ meta.latest.close_raw | round(2) if meta.latest else '—' }}</div>
+    <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2" id="num-cards">
+      <div class="num-card"><div class="label">现价（不复权）</div><div class="value" id="nc-close">—</div><div class="sub" id="nc-close-sub"></div></div>
+      <div class="num-card"><div class="label">涨跌幅</div><div class="value" id="nc-pct">—</div><div class="sub" id="nc-pct-sub"></div></div>
+      <div class="num-card"><div class="label">PE(TTM)</div><div class="value" id="nc-pe">—</div><div class="sub" id="nc-pe-sub"></div></div>
+      <div class="num-card"><div class="label">档位</div><div class="value" id="nc-tier">—</div><div class="sub" id="nc-tier-sub"></div></div>
+      <div class="num-card"><div class="label">箱体</div><div class="value" id="nc-box">—</div><div class="sub" id="nc-box-sub"></div></div>
+      <div class="num-card"><div class="label">右侧</div><div class="value" id="nc-right">—</div><div class="sub" id="nc-right-sub"></div></div>
+      <div class="num-card"><div class="label">吸筹形态</div><div class="value" id="nc-accum">—</div><div class="sub" id="nc-accum-sub"></div></div>
+      <div class="num-card"><div class="label">衰竭信号</div><div class="value" id="nc-exhaust">—</div><div class="sub" id="nc-exhaust-sub"></div></div>
     </div>
-    <div class="card">
-      <div class="text-xs text-gray-500">复权因子</div>
-      <div class="text-lg font-mono">{{ "%.4f"|format(meta.latest.price_adj_factor) if meta.latest else '—' }}</div>
-    </div>
-    <div class="card">
-      <div class="text-xs text-gray-500">PE(TTM)</div>
-      <div class="text-lg font-mono" id="ov-pe">{{ meta.indicators.pe_ttm|round(2) if meta.indicators and meta.indicators.pe_ttm else '—' }}</div>
-      {% if meta.indicators and meta.indicators.pe_status %}<div class="text-xs text-yellow-600" title="{{ meta.indicators.pe_status }}">{{ meta.indicators.pe_status }}</div>{% endif %}
-    </div>
-    <div class="card">
-      <div class="text-xs text-gray-500">最新涨跌幅</div>
-      <div class="text-lg font-mono" id="ov-pct">{{ "%.2f"|format(meta.indicators.pct_chg) ~ '%' if meta.indicators and meta.indicators.pct_chg is not none else '—' }}</div>
-    </div>
-    <div class="card">
-      <div class="text-xs text-gray-500">当前档位</div>
-      <div class="text-base font-semibold" id="ov-tier">
-        {%- if meta.tier_state and meta.tier_state.tier -%}
-          T{{ meta.tier_state.tier }} 内（距边界 {{ "%.1f"|format(meta.tier_state.dist_pct) }}%）
-        {%- elif meta.tier_state -%}
-          档外（距 {{ "%.1f"|format(meta.tier_state.dist_pct) }}%）
-        {%- else -%}—{%- endif -%}
-      </div>
-    </div>
-    <div class="card">
-      <div class="text-xs text-gray-500">数据截止 / 运行</div>
-      <div class="text-xs font-mono mt-1 break-all">
-        {{ meta.latest.trade_date if meta.latest else '—' }}
-        {% if meta.recent_runs %}<br>{{ meta.recent_runs[0].run_id }}{% endif %}
-      </div>
-    </div>
-  </div>
+  </section>
 
-  <!-- 控制面板 -->
-  <div class="card">
-    <div class="flex flex-wrap items-center gap-3 text-sm">
-      <label class="flex items-center gap-1">粒度
-        <select id="ctl-granularity" class="px-2 py-1 rounded border border-gray-300">
-          <option value="daily">日线</option>
-          <option value="weekly">周线</option>
-        </select>
-      </label>
-      <label class="flex items-center gap-1">价格口径
-        <select id="ctl-price" class="px-2 py-1 rounded border border-gray-300">
+  <!-- 主图区：价格/成交量/MACD 同一时间轴三联图（单 ECharts 实例） -->
+  <section class="bg-white rounded-lg border border-gray-200 p-3">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-1 text-xs text-gray-500">
+      <span class="font-medium text-gray-700" id="chart-note"></span>
+      <label>口径:
+        <select id="ctl-price" class="px-1.5 py-0.5 rounded border border-gray-300 text-gray-700">
           <option value="unadjusted">不复权</option>
           <option value="fully_adjusted">完全复权</option>
         </select>
       </label>
-      <label class="flex items-center gap-1">主图
-        <select id="ctl-chart-type" class="px-2 py-1 rounded border border-gray-300">
-          <option value="line">折线</option>
-          <option value="candlestick">K线</option>
+      <label>周期:
+        <select id="ctl-granularity" class="px-1.5 py-0.5 rounded border border-gray-300 text-gray-700">
+          <option value="daily">日线</option>
+          <option value="weekly">周线</option>
         </select>
       </label>
-      <label class="flex items-center gap-1">开始
-        <input id="ctl-start" type="date" class="px-2 py-1 rounded border border-gray-300">
-      </label>
-      <label class="flex items-center gap-1">结束
-        <input id="ctl-end" type="date" class="px-2 py-1 rounded border border-gray-300">
-      </label>
-      <div class="flex items-center gap-1 text-xs">
-        <button type="button" data-quick="30" class="quick-btn px-2 py-1 rounded border border-gray-300 hover:bg-gray-100">近30天</button>
-        <button type="button" data-quick="90" class="quick-btn px-2 py-1 rounded border border-gray-300 hover:bg-gray-100">近90天</button>
-        <button type="button" data-quick="250" class="quick-btn px-2 py-1 rounded border border-gray-300 hover:bg-gray-100">近1年</button>
-        <button type="button" data-quick="750" class="quick-btn px-2 py-1 rounded border border-gray-300 hover:bg-gray-100">3年</button>
-      </div>
-      <div class="flex items-center gap-1">
-        <span class="text-xs text-gray-500">均线</span>
-        {% for m in ['ma5','ma10','ma20','ma60','ma120','ma250'] %}
-        <label class="inline-flex items-center gap-1 text-xs"><input type="checkbox" class="ma-cb" value="{{ m }}">{{ m|replace('ma','') }}</label>
-        {% endfor %}
-      </div>
-      <label class="flex items-center gap-1 text-xs"><input type="checkbox" id="ctl-card-markers" checked> 卡片标记</label>
-      <label class="flex items-center gap-1 text-xs"><input type="checkbox" id="ctl-exec-markers"> 执行标记</label>
+      <span>图例可点击开关各均线/标记</span>
     </div>
+    <div id="chart-all" style="height:600px"></div>
+  </section>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+    <!-- 信号现状（保持现状：overview 摘要 + 详情弹窗） -->
+    <section class="card">
+      <h3 class="card-title">信号现状</h3>
+      <div id="signal-summary" class="divide-y divide-gray-100 text-sm"></div>
+    </section>
+    <!-- 资讯流：二期接入真实资讯源，当前空态占位 -->
+    <section class="card">
+      <h3 class="card-title">资讯流
+        <span class="ml-1 text-[11px] font-normal text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">二期接入真实资讯源</span>
+      </h3>
+      <div id="news">
+        <p class="py-8 text-center text-gray-400 text-sm">资讯源二期接入，标签由 LLM 打标后存档</p>
+      </div>
+    </section>
   </div>
 
-  <!-- 主图 -->
-  <div class="card">
-    <div id="price-chart" class="chart-box"></div>
-    <p id="price-note" class="text-xs text-gray-500 mt-2"></p>
-  </div>
-
-  <!-- 副图面板 -->
-  <div id="sub-panels" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-    {% for i in range(4) %}
+  <section class="grid grid-cols-1 lg:grid-cols-2 gap-5">
     <div class="card">
-      <div class="flex items-center justify-between">
-        <h3 class="card-title mb-0">副图 {{ i + 1 }}</h3>
-        <select class="panel-select text-xs px-2 py-1 rounded border border-gray-300"
-                data-panel="{{ i }}">
-          <option value="">—</option>
-          <option value="volume" {% if i == 0 %}selected{% endif %}>成交量</option>
-          <option value="macd" {% if i == 1 %}selected{% endif %}>MACD</option>
-          <option value="rsi" {% if i == 2 %}selected{% endif %}>RSI</option>
-          <option value="kdj" {% if i == 3 %}selected{% endif %}>KDJ</option>
-          <option value="boll">BOLL</option>
-          <option value="pe">PE(TTM)</option>
-          <option value="pct_chg">涨跌幅</option>
-        </select>
-      </div>
-      <div class="chart-box-sm mt-2" id="panel-{{ i }}"></div>
-    </div>
-    {% endfor %}
-  </div>
-
-  <!-- 信号时间线 -->
-  <div class="card">
-    <h3 class="card-title">信号时间线
-      <span class="text-xs font-normal text-gray-400">（最近 {{ cfg.defaults.recent_trading_days }} 天）</span>
-    </h3>
-    <div class="overflow-x-auto">
-      <table class="data-table">
-        <thead><tr>
-          <th>观测日</th><th>信号</th><th>状态</th><th>触发</th><th>活跃截止</th><th>anchor</th><th></th>
-        </tr></thead>
-        <tbody id="signals-tbody"></tbody>
-      </table>
-      <div id="signals-empty" class="py-6 text-center text-gray-400 hidden">暂无信号</div>
-    </div>
-  </div>
-
-  <!-- 卡片与执行 -->
-  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-    <div class="card">
-      <h3 class="card-title">当前卡片</h3>
-      <div id="card-detail"><p class="text-gray-400 text-sm">无 active 卡片</p></div>
+      <h3 class="card-title">当前排期卡</h3>
+      <div id="card-detail"><p class="text-gray-400 text-sm">加载中…</p></div>
     </div>
     <div class="card">
       <h3 class="card-title">执行记录</h3>
@@ -160,7 +81,7 @@
         <div id="exec-empty" class="py-6 text-center text-gray-400 hidden">暂无执行记录</div>
       </div>
     </div>
-  </div>
+  </section>
 </div>
 {% endblock %}
 {% block scripts %}

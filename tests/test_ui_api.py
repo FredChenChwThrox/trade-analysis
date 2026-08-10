@@ -218,10 +218,10 @@ def test_date_range_reversed_400(client):
 
 # ---------------------------------------------------------------- 页面路由
 
-def test_page_stocks(client):
+def test_page_stocks_redirects_to_home(client):
     rv = client.get("/stocks")
-    assert rv.status_code == 200
-    assert "stocks.js" in rv.get_data(as_text=True)
+    assert rv.status_code == 302
+    assert rv.headers["Location"] == "/"
 
 
 def test_page_stock(client):
@@ -231,21 +231,36 @@ def test_page_stock(client):
     assert "stock.js" in rv.get_data(as_text=True)
 
 
+def test_page_stock_prototype_elements(client):
+    body = client.get("/stock/603605.SH").get_data(as_text=True)
+    # 原型定稿结构：数字卡片行、三联图容器、信号现状、资讯流空态、排期卡、执行记录
+    for el in ['id="num-cards"', 'id="nc-close"', 'id="nc-exhaust"',
+               'id="chart-all"', 'id="ctl-price"', 'id="ctl-granularity"',
+               'id="signal-summary"', 'id="news"', 'id="card-detail"', 'id="exec-tbody"']:
+        assert el in body, f"missing {el}"
+    assert "资讯源二期接入" in body
+    assert "信号现状" in body
+    assert "当前排期卡" in body
+    # 原型已删除的控件
+    for gone in ["ctl-chart-type", "ctl-start", "panel-select", "ctl-exec-markers",
+                 "event-list", "quick-btn"]:
+        assert gone not in body, f"should be removed: {gone}"
+
+
 def test_page_stock_unknown_404(client):
     rv = client.get("/stock/NOPE.X")
     assert rv.status_code == 404
 
 
 def test_all_page_routes_200(client):
-    for path in ["/", "/stocks", "/stock/603605.SH", "/indicators", "/signals",
+    for path in ["/", "/data", "/stock/603605.SH", "/indicators", "/signals",
                  "/compare", "/cards", "/runs"]:
         rv = client.get(path)
         assert rv.status_code == 200, f"{path} -> {rv.status_code}"
 
 
 def test_page_js_files_load(client):
-    for js in ["common", "index", "stocks", "stock", "indicators", "signals",
-               "compare", "cards", "runs"]:
+    for js in ["common", "stock", "indicators", "signals", "compare", "cards", "runs"]:
         rv = client.get(f"/static/js/{js}.js")
         assert rv.status_code == 200, f"missing {js}.js"
 
@@ -274,9 +289,105 @@ def test_report_non_md_blocked(client, ui_db_path):
     assert rv.status_code == 404
 
 
-def test_home_page_dashboard_elements(client):
+def test_home_page_launcher_elements(client):
     rv = client.get("/")
     body = rv.get_data(as_text=True)
-    assert "home-stats" in body
-    assert "run-trend" in body
-    assert "index.js" in body
+    assert 'id="launcher"' in body
+    assert "珀莱雅" in body
+    assert 'href="/stock/603605.SH"' in body
+    assert "无卡片" in body  # 002747.SZ 等无卡股票
+    assert "管线告警" in body  # 种子含 failed/degraded 运行
+    assert "最近 5 日触发信号" in body
+
+
+def test_data_page(client):
+    rv = client.get("/data")
+    assert rv.status_code == 200
+    body = rv.get_data(as_text=True)
+    for label, href in [("信号查询", "/signals"), ("指标查看", "/indicators"),
+                        ("多股对比", "/compare"), ("卡片版本", "/cards"),
+                        ("运行状态", "/runs")]:
+        assert label in body
+        assert f'href="{href}"' in body
+
+
+# ---------------------------------------------------------------- 单股总览 API
+
+def test_api_overview_603605(client):
+    rv = client.get("/api/stocks/603605.SH/overview")
+    assert rv.status_code == 200
+    d = rv.get_json()
+    assert d["symbol"] == "603605.SH"
+    assert d["name"] == "珀莱雅"
+    assert d["close_raw"] == 79.0
+    assert d["pct_chg"] == -0.5
+    assert d["pe_ttm"] == 15.0
+    assert d["has_card"] is True
+    assert d["card_id"] == "603605SH_120ca661"
+    # 收盘 79 高于全部价区：档外，最近边界 T1 上沿 58
+    assert d["tier"]["tier"] is None
+    assert d["tier"]["nearest_tier"] == 1
+    assert d["tier"]["text"].startswith("档外")
+    # 收盘 79 高于箱体 58：箱体上方
+    assert d["box"] == {"state": "above_box", "text": "箱体上方"}
+    # 种子 right_side 最新状态 confirmed
+    assert d["right_side"]["state"] == "confirmed"
+    # 衰竭信号：种子仅 panic（2026-07-10 active）
+    assert d["exhaustion"]["active"] == 1
+    assert d["exhaustion"]["total"] == 5
+    # 摘要覆盖 11 类信号（有卡，卡片相关项不省略）
+    assert [s["signal"] for s in d["summaries"]] == [
+        "tier_proximity", "tier_triggered", "falsification_breach", "box_position",
+        "right_side", "accumulation",
+        "panic", "dry_up", "no_new_low_3w", "divergence", "duration"]
+    panic = next(s for s in d["summaries"] if s["signal"] == "panic")
+    assert panic["state"] == "active"
+    assert panic["state_text"] == "活跃"
+    # 无数据的信号给出占位而不是编造
+    tier_prox = next(s for s in d["summaries"] if s["signal"] == "tier_proximity")
+    assert tier_prox["state"] is None
+    assert tier_prox["state_text"] == "—"
+
+
+def test_api_overview_no_card_stock(client):
+    d = client.get("/api/stocks/002747.SZ/overview").get_json()
+    assert d["has_card"] is False
+    assert d["tier"] is None
+    assert d["box"] is None
+    assert d["right_side"] is None
+    # 无卡股票摘要不含卡片相关项
+    sigs = [s["signal"] for s in d["summaries"]]
+    for sig in ["tier_proximity", "tier_triggered", "falsification_breach",
+                "box_position", "right_side"]:
+        assert sig not in sigs
+    assert "panic" in sigs
+
+
+def test_api_overview_events(client):
+    d = client.get("/api/stocks/603605.SH/overview").get_json()
+    assert d["events_total"] == 4  # 种子 4 行信号各自首行均为状态转换
+    assert len(d["events"]) == 4
+    # 时间倒序
+    dates = [e["observed_on"] for e in d["events"]]
+    assert dates == sorted(dates, reverse=True)
+    names = {e["signal"]: e["name"] for e in d["events"]}
+    assert names["tier_triggered"] == "档位触发"
+    trig = next(e for e in d["events"] if e["signal"] == "tier_triggered")
+    assert trig["triggered"] is True
+    assert "价区" in trig["text"]
+
+
+def test_api_overview_events_pagination(client):
+    d1 = client.get("/api/stocks/603605.SH/overview?event_limit=2").get_json()
+    d2 = client.get("/api/stocks/603605.SH/overview?event_limit=2&event_offset=2").get_json()
+    assert len(d1["events"]) == 2
+    assert len(d2["events"]) == 2
+    assert d1["events_total"] == d2["events_total"] == 4
+    ids1 = {e["fact_id"] for e in d1["events"]}
+    ids2 = {e["fact_id"] for e in d2["events"]}
+    assert ids1.isdisjoint(ids2)
+
+
+def test_api_overview_unknown_404(client):
+    rv = client.get("/api/stocks/NOPE.X/overview")
+    assert rv.status_code == 404

@@ -72,3 +72,13 @@ pre.json-view {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* 单股页数字卡片（2026-08-10 原型定稿） */
+.num-card { background:#fff; border:1px solid #e5e7eb; border-radius:.5rem; padding:.6rem .8rem; min-width:0; }
+.num-card .label { font-size:11px; color:#6b7280; margin-bottom:2px; }
+.num-card .value { font-size:15px; font-weight:600; white-space:nowrap; }
+.num-card .sub { font-size:11px; color:#9ca3af; }
+
+/* 红涨绿跌 */
+.up { color:#dc2626; }
+.down { color:#16a34a; }

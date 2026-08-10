@@ -1,22 +1,16 @@
 <nav class="bg-gray-900 text-white shadow">
-  <div class="container mx-auto px-4">
-    <div class="flex items-center justify-between h-14">
-      <a href="/" class="text-lg font-semibold tracking-wide">股票监测系统</a>
-      <div class="flex space-x-1">
-        {% set nav = [
-          ('home', '/', '首页'),
-          ('stocks', '/stocks', '股票列表'),
-          ('indicators', '/indicators', '指标分析'),
-          ('signals', '/signals', '信号时间轴'),
-          ('compare', '/compare', '多股对比'),
-          ('cards', '/cards', '卡片列表'),
-          ('runs', '/runs', '运行状态'),
-        ] %}
-        {% for key, href, label in nav %}
-        <a href="{{ href }}"
-           class="px-3 py-2 text-sm rounded {{ 'bg-gray-700 text-white' if active == key else 'text-gray-300 hover:bg-gray-800 hover:text-white' }}">{{ label }}</a>
-        {% endfor %}
-      </div>
-    </div>
+  <div class="container mx-auto px-4 flex items-center h-14 gap-3">
+    <a href="/" class="text-lg font-semibold tracking-wide flex-none">股票监测</a>
+    {% set current_symbol = request.path.split('/')[-1] if request.path.startswith('/stock/') else '' %}
+    <select id="stock-select" onchange="if(this.value) location.href='/stock/'+this.value"
+            class="bg-gray-800 text-sm rounded-md px-3 py-1.5 border border-gray-600 text-gray-100 focus:outline-none focus:border-gray-400">
+      <option value="">选择股票</option>
+      {% for s in nav_stocks %}
+      <option value="{{ s.symbol }}"{% if s.symbol == current_symbol %} selected{% endif %}>{{ s.name }} {{ s.symbol }}</option>
+      {% endfor %}
+    </select>
+    <span class="flex-1"></span>
+    <a href="/data"
+       class="flex-none px-3 py-2 text-sm rounded {{ 'bg-gray-700 text-white' if active == 'data' else 'text-gray-300 hover:bg-gray-800 hover:text-white' }}">数据</a>
   </div>
 </nav>

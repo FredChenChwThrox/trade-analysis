@@ -28,6 +28,46 @@ _CARD_PARSE_FIELDS = [
     "invalidation_json", "swing_box_json", "right_side_trigger_json", "input_snapshot_json",
 ]
 
+# 五项衰竭（周线）信号，与 scripts/signals/common.py WEEKLY_SIGNALS 保持一致
+WEEKLY_SIGNALS = ["panic", "dry_up", "no_new_low_3w", "divergence", "duration"]
+
+# 依赖 active 卡片的信号（无卡股票不展示这些摘要项）
+CARD_SIGNALS = {"tier_proximity", "tier_triggered", "falsification_breach",
+                "box_position", "right_side"}
+
+SIGNAL_NAMES = {
+    "panic": "恐慌型", "dry_up": "干涸型", "no_new_low_3w": "三周不创新低",
+    "divergence": "周线底背离", "duration": "持续时间",
+    "tier_proximity": "档位临近", "tier_triggered": "档位触发",
+    "falsification_breach": "证伪线", "box_position": "箱体位置",
+    "right_side": "右侧确认", "accumulation": "吸筹形态",
+    "daily_watch": "日度观察", "ma_comparison": "均线对比",
+    "card_conversion": "卡片换算",
+}
+
+# 单股页信号摘要的展示顺序
+SUMMARY_ORDER = ["tier_proximity", "tier_triggered", "falsification_breach",
+                 "box_position", "right_side", "accumulation"] + WEEKLY_SIGNALS
+
+STATE_TEXT = {
+    "active": "活跃", "inactive": "未激活", "triggered": "已触发",
+    "watching": "观察中", "incomplete": "数据不全", "idle": "空闲",
+    "pending_signals": "待确认", "suspended": "停牌",
+    "confirmed": "已确认", "failed": "已失败", "consolidating": "横盘整理",
+    "invalidated": "已失效", "expired": "已过期", "waiting_retest": "等待回踩",
+    "above": "均线上方", "below": "均线下方", "mixed": "均线交叉",
+}
+
+BOX_STATE_TEXT = {
+    "above_box": "箱体上方", "sell_zone": "卖区", "mid_box": "箱体内",
+    "buy_zone": "买区", "below_box": "箱体下方", "box_breached": "破位",
+}
+
+ACCUMULATION_STATE_TEXT = {
+    "idle": "无形态", "watching": "观察中", "consolidating": "横盘整理",
+    "confirmed": "已确认", "failed": "已失败",
+}
+
 
 def _fetch_dicts(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[dict]:
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
@@ -125,7 +165,37 @@ def compute_tier_state(close: float | None, card: dict | None) -> dict | None:
     _, t, bound = min(candidates)
     dist = (close - bound) / bound * 100
     return {"tier": None, "zone_low": t["zone_low"], "zone_high": t["zone_high"],
-            "dist_pct": round(dist, 3), "nearest": bound}
+            "dist_pct": round(dist, 3), "nearest": bound,
+            "nearest_tier": t["tier"],
+            "nearest_side": "high" if bound == float(t["zone_high"]) else "low"}
+
+
+def compute_box_state(close: float | None, swing_box: dict | None) -> str | None:
+    """现价（不复权）相对波段箱体的位置分类（与 signals/daily_watch.box_position_state 同口径）。
+
+    返回 above_box/sell_zone/buy_zone/mid_box/below_box/box_breached 之一；无箱体或无价返回 None。
+    """
+    if close is None or not swing_box:
+        return None
+
+    def _f(key):
+        v = swing_box.get(key)
+        return float(v) if v is not None else None
+
+    inv, lo, hi = _f("box_invalidation"), _f("box_low"), _f("box_high")
+    b_lo, b_hi = _f("buy_zone_low"), _f("buy_zone_high")
+    s_lo, s_hi = _f("sell_zone_low"), _f("sell_zone_high")
+    if inv is not None and close < inv:
+        return "box_breached"
+    if hi is not None and close > hi:
+        return "above_box"
+    if s_lo is not None and s_hi is not None and s_lo <= close <= s_hi:
+        return "sell_zone"
+    if b_lo is not None and b_hi is not None and b_lo <= close <= b_hi:
+        return "buy_zone"
+    if lo is not None and close < lo:
+        return "below_box"
+    return "mid_box"
 
 
 def _list_stocks_base_sql(recent_signal_days: int) -> str:
@@ -139,6 +209,8 @@ def _list_stocks_base_sql(recent_signal_days: int) -> str:
              WHERE c.symbol = w.symbol AND c.status = 'active' LIMIT 1) AS active_card_id,
            (SELECT price_tiers_json FROM strategy_card_versions c
              WHERE c.symbol = w.symbol AND c.status = 'active' LIMIT 1) AS _active_tiers,
+           (SELECT swing_box_json FROM strategy_card_versions c
+             WHERE c.symbol = w.symbol AND c.status = 'active' LIMIT 1) AS _active_box,
            {_signal_count_sql(recent_signal_days)} AS signal_count_5d,
            (SELECT pr.status FROM pipeline_runs pr
              WHERE pr.stage = 'symbol:' || w.symbol
@@ -241,7 +313,9 @@ def list_stocks(conn: sqlite3.Connection, filters: dict | None = None,
     for r in rows:
         card = {"price_tiers_json": _safe_json(r["_active_tiers"])} if r["_active_tiers"] else None
         r["tier_state"] = compute_tier_state(r["latest_close"], card)
+        r["box_state"] = compute_box_state(r["latest_close"], _safe_json(r["_active_box"]))
         del r["_active_tiers"]
+        del r["_active_box"]
     return {"page": page, "page_size": page_size, "total": total, "items": rows}
 
 
@@ -304,6 +378,265 @@ def get_stock_meta(conn: sqlite3.Connection, symbol: str) -> dict | None:
         "active_card": active_card,
         "tier_state": tier_state,
         "recent_runs": recent_runs,
+    }
+
+
+# ---------------------------------------------------------------- 单股总览（首页/单股页首屏）
+
+def _state_text(signal: str, state: str | None) -> str:
+    if state is None:
+        return "—"
+    if signal == "box_position":
+        return BOX_STATE_TEXT.get(state, state)
+    if signal == "accumulation":
+        return ACCUMULATION_STATE_TEXT.get(state, state)
+    return STATE_TEXT.get(state, state)
+
+
+def _fmt_int(v) -> str:
+    return "—" if v is None else f"{float(v):,.0f}"
+
+
+def _summary_detail(signal: str, state: str | None, details: dict | None) -> str:
+    """从 details_json 提取关键数字，组成一句人类可读说明（缺失给空串）。"""
+    d = details or {}
+    if signal == "dry_up":
+        cur, thr = d.get("current_volume"), d.get("threshold_volume")
+        if cur is not None and thr is not None:
+            return f"当前周量 {_fmt_int(cur)} vs 阈值 {_fmt_int(thr)}"
+    elif signal == "duration":
+        if d.get("elapsed_weeks") is not None:
+            return f"已持续 {d['elapsed_weeks']} 周"
+    elif signal == "no_new_low_3w":
+        lows = d.get("confirm_lows")
+        if lows:
+            return f"连续 {len(lows)} 周未创新低"
+    elif signal == "panic":
+        anchor = d.get("anchor") or {}
+        if anchor.get("anchor_date"):
+            return f"恐慌低点锚点 {anchor['anchor_date']}"
+    elif signal == "divergence":
+        if d.get("candidate_pivot_week"):
+            return f"候选枢轴周 {d['candidate_pivot_week']}"
+    elif signal == "tier_proximity":
+        for t in d.get("tiers", []):
+            if t.get("within_proximity") and t.get("distance_to_nearest_boundary_pct") is not None:
+                return f"距 T{t['tier']} 边界 {float(t['distance_to_nearest_boundary_pct']) * 100:.1f}%"
+    elif signal == "tier_triggered":
+        for t in d.get("tiers", []):
+            if t.get("in_zone"):
+                return f"收盘在 T{t['tier']} 价区（{t['zone_low']}–{t['zone_high']}）"
+    elif signal == "falsification_breach":
+        n, c = d.get("consecutive_breach_days"), d.get("confirm_days")
+        if n is not None and c is not None:
+            return f"连续跌破 {n}/{c} 日"
+    elif signal == "box_position":
+        if d.get("close_raw") is not None:
+            return f"收盘 {d['close_raw']} 位于{_state_text(signal, state)}"
+    elif signal == "right_side":
+        if d.get("trigger_level") is not None:
+            return f"触发位 {d['trigger_level']}"
+    elif signal == "accumulation":
+        parts = []
+        if d.get("breakdown_date"):
+            parts.append(f"破位日 {d['breakdown_date']}")
+        if d.get("box_low") is not None and d.get("box_high") is not None:
+            parts.append(f"箱体 {d['box_low']:.2f}–{d['box_high']:.2f}")
+        if d.get("probe_count"):
+            parts.append(f"试盘 {d['probe_count']} 次")
+        if parts:
+            return "；".join(parts)
+    return ""
+
+
+def _event_text(signal: str, state: str, triggered: bool, details: dict | None) -> str:
+    """事件流一句话（不含日期与信号名，由前端拼接）。"""
+    d = details or {}
+    if signal == "tier_triggered" and triggered:
+        for t in d.get("tiers", []):
+            if t.get("in_zone"):
+                return f"收盘进入 T{t['tier']} 价区"
+        if d.get("tier") is not None:
+            return f"收盘进入 T{d['tier']} 价区"
+    if signal == "tier_proximity":
+        for t in d.get("tiers", []):
+            if t.get("within_proximity") and t.get("distance_to_nearest_boundary_pct") is not None:
+                return f"临近 T{t['tier']} 价区（距边界 {float(t['distance_to_nearest_boundary_pct']) * 100:.1f}%）"
+    if signal == "falsification_breach":
+        n, c = d.get("consecutive_breach_days"), d.get("confirm_days")
+        if state == "active":
+            return "确认跌破证伪线"
+        if n:
+            return f"跌破证伪线 {n}/{c} 日"
+    if signal == "box_position":
+        return {"buy_zone": "收盘进入买区", "sell_zone": "收盘进入卖区",
+                "box_breached": "收盘跌破箱体"}.get(state, f"转为{_state_text(signal, state)}")
+    if signal == "accumulation" and triggered:
+        return {"breakdown_detected": "放量破位，转入观察",
+                "consolidation_confirmed": "横盘条件成立，转入整理",
+                "breakout_confirmed": "放量突破箱体上沿，形态成立",
+                "box_broken": "跌破箱体下沿，形态失效"}.get(
+                    str(d.get("reason")), f"转为{_state_text(signal, state)}")
+    if signal == "right_side":
+        return {"confirmed": "右侧确认成立", "waiting_retest": "突破触发位，等待回踩",
+                "invalidated": "跌破止损位，已失效", "expired": "已过期",
+                "idle": "回到空闲"}.get(state, f"转为{_state_text(signal, state)}")
+    if signal in WEEKLY_SIGNALS and state == "active":
+        extra = _summary_detail(signal, state, d)
+        return f"转为活跃{('：' + extra) if extra else ''}"
+    return f"转为{_state_text(signal, state)}"
+
+
+def _latest_signal_rows(conn: sqlite3.Connection, symbol: str) -> dict[str, dict]:
+    """每个信号最新一行（observed_on 最大），按 signal 去重。"""
+    rows = _fetch_dicts(
+        conn,
+        """
+        SELECT sf.fact_id, sf.signal, sf.observed_on, sf.state, sf.triggered,
+               sf.anchor_id, sf.details_json
+        FROM signal_facts sf
+        JOIN (SELECT signal, MAX(observed_on) AS mo FROM signal_facts
+              WHERE symbol = ? GROUP BY signal) t
+          ON t.signal = sf.signal AND t.mo = sf.observed_on
+        WHERE sf.symbol = ? ORDER BY sf.fact_id DESC
+        """,
+        (symbol, symbol),
+    )
+    out: dict[str, dict] = {}
+    for r in rows:
+        if r["signal"] not in out:
+            r["triggered"] = bool(r["triggered"])
+            r["details"] = _safe_json(r["details_json"])
+            out[r["signal"]] = r
+    return out
+
+
+def list_signal_events(conn: sqlite3.Connection, symbol: str,
+                       limit: int = 20, offset: int = 0) -> dict:
+    """事件流：triggered=1 或 state 相对上一行发生转换的事实，时间倒序。"""
+    rows = _fetch_dicts(
+        conn,
+        """
+        SELECT fact_id, observed_on, signal, state, triggered, details_json
+        FROM signal_facts WHERE symbol = ? ORDER BY observed_on ASC, fact_id ASC
+        """,
+        (symbol,),
+    )
+    prev: dict[str, str] = {}
+    events: list[dict] = []
+    for r in rows:
+        changed = prev.get(r["signal"]) != r["state"]
+        prev[r["signal"]] = r["state"]
+        if r["triggered"] or changed:
+            events.append(r)
+    events.sort(key=lambda r: (r["observed_on"], r["fact_id"]), reverse=True)
+    total = len(events)
+    items = []
+    for r in events[offset:offset + limit]:
+        details = _safe_json(r["details_json"])
+        items.append({
+            "fact_id": r["fact_id"], "observed_on": r["observed_on"],
+            "signal": r["signal"], "name": SIGNAL_NAMES.get(r["signal"], r["signal"]),
+            "state": r["state"], "state_text": _state_text(r["signal"], r["state"]),
+            "triggered": bool(r["triggered"]),
+            "text": _event_text(r["signal"], r["state"], bool(r["triggered"]), details),
+        })
+    return {"total": total, "items": items}
+
+
+def get_stock_overview(conn: sqlite3.Connection, symbol: str,
+                       event_limit: int = 20, event_offset: int = 0) -> dict | None:
+    """单股页首屏总览：关键数字 + 信号摘要 + 事件流（缺数据字段 None，前端显示"—"）。"""
+    w = conn.execute("SELECT symbol, name, market FROM watchlist WHERE symbol = ?",
+                     (symbol,)).fetchone()
+    if w is None:
+        return None
+
+    latest = conn.execute(
+        "SELECT trade_date, close_raw FROM daily_bars WHERE symbol = ? "
+        "ORDER BY trade_date DESC LIMIT 1", (symbol,)).fetchone()
+    latest = dict(latest) if latest else None
+    ind = None
+    if latest:
+        ind = conn.execute(
+            "SELECT pct_chg, pe_ttm, pe_status FROM indicators_daily "
+            "WHERE symbol = ? AND trade_date = ?", (symbol, latest["trade_date"])).fetchone()
+        ind = dict(ind) if ind else None
+
+    card_row = conn.execute(
+        "SELECT * FROM strategy_card_versions WHERE symbol = ? AND status = 'active' LIMIT 1",
+        (symbol,)).fetchone()
+    card = _parse_card(dict(card_row)) if card_row else None
+    close = latest["close_raw"] if latest else None
+
+    tier_state = compute_tier_state(close, card)
+    if tier_state and tier_state.get("tier"):
+        tier_text = f"T{tier_state['tier']} 内"
+    elif tier_state:
+        side = "上沿" if tier_state.get("nearest_side") == "high" else "下沿"
+        tier_text = (f"档外·距 T{tier_state.get('nearest_tier')} {side} "
+                     f"{tier_state['dist_pct']:.1f}%")
+    else:
+        tier_text = None
+    box_state = compute_box_state(close, (card or {}).get("swing_box_json"))
+
+    latest_rows = _latest_signal_rows(conn, symbol)
+
+    def _sig_entry(sig: str) -> dict | None:
+        r = latest_rows.get(sig)
+        if r is None:
+            return None
+        return {"state": r["state"], "text": _state_text(sig, r["state"]),
+                "observed_on": r["observed_on"]}
+
+    # 衰竭信号：同 anchor 最近完成周 state=active 计数
+    exhaustion = None
+    week_rows = [r for s in WEEKLY_SIGNALS if (r := latest_rows.get(s))]
+    if week_rows:
+        week_end = max(r["observed_on"] for r in week_rows)
+        same_week = [r for r in week_rows if r["observed_on"] == week_end]
+        anchor_id = next((r["anchor_id"] for r in same_week if r["anchor_id"]), None)
+        exhaustion = {
+            "active": sum(1 for r in same_week if r["state"] == "active"),
+            "total": len(WEEKLY_SIGNALS), "week_end": week_end, "anchor_id": anchor_id,
+        }
+
+    summaries = []
+    for sig in SUMMARY_ORDER:
+        if sig in CARD_SIGNALS and not card:
+            continue
+        r = latest_rows.get(sig)
+        if r is None:
+            summaries.append({"signal": sig, "name": SIGNAL_NAMES[sig], "state": None,
+                              "state_text": "—", "detail": "", "observed_on": None,
+                              "fact_id": None, "triggered": False})
+        else:
+            summaries.append({
+                "signal": sig, "name": SIGNAL_NAMES[sig], "state": r["state"],
+                "state_text": _state_text(sig, r["state"]),
+                "detail": _summary_detail(sig, r["state"], r["details"]),
+                "observed_on": r["observed_on"], "fact_id": r["fact_id"],
+                "triggered": r["triggered"],
+            })
+
+    events = list_signal_events(conn, symbol, limit=event_limit, offset=event_offset)
+    return {
+        "symbol": symbol, "name": w["name"], "market": w["market"],
+        "latest_trade_date": latest["trade_date"] if latest else None,
+        "close_raw": close,
+        "pct_chg": ind.get("pct_chg") if ind else None,
+        "pe_ttm": ind.get("pe_ttm") if ind else None,
+        "pe_status": (ind.get("pe_status") or None) if ind else None,
+        "has_card": card is not None,
+        "card_id": card["card_version_id"] if card else None,
+        "tier": ({**tier_state, "text": tier_text} if tier_state else None),
+        "box": ({"state": box_state, "text": BOX_STATE_TEXT[box_state]}
+                if box_state else None),
+        "right_side": _sig_entry("right_side") if card else None,
+        "accumulation": _sig_entry("accumulation"),
+        "exhaustion": exhaustion,
+        "summaries": summaries,
+        "events": events["items"], "events_total": events["total"],
     }
 
 
@@ -439,7 +772,7 @@ def get_stock_indicators(conn: sqlite3.Connection, symbol: str, granularity: str
         raise ValueError(f"unsupported granularity: {granularity}")
     table, date_col = _INDICATOR_TABLES[granularity]
     allowed = _indicator_columns(conn, table)
-    if fields is None:
+    if not fields:  # None 或空列表：返回全部列
         select = allowed
     else:
         bad = [f for f in fields if f not in allowed]
@@ -855,6 +1188,18 @@ def get_compare(conn: sqlite3.Connection, symbols: list[str], metric: str,
 
 
 # ---------------------------------------------------------------- 仪表板
+
+def list_run_alerts(conn: sqlite3.Connection, limit: int = 5) -> list[dict]:
+    """最近 failed/degraded 运行（首页警示 banner）。"""
+    return _fetch_dicts(
+        conn,
+        """
+        SELECT stage, status, error, started_at FROM pipeline_runs
+        WHERE status IN ('failed', 'degraded') ORDER BY started_at DESC LIMIT ?
+        """,
+        (limit,),
+    )
+
 
 def get_dashboard(conn: sqlite3.Connection) -> dict:
     """首页概览（docs/ui_design_phase1.md §3.1 / task-10）。"""

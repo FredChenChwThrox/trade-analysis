@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}数据 - 股票监测系统{% endblock %}
+{% block content %}
+<div class="space-y-4">
+  <p class="text-sm text-gray-500">底层数据查询入口（原始表与多股分析工具，日常看单股页即可）。</p>
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <a href="/signals" class="card block hover:shadow-md transition-shadow">
+      <div class="text-base font-semibold">信号查询</div>
+      <p class="text-xs text-gray-500 mt-1">signal_facts 原始记录多条件筛选与详情，适合核对某次触发的全部字段。</p>
+    </a>
+    <a href="/indicators" class="card block hover:shadow-md transition-shadow">
+      <div class="text-base font-semibold">指标查看</div>
+      <p class="text-xs text-gray-500 mt-1">单/多股指标序列图表（MA/MACD/RSI/BOLL 等），支持口径与粒度切换。</p>
+    </a>
+    <a href="/compare" class="card block hover:shadow-md transition-shadow">
+      <div class="text-base font-semibold">多股对比</div>
+      <p class="text-xs text-gray-500 mt-1">2~6 只股票同一指标的时间序列对齐对比。</p>
+    </a>
+    <a href="/cards" class="card block hover:shadow-md transition-shadow">
+      <div class="text-base font-semibold">卡片版本</div>
+      <p class="text-xs text-gray-500 mt-1">排期卡版本列表与完整 JSON（价区/证伪线/箱体/右侧触发）。</p>
+    </a>
+    <a href="/runs" class="card block hover:shadow-md transition-shadow">
+      <div class="text-base font-semibold">运行状态</div>
+      <p class="text-xs text-gray-500 mt-1">pipeline_runs / report_runs 运行审计，排查失败与降级原因。</p>
+    </a>
+  </div>
+</div>
+{% endblock %}

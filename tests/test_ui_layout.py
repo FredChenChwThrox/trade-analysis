@@ -41,8 +41,19 @@ def test_base_page_renders(client):
 def test_navbar_present(client):
     rv = client.get("/")
     body = rv.get_data(as_text=True)
-    for href in ["/stocks", "/indicators", "/signals", "/cards", "/runs"]:
-        assert f'href="{href}"' in body
+    # 导航 = 股票下拉框（全部 watchlist）+ 数据入口
+    assert 'id="stock-select"' in body
+    assert '<option value="603605.SH"' in body
+    assert "珀莱雅" in body
+    assert 'href="/data"' in body
+    # 旧导航项已下线
+    for label in ["股票列表", "指标分析", "信号时间轴", "多股对比", "卡片列表", "运行状态"]:
+        assert label not in body
+
+
+def test_navbar_highlights_current_stock(client):
+    body = client.get("/stock/601318.SH").get_data(as_text=True)
+    assert '<option value="601318.SH" selected>' in body
 
 
 def test_404_page(client):
