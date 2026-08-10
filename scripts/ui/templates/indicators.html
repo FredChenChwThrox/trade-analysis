@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}指标分析 - 股票监测系统{% endblock %}
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+  <aside class="lg:col-span-3 card space-y-3 text-sm">
+    <h3 class="card-title">指标筛选</h3>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">股票（1~6 只，可搜索添加）</label>
+      <div id="ind-symbol-search" class="mb-1"></div>
+      <div id="ind-symbol-tags" class="flex flex-wrap gap-1"></div>
+    </div>
+    <div class="grid grid-cols-2 gap-2">
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">粒度</label>
+        <select id="ind-granularity" class="w-full px-2 py-1 rounded border border-gray-300">
+          <option value="daily">日线</option>
+          <option value="weekly">周线</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">价格口径</label>
+        <select id="ind-price" class="w-full px-2 py-1 rounded border border-gray-300">
+          <option value="unadjusted">不复权</option>
+          <option value="fully_adjusted">完全复权</option>
+        </select>
+      </div>
+    </div>
+    <div class="grid grid-cols-2 gap-2">
+      <div><label class="block text-xs text-gray-500 mb-1">开始</label><input id="ind-start" type="date" class="w-full px-2 py-1 rounded border border-gray-300"></div>
+      <div><label class="block text-xs text-gray-500 mb-1">结束</label><input id="ind-end" type="date" class="w-full px-2 py-1 rounded border border-gray-300"></div>
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">指标（1~6 个）</label>
+      {% set groups = [
+        ('价格/量', ['close','volume','amount','pct_chg','amplitude']),
+        ('均线', ['ma5','ma10','ma20','ma60','ma120','ma250']),
+        ('MACD', ['dif','dea','macd_hist']),
+        ('RSI', ['rsi6','rsi12','rsi24']),
+        ('BOLL', ['boll_mid','boll_upper','boll_lower','boll_bandwidth']),
+        ('KDJ', ['kdj_k','kdj_d','kdj_j']),
+        ('量能', ['vol_ma5','vol_ma10','vol_mean20','vol_std20','vol_mean60','vol_std60']),
+        ('估值', ['pe_ttm']),
+      ] %}
+      <div class="space-y-1 max-h-64 overflow-auto">
+        {% for gname, fields in groups %}
+        <div>
+          <div class="text-xs font-semibold text-gray-500">{{ gname }}</div>
+          <div class="flex flex-wrap gap-2">
+            {% for f in fields %}
+            <label class="inline-flex items-center gap-1 text-xs"><input type="checkbox" class="ind-field-cb" value="{{ f }}"> {{ f }}</label>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="flex gap-2">
+      <button id="ind-apply" class="flex-1 px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700">加载</button>
+      <button id="ind-clear" class="px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-100">清空</button>
+    </div>
+    <div>
+      <button id="ind-csv" class="w-full px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-100">导出 CSV</button>
+    </div>
+  </aside>
+  <section class="lg:col-span-9 space-y-4">
+    <div id="ind-charts" class="space-y-4"></div>
+    <div id="ind-empty" class="card text-center text-gray-400 py-10">请选择股票和指标后加载</div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/indicators.js') }}"></script>
+{% endblock %}

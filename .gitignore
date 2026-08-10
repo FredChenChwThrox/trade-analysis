@@ -6,6 +6,7 @@ __pycache__/
 
 # 外部工具状态
 .workbuddy/
+.opencode/
 
 # 系统
 .DS_Store

@@ -121,3 +121,29 @@
 - **报告指标快照新增折回展示（§5.4 口径纪律）**：用户反馈中国平安 BOLL"对不上"——核实为复权口径展示问题（601318.SH 当前因子 1.161792，BOLL 中轨 61.7394 = 前 20 日复权收盘均值，手工复算分毫不差；不复权现价 53.38 看似偏离实为口径差）。report.py 指标快照段 MA6 条与 BOLL 三轨各加一行折回值（复权 ÷ indicators_daily 当日 price_adj_factor，因子取自 daily_bars 同日行，缺失则不显示折回行），复权原值保留。161 项测试全绿；601318.SH 报告实测：MA20 折回 53.1415、BOLL 折回 中 53.1415 / 上 56.7573 / 下 49.5257，现价 53.38 站中轨上方，口径自洽。
 - **交接文档沉淀 + git 接管**：新增 `docs/handoff.md`（其他智能体接收入口：环境/目录结构/常用命令/关键约定/当前状态与已知缺口/常见任务指引，读文档顺序 system_design → implementation_plan → execution_log → handoff）与根目录 `AGENTS.md`（精简版硬性约定：口径纪律/不猜/无未来函数/LLM 边界/文档纪律/每日例行）。git init（main 分支）+ `.gitignore`（.venv/__pycache__/.pytest_cache/.workbuddy/.DS_Store/data/market.db——库为派生二进制，可由 data/raw 重跑管线重建；raw CSV 仅 980K 入库管理保证可重建性）；首次提交 7ba4a66，180 文件。
 - **数据库设计文档**：新增 `docs/database_schema.md`——以 migrations/0001_init.sql 为准的逐表逐字段说明：通用约定（生命周期六类/UTC 与市场本地日期/定点十进制 TEXT/复权口径）、25 表速查清单（生命周期/主键/写入方）、按 9 组分组的逐表字段表（运行审计、配置日历、行情与公司行为、事件消息、财务股本预测汇率、指标、信号、决策执行、输出）、signal_facts 的 signal 取值与写入模块对照、关键引用关系图与日常查询入口。handoff.md 与 AGENTS.md 已加链接。
+
+## 2026-08-10（续）
+
+- **Web UI 第一期完成（docs/tasks/ 00–11，TDD 全流程）**：
+  - 初始化：`config/ui.yaml`（app/defaults/price_display/charts 配色）、`scripts/ui/{__init__,db,config,parse_args,app}.py`、`pyproject.toml` 增 flask>=3.0.0。`app.py` 用 `create_app(db_path, ui_config)` 工厂（测试注入临时库）+ `main()` CLI；`GET /health` 返回库状态；`TRADE_DB_PATH` 环境变量可覆盖库路径。
+  - 查询层：`scripts/ui/queries.py` 全部只读查询（股票列表/单股 bars 与指标/信号/卡片/执行/运行/仪表板）；参数化 SQL + 排序白名单；`compute_tier_state` 档位计算；指标 `unadjusted/adjusted_back` 对价格刻度字段（MA/BOLL）按当日因子折回（§5.1）；周线不复权 = 按 weekly_bars 周边界聚合 daily_bars 原始 OHLC；`get_multi_indicators`/`get_compare`/`get_dashboard(_alerts/_run_stats)`。
+  - 布局与页面：`base.html` + navbar/filter_bar/footer partials + 404/500；`common.js`（formatDate/formatNumber/fetchJSON/renderStatusBadge/initStockSearch 等 11 个工具）；8 个页面（`/` `/stocks` `/stock/{symbol}` `/indicators` `/signals` `/compare` `/cards` `/runs`）均服务端渲染骨架 + 页面 JS 拉 API 渲染，URL query 全状态同步（刷新/分享不丢失），ECharts 主副图联动缩放，60s 自动刷新（首页/运行页）。`/reports/<path>` 只读服务报告 Markdown（限定 .md、越界 404）。
+  - 价格口径纪律落库到 UI：股票列表/单股页标注复权因子与口径说明；不复权模式指标自动折回可与卡片价区直接对比。
+  - 数据质量虚拟码：`pe_status` 筛选支持 ok（空或 `ok%`）/degraded（含 degraded）/missing（其他原因码），兼容真实库 `ok;degraded_available_at` 标注。
+  - 测试：`tests/conftest.py`（`ui_db_path`/`ui_conn`/`client` fixtures）+ `tests/ui_seed.py`（确定性合成数据：7 股、因子 1.0/2.0 两档、30 交易日、信号/卡片/执行/运行/报告）+ `tests/test_ui_app.py`4 + `test_ui_queries.py`50 + `test_ui_layout.py`10 + `test_ui_api.py`37。**`uv run pytest -q` 262 项全绿**（161 原 + 101 UI）。
+  - 性能实测（真实库）：/api/stocks 50 条 ~8ms、3 年日线 ~5ms、6×6 指标 ~6ms、6 股对比 ~3ms、首页 ~5ms，远低于验收线。
+  - 启动：`uv run python -m scripts.ui.app` → http://127.0.0.1:5000/health。
+  - 偏差/决定：① 指标行返回键用 `date`、bar 行用 `trade_date`；② compare 的 close/volume/amount 走 bars 口径（支持复权与周线聚合），其余指标走折回口径；③ 生效区间筛选只针对有 effective_from 的卡片；④ "今日"口径 = 全库最新 trade_date（非自然日）；⑤ `page_size` 上限钳制 200 而非报错；⑥ 各页面进度记录见 `docs/tasks/progress/task-00..11-done.md`。
+
+## 2026-08-10（下午）
+
+- **UI 第一期入库 + 交互审查修复**：另一智能体按 `docs/ui_design_phase1.md` 实现只读 Web UI（`scripts/ui/`，Flask + Tailwind/ECharts CDN，9 页面 + 15 API，`config/ui.yaml`，101 项 pytest）。本次交互审查后修复 6 项：
+  1. **P0 单股页主图崩溃**：stock.js `closeByDate` 声明在 execMarkers 块内、块外引用 → ReferenceError 全图白屏（两只股票默认打开即坏）。声明提到块外（执行/信号散点共用）。
+  2. **P0 口径错误**：完全复权模式下卡片价区/证伪线/箱体/执行标记仍按不复权原价叠加（珀莱雅偏 6%、平安 16%）。改为其仅在非 fully_adjusted 模式渲染，PRICE_NOTE 补说明（§5.1 口径纪律）。
+  3. **P1 跨页动线断**：列表页"对比选中"逗号拼接 URL，compare/indicators 页 getAll 不拆 → readURL 改 flatMap(split(',')) 兼容两种形式。
+  4. **P1 runs 页报告详情取错表**：拿 report_run_id 撞 pipeline_runs。后端 report_filters/list_report_runs 新增 report_run_id 过滤，前端报告行改查 /api/reports。
+  5. **setOption 合并残留**：stock/compare 三处改 notMerge + getInstanceByDom 复用实例（取消勾选/移除股票后旧 series 不再残留）。
+  6. **全局筛选条死控件**：事件只在列表页绑定，其余 7 页为死控件且与 stock.js 快捷按钮串扰。base.html 改条件 include（show_filter_bar），仅 /stocks 传入。
+  - 附带：runs 页两个表格补详情列缺失的表头。
+  - 验证：262 项 pytest 全绿（161 + UI 101）；node --check 4 个改动 JS 通过；重启服务后实测 9 页面全 200、/api/reports?report_run_id=1 返回正确记录、首页无筛选条/列表页有、对比 API 逗号参数正常。遗留未修（打磨级）：执行记录买卖颜色不一致、首页"今日"标签实为最新交易日、信号页 timeline 固定 200 条窗口、默认日期 90 日历日 vs 设计 90 交易日、pe_status 徽章口径不一致、JS 无测试。
+  - gitignore 增加 .opencode/（工具状态）；docs/tasks/（UI 任务分解文档）随 UI 一并入库。

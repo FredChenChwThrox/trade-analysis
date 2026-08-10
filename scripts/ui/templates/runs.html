@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}运行状态 - 股票监测系统{% endblock %}
+{% block content %}
+<!-- 统计看板 -->
+<div id="runs-stats" class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4 text-sm"></div>
+
+<div class="card mb-4">
+  <div class="flex flex-wrap items-center gap-3 text-sm">
+    <div class="flex border border-gray-300 rounded overflow-hidden">
+      <button id="tab-pipeline" class="px-4 py-1.5 bg-blue-600 text-white">Pipeline Runs</button>
+      <button id="tab-reports" class="px-4 py-1.5 hover:bg-gray-100">Report Runs</button>
+    </div>
+    <input id="run-id" type="text" placeholder="run_id 包含" class="px-2 py-1 rounded border border-gray-300 w-52">
+    <select id="run-stage" class="px-2 py-1 rounded border border-gray-300">
+      <option value="">全部阶段</option>
+    </select>
+    <input id="run-status" type="text" placeholder="状态" class="px-2 py-1 rounded border border-gray-300 w-24">
+    <input id="run-start" type="date" class="px-2 py-1 rounded border border-gray-300">
+    <span class="text-gray-400">~</span>
+    <input id="run-end" type="date" class="px-2 py-1 rounded border border-gray-300">
+    <button id="run-apply" class="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700">筛选</button>
+  </div>
+</div>
+
+<div id="runs-table" class="card overflow-x-auto"></div>
+
+<div class="flex flex-wrap items-center justify-between gap-3 mt-3 text-sm">
+  <span id="runs-total" class="text-gray-500"></span>
+  <div class="flex items-center gap-2">
+    <button id="runs-prev" class="px-3 py-1 rounded border border-gray-300 hover:bg-gray-100">上一页</button>
+    <button id="runs-next" class="px-3 py-1 rounded border border-gray-300 hover:bg-gray-100">下一页</button>
+    <span class="text-xs text-gray-400">60 秒自动刷新</span>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/runs.js') }}"></script>
+{% endblock %}

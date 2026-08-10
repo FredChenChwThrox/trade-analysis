@@ -1,0 +1,22 @@
+<nav class="bg-gray-900 text-white shadow">
+  <div class="container mx-auto px-4">
+    <div class="flex items-center justify-between h-14">
+      <a href="/" class="text-lg font-semibold tracking-wide">股票监测系统</a>
+      <div class="flex space-x-1">
+        {% set nav = [
+          ('home', '/', '首页'),
+          ('stocks', '/stocks', '股票列表'),
+          ('indicators', '/indicators', '指标分析'),
+          ('signals', '/signals', '信号时间轴'),
+          ('compare', '/compare', '多股对比'),
+          ('cards', '/cards', '卡片列表'),
+          ('runs', '/runs', '运行状态'),
+        ] %}
+        {% for key, href, label in nav %}
+        <a href="{{ href }}"
+           class="px-3 py-2 text-sm rounded {{ 'bg-gray-700 text-white' if active == key else 'text-gray-300 hover:bg-gray-800 hover:text-white' }}">{{ label }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</nav>

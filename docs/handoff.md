@@ -58,6 +58,12 @@ uv run python -m scripts.pipeline.card reject <card_version_id>
 
 # 执行记录（正常 / 补录历史手工单）
 uv run python -m scripts.pipeline.execution add ... [--backfill --note "..."]
+
+# 只读 Web UI（第一期，docs/ui_design_phase1.md）
+uv run python -m scripts.ui.app                    # http://127.0.0.1:5000/，/health 探活
+uv run python -m scripts.ui.app --port 5001        # 覆盖 host/port
+# 页面：/ /stocks /stock/{symbol} /indicators /signals /compare /cards /runs；筛选条件随 URL 保持。
+# 前端模板 scripts/ui/templates/，JS scripts/ui/static/js/（无构建链，Tailwind/ECharts CDN）。
 ```
 
 ## 4. 关键约定（违反会出错的点）
@@ -72,7 +78,7 @@ uv run python -m scripts.pipeline.execution add ... [--backfill --note "..."]
 
 ## 5. 当前状态（2026-08-10）
 
-- 进度：D0–D2 全部完成；D3.3 首张真实排期卡已激活（603605.SH 珀莱雅 `603605SH_120ca661`，effective 2026-08-10，next_review 2026-08-31）；**D3.4 数周并行观察期进行中**；D3 消息评价（LLM 事件研究）未做。
+- 进度：D0–D2 全部完成；D3.3 首张真实排期卡已激活（603605.SH 珀莱雅 `603605SH_120ca661`，effective 2026-08-10，next_review 2026-08-31）；**D3.4 数周并行观察期进行中**；D3 消息评价（LLM 事件研究）未做。**UI 第一期全部任务完成（docs/tasks/ 00–11），262 项测试全绿**。
 - watchlist 6 只：603605.SH（唯一有卡，4 笔历史波段已补录 executions #1–#4）、603288.SH、601318.SH、002747.SZ、601899.SH、600029.SH（各 3 年日线+周线+指标+衰竭信号齐全，无卡，日报卡片项 incomplete 属预期）。
 - 已知缺口：① 港股日历未填充、港股源未接；② 公告接口（get_stock_announcement）返回空未验证；③ 财报披露时间缺失，pe_status 带 degraded_available_at 标注；④ 吸筹形态参数待人工核对（珀莱雅近期两次 -5% 以上大跌量比 1.4–1.6 未达 2.0 阈值未触发）；⑤ 换手率/股东人数（筹码集中度间接指标）未采集；⑥ 筹码分布数据无源（数据源无接口，评估见执行日志）。
 - 下一例行事项：2026-08-10（周一）盘后首个正式 daily（先采集增量再 `--raw-dir`）。

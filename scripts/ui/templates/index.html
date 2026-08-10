@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}首页 - 股票监测系统{% endblock %}
+{% block content %}
+<div id="dashboard" class="space-y-6">
+  <!-- 状态卡片 -->
+  <div id="home-stats" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+    <!-- 运行趋势 -->
+    <div class="lg:col-span-8 card">
+      <h3 class="card-title">最近 7 天运行趋势</h3>
+      <div id="run-trend" class="chart-box-sm"></div>
+    </div>
+    <!-- 最近交易日 / 快速入口 -->
+    <div class="lg:col-span-4 space-y-4">
+      <div class="card">
+        <h3 class="card-title">最近交易日</h3>
+        <div id="trade-dates" class="text-sm space-y-1"></div>
+      </div>
+      <div class="card">
+        <h3 class="card-title">快速入口</h3>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <a class="px-3 py-2 rounded border border-gray-300 hover:bg-gray-100 text-center" href="/stocks">股票列表</a>
+          <a class="px-3 py-2 rounded border border-gray-300 hover:bg-gray-100 text-center" href="/indicators">指标分析</a>
+          <a class="px-3 py-2 rounded border border-gray-300 hover:bg-gray-100 text-center" href="/signals">信号时间轴</a>
+          <a class="px-3 py-2 rounded border border-gray-300 hover:bg-gray-100 text-center" href="/runs">运行状态</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+    <!-- 最近 24h 运行列表 -->
+    <div class="lg:col-span-5 card">
+      <h3 class="card-title">最近 24 小时运行</h3>
+      <div class="overflow-x-auto"><table class="data-table">
+        <thead><tr><th>run_id</th><th>阶段</th><th>状态</th><th>时间</th></tr></thead>
+        <tbody id="recent-runs"></tbody>
+      </table></div>
+    </div>
+    <!-- 异常清单 -->
+    <div class="lg:col-span-7 card">
+      <h3 class="card-title">异常清单</h3>
+      <div class="overflow-x-auto"><table class="data-table">
+        <thead><tr><th>股票</th><th>类型</th><th>说明</th><th>链接</th></tr></thead>
+        <tbody id="alerts-tbody"></tbody>
+      </table></div>
+      <div id="alerts-empty" class="py-6 text-center text-gray-400 hidden">无异常</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/index.js') }}"></script>
+{% endblock %}
