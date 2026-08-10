@@ -1,0 +1,22 @@
+{
+  "run_id": "run_probe02",
+  "source": "stock_finance_data",
+  "data_type": "financials",
+  "fetched_at": "2026-08-09T11:40:00+08:00",
+  "requests": [
+    {
+      "api": "stock_finance_data_get_financial_statements",
+      "params": {"ticker": "603605.SH", "statement": "is", "financial_parameter": "20251231", "format": "json"},
+      "file": "603605.SH_is_20251231.csv",
+      "status": "ok",
+      "note": "FY2025 年报利润表，1 行"
+    },
+    {
+      "api": "stock_finance_data_get_financial_statements",
+      "params": {"ticker": "603605.SH", "statement": "is", "financial_parameter": "20260331", "format": "json"},
+      "file": "603605.SH_is_20260331.csv",
+      "status": "ok",
+      "note": "2026Q1 季报利润表，1 行"
+    }
+  ]
+}

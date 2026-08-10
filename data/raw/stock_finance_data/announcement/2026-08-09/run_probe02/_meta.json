@@ -1,0 +1,27 @@
+{
+  "run_id": "run_probe02",
+  "source": "stock_finance_data",
+  "data_type": "announcement",
+  "fetched_at": "2026-08-09T11:40:00+08:00",
+  "requests": [
+    {
+      "api": "stock_finance_data_get_stock_announcement",
+      "params": {"ticker": "603605.SH", "start_date": "2026-05-09", "end_date": "2026-08-09", "format": "json"},
+      "status": "error",
+      "error": "EMPTY_DATA - Response data is empty"
+    },
+    {
+      "api": "stock_finance_data_get_stock_announcement",
+      "params": {"ticker": "603605.SH", "start_date": "2026-01-01", "end_date": "2026-08-09", "format": "json"},
+      "status": "error",
+      "error": "EMPTY_DATA - Response data is empty（放宽至年初仍空）"
+    },
+    {
+      "api": "stock_finance_data_get_stock_announcement",
+      "params": {"ticker": "600519.SH", "start_date": "2026-05-09", "end_date": "2026-08-09", "format": "json"},
+      "status": "error",
+      "error": "EMPTY_DATA - Response data is empty（换贵州茅台验证，接口侧无数据）"
+    }
+  ],
+  "errors": ["get_stock_announcement 接口在本环境持续返回 EMPTY_DATA，未落盘任何公告文件；adapter 列名按接口文档描述推断，未经真实样本验证"]
+}

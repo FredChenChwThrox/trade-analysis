@@ -1,0 +1,46 @@
+# 跟踪股票池种子（导入 watchlist 表，设计 §7）
+# 字段：symbol, market, name, aliases（新闻匹配用别名）, benchmark_code, currency, timezone
+
+stocks:
+  - symbol: 603605.SH
+    market: CN
+    name: 珀莱雅
+    aliases: [珀莱雅, Proya]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 603288.SH
+    market: CN
+    name: 海天味业
+    aliases: [海天味业, 海天, Haitian]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 601318.SH
+    market: CN
+    name: 中国平安
+    aliases: [中国平安, 平安, Ping An]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 002747.SZ
+    market: CN
+    name: 埃斯顿
+    aliases: [埃斯顿, Estun]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 601899.SH
+    market: CN
+    name: 紫金矿业
+    aliases: [紫金矿业, 紫金, Zijin]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 600029.SH
+    market: CN
+    name: 南方航空
+    aliases: [南方航空, 南航, China Southern]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai

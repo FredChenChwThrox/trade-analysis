@@ -1,0 +1,27 @@
+# 指标参数（设计文档 §4.1）
+# 第一版全部使用 defaults；overrides 仅在人工确认默认参数系统性失效后添加，
+# 且必须记录理由、日期、批准人（设计 §4.2）。
+
+defaults:
+  ma_windows: [5, 10, 20, 60, 120, 250]
+  macd:
+    fast: 12
+    slow: 26
+    signal: 9
+    # EMA adjust=False；柱 = 2*(DIF-DEA)
+  rsi_windows: [6, 12, 24]   # Wilder RMA
+  boll:
+    window: 20
+    num_std: 2               # 总体标准差 ddof=0
+  volume:
+    ma_windows: [5, 10]
+    stats_windows: [20, 60]  # 调整后成交量的滚动均值/标准差
+  kdj:
+    rsv_window: 9
+    k_smooth: 3
+    d_smooth: 3              # 初始 K/D=50，零振幅沿用前值
+  pe_ttm:
+    share_count: issued      # 默认已发行股数，不得运行中切换
+  history_years: 3           # 采集与保留区间
+
+overrides: {}

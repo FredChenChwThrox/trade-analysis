@@ -1,0 +1,16 @@
+# 港股 2026 年交易日历种子（设计 §3.5）
+# ⚠️ TODO：尚未填充。接入港股标的前，必须用港交所（HKEX）发布的
+# 当年度交易日历（含半日市：平安夜/新年前夕/农历新年前夕通常为半日市）填充本文件。
+# 来源：https://www.hkex.com.hk/Services/Trading-hours-and-Trading-Calendar
+# 在文件填充前，任何 HK 标的的日历校验必须输出 incomplete（设计 §2.5）。
+
+market: HK
+year: 2026
+timezone: Asia/Hong_Kong
+status: incomplete_todo
+session:
+  open: "09:30"
+  close: "16:00"
+
+holidays: []
+half_days: []

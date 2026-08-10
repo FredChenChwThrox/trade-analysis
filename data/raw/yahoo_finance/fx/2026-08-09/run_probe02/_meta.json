@@ -1,0 +1,15 @@
+{
+  "run_id": "run_probe02",
+  "source": "yahoo_finance",
+  "data_type": "fx",
+  "fetched_at": "2026-08-09T11:40:00+08:00",
+  "requests": [
+    {
+      "api": "get_historical_stock_prices",
+      "params": {"ticker": "CNYHKD=X", "period": "1mo", "interval": "1d"},
+      "file": "CNYHKD=X.csv",
+      "status": "ok",
+      "note": "24 行；方向 CNY→HKD 即财务币种→交易币种；Date 为 T23:00Z 时间戳"
+    }
+  ]
+}

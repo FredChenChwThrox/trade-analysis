@@ -1,0 +1,14 @@
+# 环境
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 外部工具状态
+.workbuddy/
+
+# 系统
+.DS_Store
+
+# 派生数据库（可由 data/raw 重跑管线重建；raw 源数据入库管理）
+data/market.db

@@ -1,0 +1,310 @@
+"""TTM 归母净利与 PE(TTM)（D1.7，设计 §3.7、§4.1）。
+
+口径：
+- TTM 在任意 as_of 上按当时可见（available_at <= as_of）的最新修订计算：
+    最新报告为年报 → TTM = 最新年报归母净利；
+    最新报告为本财年累计中报/季报 →
+        TTM = 上一财年年报 + 本财年最新累计 − 上一财年同期累计。
+  三个组成项都必须在 as_of 时可见，任一缺失 → TTM 为空（不补历史空洞）。
+- pe_ttm = close_raw × 当日已生效股本 ÷ TTM 归母净利（不复权市值口径，§4.1）。
+  股本取 share_capital_events 中 effective_at <= as_of 的最新事件（已发行股数口径）。
+- TTM<=0、股本缺失、币种不一致且缺汇率 → PE 为空并保存原因码（pe_status）。
+- 财务金额为关键决策值（TEXT 定点），内部用 Decimal 运算，写库展示值转 float。
+
+股本快照落盘：yahoo_finance get_stock_info 只有当前快照（无历史事件流），
+按 §3.7 降级作为 share_capital_events 单点事件写入，share_count_type=issued，
+details_json 标注来源与覆盖假设（整个保留区间股本不变，后续需交叉验证）。
+"""
+
+from __future__ import annotations
+
+import csv
+import json
+import sqlite3
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from scripts.adapters.common import sha256_file
+from scripts.pipeline.db import utc_now
+
+# pe_status 原因码（成功为 "ok"，可带 ";..." 降级标注）
+S_OK = "ok"
+S_NO_SHARE = "no_share_capital"            # 股本缺失
+S_NO_REPORT = "no_visible_report"          # as_of 时无可见财报
+S_TTM_NON_POSITIVE = "ttm_non_positive"    # TTM <= 0
+S_MISSING_PREV_ANNUAL = "ttm_missing_prev_annual"          # 缺上一财年年报
+S_MISSING_PREV_SAME = "ttm_missing_prev_same_period"       # 缺上一财年同期累计
+S_MISSING_NET_PROFIT = "ttm_missing_net_profit"            # 报告无归母净利
+S_FX_MISSING = "fx_missing"                # 币种不一致且缺汇率
+
+DEGRADED_AVAILABLE_AT = "degraded_available_at"  # 财报 available_at 为入库时间降级
+
+
+@dataclass
+class ReportView:
+    """财报点时视图（net_profit_attr 定点）。"""
+
+    period_end: str          # YYYY-MM-DD
+    period_type: str         # annual / interim / quarterly
+    fiscal_year: int
+    is_cumulative: bool
+    net_profit_attr: Decimal | None
+    available_at: str        # UTC ISO
+    revision: int = 1
+    currency: str | None = None
+
+
+@dataclass
+class ShareEventView:
+    effective_at: str        # 市场本地日期
+    available_at: str        # UTC
+    shares: Decimal
+    share_count_type: str    # issued / float
+
+
+# ---------------------------------------------------------------- TTM（纯函数，golden tests 锁定）
+
+def visible_reports(reports: list[ReportView], as_of: datetime) -> list[ReportView]:
+    """点时过滤：available_at <= as_of；同一报告期只保留最新 revision。"""
+    vis = [r for r in reports if _parse_ts(r.available_at) <= as_of]
+    latest: dict[tuple, ReportView] = {}
+    for r in vis:
+        key = (r.period_end, r.period_type, r.is_cumulative)
+        if key not in latest or r.revision > latest[key].revision:
+            latest[key] = r
+    return sorted(latest.values(), key=lambda r: r.period_end)
+
+
+def ttm_net_profit(reports: list[ReportView]) -> tuple[Decimal | None, str]:
+    """对**已点时过滤**的报告集计算 TTM 归母净利（§3.7）。返回 (值, 原因码)。"""
+    if not reports:
+        return None, S_NO_REPORT
+    latest = max(reports, key=lambda r: (r.period_end, r.fiscal_year))
+    if latest.period_type == "annual":
+        if latest.net_profit_attr is None:
+            return None, S_MISSING_NET_PROFIT
+        return latest.net_profit_attr, S_OK
+
+    # 本财年累计中报/季报：上年年报 + 本年累计 − 去年同期累计
+    fy = latest.fiscal_year
+    mmdd = latest.period_end[5:]
+    prev_annual = _find(reports, period_type="annual", fiscal_year=fy - 1)
+    prev_same = _find(reports, period_type=latest.period_type, fiscal_year=fy - 1,
+                      period_mmdd=mmdd, is_cumulative=True)
+    if prev_annual is None:
+        return None, S_MISSING_PREV_ANNUAL
+    if prev_same is None:
+        return None, S_MISSING_PREV_SAME
+    vals = (latest.net_profit_attr, prev_annual.net_profit_attr, prev_same.net_profit_attr)
+    if any(v is None for v in vals):
+        return None, S_MISSING_NET_PROFIT
+    return prev_annual.net_profit_attr + latest.net_profit_attr - prev_same.net_profit_attr, S_OK
+
+
+def _find(reports: list[ReportView], *, period_type: str, fiscal_year: int,
+          period_mmdd: str | None = None, is_cumulative: bool | None = None) -> ReportView | None:
+    for r in reports:
+        if r.period_type != period_type or r.fiscal_year != fiscal_year:
+            continue
+        if period_mmdd is not None and r.period_end[5:] != period_mmdd:
+            continue
+        if is_cumulative is not None and r.is_cumulative != is_cumulative:
+            continue
+        return r
+    return None
+
+
+# ---------------------------------------------------------------- PE（纯函数）
+
+def pe_ttm(close_raw: float, shares: Decimal | None, ttm: Decimal | None,
+           ttm_reason: str, *, fx_rate: Decimal | None = None,
+           fx_needed: bool = False) -> tuple[float | None, str]:
+    """pe_ttm = close_raw × 股本 ÷ (TTM × 汇率)。返回 (pe, pe_status)。"""
+    if shares is None or shares <= 0:
+        return None, S_NO_SHARE
+    if ttm is None:
+        return None, ttm_reason
+    if ttm <= 0:
+        return None, S_TTM_NON_POSITIVE
+    ttm_traded = ttm
+    if fx_needed:
+        if fx_rate is None:
+            return None, S_FX_MISSING
+        ttm_traded = ttm * fx_rate
+    return float(Decimal(str(close_raw)) * shares / ttm_traded), S_OK
+
+
+def shares_at(events: list[ShareEventView], as_of_date: str) -> Decimal | None:
+    """as_of 当日已生效（effective_at <= as_of）的最新股本。"""
+    valid = [e for e in events if e.effective_at <= as_of_date]
+    if not valid:
+        return None
+    return max(valid, key=lambda e: e.effective_at).shares
+
+
+# ---------------------------------------------------------------- DB 读取
+
+def load_reports(conn: sqlite3.Connection, symbol: str) -> list[ReportView]:
+    rows = conn.execute(
+        """
+        SELECT r.period_end, r.period_type, r.fiscal_year, r.is_cumulative,
+               r.available_at, r.revision, r.currency, f.net_profit_attr
+        FROM financial_reports r
+        LEFT JOIN financial_facts f ON f.report_id = r.report_id
+        WHERE r.symbol = ?
+        ORDER BY r.period_end
+        """,
+        (symbol,),
+    ).fetchall()
+    return [
+        ReportView(
+            period_end=r["period_end"], period_type=r["period_type"],
+            fiscal_year=r["fiscal_year"], is_cumulative=bool(r["is_cumulative"]),
+            net_profit_attr=Decimal(r["net_profit_attr"]) if r["net_profit_attr"] else None,
+            available_at=r["available_at"], revision=r["revision"], currency=r["currency"],
+        )
+        for r in rows
+    ]
+
+
+def load_share_events(conn: sqlite3.Connection, symbol: str) -> list[ShareEventView]:
+    rows = conn.execute(
+        """
+        SELECT effective_at, available_at, shares_issued_after, share_count_type
+        FROM share_capital_events WHERE symbol = ? ORDER BY effective_at
+        """,
+        (symbol,),
+    ).fetchall()
+    return [
+        ShareEventView(
+            effective_at=r["effective_at"], available_at=r["available_at"],
+            shares=Decimal(r["shares_issued_after"]),
+            share_count_type=r["share_count_type"] or "issued",
+        )
+        for r in rows
+        if r["shares_issued_after"]
+    ]
+
+
+def _parse_ts(ts: str) -> datetime:
+    dt = datetime.fromisoformat(ts)
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def compute_pe_series(
+    conn: sqlite3.Connection,
+    symbol: str,
+    dates: list[str],
+    close_raw: dict[str, float],
+    market_tz: str,
+    trade_currency: str,
+    *,
+    assume_visible: bool = False,
+) -> dict[str, tuple[float | None, str]]:
+    """逐日 PE(TTM)。返回 {trade_date: (pe_ttm|None, pe_status)}。
+
+    as_of = 该市场当地日期 23:59:59（转 UTC）。
+    assume_visible：财报 available_at 为入库时间降级时照常使用全部报告
+    （D1.3 记录的已知降级），pe_status 追加 ";degraded_available_at" 标注。
+    """
+    reports = load_reports(conn, symbol)
+    share_events = load_share_events(conn, symbol)
+    degraded = assume_visible and reports
+    out: dict[str, tuple[float | None, str]] = {}
+    tz = ZoneInfo(market_tz)
+    for d in dates:
+        as_of = datetime.combine(date.fromisoformat(d), datetime.max.time(), tzinfo=tz)
+        as_of_utc = as_of.astimezone(timezone.utc)
+        vis = reports if assume_visible else visible_reports(reports, as_of_utc)
+        ttm, reason = ttm_net_profit(vis)
+        shares = shares_at(share_events, d)
+        fin_ccy = next((r.currency for r in vis if r.currency), None)
+        fx_needed = bool(fin_ccy and trade_currency and fin_ccy != trade_currency)
+        # 第一版 fx_rates 取最近可用日汇率的兜底在 adapter 层；此处币种一致不需换算，
+        # 不一致时按 fx_missing 返回空值（§3.7：缺汇率不计算 PE）
+        pe, status = pe_ttm(close_raw[d], shares, ttm, reason, fx_needed=fx_needed)
+        if degraded:
+            status = f"{status};{DEGRADED_AVAILABLE_AT}"
+        out[d] = (pe, status)
+    return out
+
+
+# ---------------------------------------------------------------- 股本快照入库（yahoo get_stock_info 降级来源，§3.7）
+
+def load_share_snapshot(
+    conn: sqlite3.Connection,
+    symbol: str,
+    csv_path: str | Path,
+    *,
+    effective_at: str,
+    run_id: str,
+) -> dict:
+    """解析 yahoo_finance get_stock_info CSV 的总股本快照并写入 share_capital_events。
+
+    快照只有当前值：作为单点事件写入，effective_at 取覆盖区间起点（整个保留区间
+    按此股本计算，details_json 标注假设）；share_count_type=issued（sharesOutstanding
+    为已发行总股本，floatShares 仅记入 details）。已存在同 effective_at/source 的
+    事件且股本一致时跳过（幂等）。
+    """
+    csv_path = Path(csv_path)
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    if not rows:
+        raise ValueError(f"{csv_path} 无数据行")
+    rec = rows[0]
+    shares_out = (rec.get("sharesOutstanding") or "").strip()
+    if not shares_out:
+        raise ValueError(f"{csv_path} 无 sharesOutstanding 字段值")
+    shares = Decimal(shares_out)
+    float_shares = (rec.get("floatShares") or "").strip()
+
+    content_hash = sha256_file(csv_path)
+    now = utc_now()
+    raw_object_id = f"raw_yahoo_stock_info_{content_hash[:12]}"
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO raw_objects (raw_object_id, run_id, source, data_type,
+            symbol, request_params_json, file_path, content_hash, fetch_status, ingested_at)
+        VALUES (?, ?, 'yahoo_finance', 'stock_info', ?, ?, ?, ?, 'ok', ?)
+        """,
+        (raw_object_id, run_id, symbol,
+         json.dumps({"api": "get_stock_info", "ticker_csv": csv_path.name}, ensure_ascii=False),
+         str(csv_path), content_hash, now),
+    )
+
+    details = {
+        "snapshot": "yahoo_finance get_stock_info sharesOutstanding（单点快照，无历史事件流）",
+        "assumption": f"整个保留区间（自 {effective_at} 起）股本按此值；增发/回购需后续用 "
+                      "get_stock_actions 与 financial_facts 期末股数交叉验证（§3.7 来源②③）",
+        "floatShares": float_shares or None,
+        "raw_object_id": raw_object_id,
+    }
+    existing = conn.execute(
+        """
+        SELECT sce_id, shares_issued_after FROM share_capital_events
+        WHERE symbol = ? AND effective_at = ? AND source = 'yahoo_finance get_stock_info'
+        """,
+        (symbol, effective_at),
+    ).fetchone()
+    if existing is not None:
+        if Decimal(existing["shares_issued_after"]) == shares:
+            return {"inserted": False, "shares": str(shares), "sce_id": existing["sce_id"],
+                    "raw_object_id": raw_object_id}
+        raise ValueError(
+            f"股本冲突：已有 {existing['shares_issued_after']}，新快照 {shares}（§3.2 数据冲突）")
+    cur = conn.execute(
+        """
+        INSERT INTO share_capital_events (symbol, effective_at, available_at, event_type,
+            share_change, shares_issued_after, share_count_type, details_json, source,
+            raw_object_id, created_at)
+        VALUES (?, ?, ?, 'snapshot_issued', NULL, ?, 'issued', ?,
+                'yahoo_finance get_stock_info', ?, ?)
+        """,
+        (symbol, effective_at, now, str(shares),
+         json.dumps(details, ensure_ascii=False), raw_object_id, now),
+    )
+    return {"inserted": True, "shares": str(shares), "sce_id": cur.lastrowid,
+            "raw_object_id": raw_object_id}

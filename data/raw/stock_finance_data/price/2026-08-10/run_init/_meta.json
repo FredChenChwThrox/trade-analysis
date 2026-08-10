@@ -1,0 +1,159 @@
+{
+  "run_id": "run_init",
+  "source": "stock_finance_data",
+  "data_type": "price",
+  "fetched_at": "2026-08-10T10:10:36+08:00",
+  "purpose": "5 只新观察股票全量初始化（海天味业/中国平安/埃斯顿/紫金矿业/南方航空），同步观察无排期卡",
+  "requests": [
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {
+        "ticker": "603288.SH",
+        "start_date": "2023-08-10",
+        "end_date": "2026-08-08",
+        "interval": "D",
+        "adjust": "none",
+        "format": "json"
+      },
+      "file": "603288.SH.csv",
+      "status": "ok",
+      "note": "{   \"is_success\": \"stock_finance_data, ['# HTTP get_price OK', 'ticker: 603288.SH', '', '# data preview (50 rows here, 725 rows in total)', '']\",   \"data_preview\": \"open,high,low,close,volume,thscode,time,thsname_cn,thsname_en,currency\\n46.08,46.31,45.46,46.1,7731400.0,603288.SH,20230810,海天味业,NA,CNY",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {
+        "ticker": "603288.SH",
+        "start_date": "2023-08-10",
+        "end_date": "2026-08-08",
+        "interval": "D",
+        "adjust": "forward",
+        "format": "json"
+      },
+      "file": "603288.SH_forward_3y.csv",
+      "status": "ok",
+      "note": "{   \"is_success\": \"stock_finance_data, ['# HTTP get_price OK', 'ticker: 603288.SH', '', '# data preview (50 rows here, 725 rows in total)', '']\",   \"data_preview\": \"open,high,low,close,volume,thscode,time,thsname_cn,thsname_en,currency\\n42.73,42.95,42.16,42.75,7731400.0,603288.SH,20230810,海天味业,NA,CN",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {
+        "ticker": "601318.SH",
+        "start_date": "2023-08-10",
+        "end_date": "2026-08-08",
+        "interval": "D",
+        "adjust": "none",
+        "format": "json"
+      },
+      "file": "601318.SH.csv",
+      "status": "ok",
+      "note": "{   \"is_success\": \"stock_finance_data, ['# HTTP get_price OK', 'ticker: 601318.SH', '', '# data preview (50 rows here, 725 rows in total)', '']\",   \"data_preview\": \"open,high,low,close,volume,thscode,time,thsname_cn,thsname_en,currency\\n51.05,51.47,50.88,51.36,29926300.0,601318.SH,20230810,中国平安,NA,C",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {
+        "ticker": "601318.SH",
+        "start_date": "2023-08-10",
+        "end_date": "2026-08-08",
+        "interval": "D",
+        "adjust": "forward",
+        "format": "json"
+      },
+      "file": "601318.SH_forward_3y.csv",
+      "status": "ok",
+      "note": "{   \"is_success\": \"stock_finance_data, ['# HTTP get_price OK', 'ticker: 601318.SH', '', '# data preview (50 rows here, 725 rows in total)', '']\",   \"data_preview\": \"open,high,low,close,volume,thscode,time,thsname_cn,thsname_en,currency\\n43.94,44.3,43.79,44.21,29926300.0,601318.SH,20230810,中国平安,NA,CN",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {
+        "ticker": "002747.SZ",
+        "start_date": "2023-08-10",
+        "end_date": "2026-08-08",
+        "interval": "D",
+        "adjust": "none",
+        "format": "json"
+      },
+      "file": "002747.SZ.csv",
+      "status": "ok",
+      "note": "{   \"is_success\": \"stock_finance_data, ['# HTTP get_price OK', 'ticker: 002747.SZ', '', '# data preview (50 rows here, 725 rows in total)', '']\",   \"data_preview\": \"open,high,low,close,volume,thscode,time,thsname_cn,thsname_en,currency\\n22.63,22.84,22.43,22.6,8890400.0,002747.SZ,20230810,埃斯顿,NA,CNY\\",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {
+        "ticker": "002747.SZ",
+        "start_date": "2023-08-10",
+        "end_date": "2026-08-08",
+        "interval": "D",
+        "adjust": "forward",
+        "format": "json"
+      },
+      "file": "002747.SZ_forward_3y.csv",
+      "status": "ok",
+      "note": "{   \"is_success\": \"stock_finance_data, ['# HTTP get_price OK', 'ticker: 002747.SZ', '', '# data preview (50 rows here, 725 rows in total)', '']\",   \"data_preview\": \"open,high,low,close,volume,thscode,time,thsname_cn,thsname_en,currency\\n22.54,22.74,22.34,22.51,8890400.0,002747.SZ,20230810,埃斯顿,NA,CNY",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {
+        "ticker": "601899.SH",
+        "start_date": "2023-08-10",
+        "end_date": "2026-08-08",
+        "interval": "D",
+        "adjust": "none",
+        "format": "json"
+      },
+      "file": "601899.SH.csv",
+      "status": "ok",
+      "note": "{   \"is_success\": \"stock_finance_data, ['# HTTP get_price OK', 'ticker: 601899.SH', '', '# data preview (50 rows here, 725 rows in total)', '']\",   \"data_preview\": \"open,high,low,close,volume,thscode,time,thsname_cn,thsname_en,currency\\n12.8,12.88,12.69,12.73,70330300.0,601899.SH,20230810,紫金矿业,NA,CN",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {
+        "ticker": "601899.SH",
+        "start_date": "2023-08-10",
+        "end_date": "2026-08-08",
+        "interval": "D",
+        "adjust": "forward",
+        "format": "json"
+      },
+      "file": "601899.SH_forward_3y.csv",
+      "status": "ok",
+      "note": "{   \"is_success\": \"stock_finance_data, ['# HTTP get_price OK', 'ticker: 601899.SH', '', '# data preview (50 rows here, 725 rows in total)', '']\",   \"data_preview\": \"open,high,low,close,volume,thscode,time,thsname_cn,thsname_en,currency\\n12.06,12.14,11.96,12.0,70330300.0,601899.SH,20230810,紫金矿业,NA,CN",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {
+        "ticker": "600029.SH",
+        "start_date": "2023-08-10",
+        "end_date": "2026-08-08",
+        "interval": "D",
+        "adjust": "none",
+        "format": "json"
+      },
+      "file": "600029.SH.csv",
+      "status": "ok",
+      "note": "{   \"is_success\": \"stock_finance_data, ['# HTTP get_price OK', 'ticker: 600029.SH', '', '# data preview (50 rows here, 725 rows in total)', '']\",   \"data_preview\": \"open,high,low,close,volume,thscode,time,thsname_cn,thsname_en,currency\\n6.84,7.04,6.76,7.02,91802100.0,600029.SH,20230810,南方航空,NA,CNY\\n",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {
+        "ticker": "600029.SH",
+        "start_date": "2023-08-10",
+        "end_date": "2026-08-08",
+        "interval": "D",
+        "adjust": "forward",
+        "format": "json"
+      },
+      "file": "600029.SH_forward_3y.csv",
+      "status": "ok",
+      "note": "{   \"is_success\": \"stock_finance_data, ['# HTTP get_price OK', 'ticker: 600029.SH', '', '# data preview (50 rows here, 725 rows in total)', '']\",   \"data_preview\": \"open,high,low,close,volume,thscode,time,thsname_cn,thsname_en,currency\\n6.84,7.04,6.76,7.02,91802100.0,600029.SH,20230810,南方航空,NA,CNY\\n",
+      "error": null
+    }
+  ]
+}
