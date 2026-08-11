@@ -280,3 +280,12 @@
 - **基本面区块（工作流 B）**：`queries.py` 新增 `_fundamentals`（最新年报/季报营收净利+同比，口径同 card_inputs 同季匹配；PB/PS 取自最新 forecasts.payload_json 同花顺快照单点值并标注快照日期；一致预期 FY1–3）接入 `get_stock_overview`；stock.html 数字卡行下新增「基本面」6 格区块；stock.js `renderFundamentals`（缺失「—」+ PB/PS 快照角标提示）。tests/test_ui_queries.py +2 用例（含缺失不猜）。
 - 验证：API `/api/stocks/601899.SH/overview` 返回真实 fundamentals（FY2025 营收 3490.79 亿 +14.96%、PB 4.74 快照 08-10 等）；南航卡 API 无结构化 anchor、回退链命中 anchor_type_note；UI 服务已重启加载新代码（bash-ebwcyx82）。
 - `uv run pytest -q` **275 全绿**（270 + 新增 5）。
+
+## 2026-08-11（盘后例行 cron eb027c36 + 新 bar 因子继承 bug 修复）
+
+- **采集**：7 只 × 14 行情 CSV（none+forward，窗口 2026-08-01..08-11，各 7 行含当日 EOD）落 `data/raw/stock_finance_data/price/2026-08-11/run_20260811_2022/`；沪深300 改 yahoo period=5d（start/end 区间查询当日 EMPTY_DATA）落 `data/raw/yahoo_finance/index/2026-08-11/run_20260811_2022/`，000300.SH 收 4663.79（-0.81%），经 `scripts.pipeline.ingest` 单独入库（daily --raw-dir 不覆盖指数目录）。
+- **bug 修复（adapters/stock_finance_data.py upsert_daily_bars）**：新插入 bar 原一律填 price_adj_factor=1.0 → 有分红历史的股票最近平台段内部因子 ≠1.0（如珀莱雅 ≈1.058），因子变化检查把新 bar 误判「窗口内平台位移（除权）」触发全量重建，而重建用 raw-dir 内 7 天窗口 forward CSV → origin 日（2023-08）不在序列报 ValueError，6 股 failed（仅从未分红的 600029.SH 通过）。修复：新 bar 因子继承上一交易日（无历史落 1.0）；附带消除「检查未触发时新 bar 永远带错因子污染周线/均线」隐患。tests/test_adapters.py +1 回归用例（test_price_ingest_new_bar_inherits_factor）。
+- **重跑全 ok**：7/7 ok，报告全 complete（002747/601318/601899/603288/603605/600029 revision=3，600531 revision=2，日报 revision=3，§9.5 同日重跑）。
+- **卡片验证**：紫金卡（85cd7f52）与豫光卡（9a009077）生效首日 complete、无档位触发（33.18 远高于 T1 上沿 21.78；豫光 13.62 高于 T1 上沿 6.75）；南航卡 T1 触发（5.05 ∈ [4.95,5.20]）进日报优先级 3；海天跌出 T1 区（36.17 < 36.40，距下沿 0.6% 进优先级 4 观察）；珀莱雅距 T2 上沿 57.60 还差 2.2%（优先级 4）；埃斯顿收 36.12 站上右侧触发位 36.00 但未过突破线 36.36（=触发位×1.01），right_side 未触发，状态机 idle。
+- 今日收盘：珀莱雅 58.89 / 海天 36.17 / 平安 52.55 / 埃斯顿 36.12（+4.3%）/ 紫金 33.18（-6.4%）/ 南航 5.05 / 豫光 13.62。
+- `uv run pytest -q` **276 全绿**（275 + 新增 1）。

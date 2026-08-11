@@ -1,0 +1,28 @@
+{
+  "run_id": "run_20260811_2022",
+  "collected_at": "2026-08-11T20:22+08:00",
+  "mode": "incremental",
+  "overlap_window": "2026-08-01..2026-08-11",
+  "source": "stock_finance_data",
+  "data_type": "price",
+  "requests": [
+    {"ticker": "603605.SH", "adjust": "none", "file": "603605.SH.csv", "rows": 7, "range": "2026-08-03..2026-08-11"},
+    {"ticker": "603288.SH", "adjust": "none", "file": "603288.SH.csv", "rows": 7, "range": "2026-08-03..2026-08-11"},
+    {"ticker": "601318.SH", "adjust": "none", "file": "601318.SH.csv", "rows": 7, "range": "2026-08-03..2026-08-11"},
+    {"ticker": "002747.SZ", "adjust": "none", "file": "002747.SZ.csv", "rows": 7, "range": "2026-08-03..2026-08-11"},
+    {"ticker": "601899.SH", "adjust": "none", "file": "601899.SH.csv", "rows": 7, "range": "2026-08-03..2026-08-11"},
+    {"ticker": "600029.SH", "adjust": "none", "file": "600029.SH.csv", "rows": 7, "range": "2026-08-03..2026-08-11"},
+    {"ticker": "600531.SH", "adjust": "none", "file": "600531.SH.csv", "rows": 7, "range": "2026-08-03..2026-08-11"},
+    {"ticker": "603605.SH", "adjust": "forward", "file": "603605.SH_forward.csv", "rows": 7, "range": "2026-08-03..2026-08-11"},
+    {"ticker": "603288.SH", "adjust": "forward", "file": "603288.SH_forward.csv", "rows": 7, "range": "2026-08-03..2026-08-11"},
+    {"ticker": "601318.SH", "adjust": "forward", "file": "601318.SH_forward.csv", "rows": 7, "range": "2026-08-03..2026-08-11"},
+    {"ticker": "002747.SZ", "adjust": "forward", "file": "002747.SZ_forward.csv", "rows": 7, "range": "2026-08-03..2026-08-11"},
+    {"ticker": "601899.SH", "adjust": "forward", "file": "601899.SH_forward.csv", "rows": 7, "range": "2026-08-03..2026-08-11"},
+    {"ticker": "600029.SH", "adjust": "forward", "file": "600029.SH_forward.csv", "rows": 7, "range": "2026-08-03..2026-08-11"},
+    {"ticker": "600531.SH", "adjust": "forward", "file": "600531.SH_forward.csv", "rows": 7, "range": "2026-08-03..2026-08-11"}
+  ],
+  "notes": [
+    "2026-08-11 收盘：603605.SH 58.89；603288.SH 36.17（跌出 T1 区下沿 36.40）；601318.SH 52.55；002747.SZ 36.12 +4.3%（收盘站上右侧触发价 36.00，量能未达 20 日均量 2 倍）；601899.SH 33.18 -6.4%（紫金卡生效首日，远高于 T1 上沿 21.78）；600029.SH 5.05（T1 区 [4.95,5.20] 内）；600531.SH 13.62（豫光卡生效首日）",
+    "沪深300（yahoo 000300.SS）2026-08-11 收 4663.79（-0.81%），存 data/raw/yahoo_finance/index/2026-08-11/run_20260811_2022/000300.SS.csv"
+  ]
+}

@@ -102,12 +102,20 @@ def upsert_daily_bars(
         old = conn.execute(
             "SELECT * FROM daily_bars WHERE symbol = ? AND trade_date = ?", key
         ).fetchone()
+        # 新 bar 因子继承上一交易日：无除权时因子沿平台延续（填 1.0 会让
+        # 因子变化检查把新 bar 误判为窗口内除权）；真除权时检查触发全量重建，
+        # 由 D1.5 复权模块统一重算。无历史（新股）时落 1.0。
+        prev = conn.execute(
+            "SELECT price_adj_factor, share_factor FROM daily_bars "
+            "WHERE symbol = ? AND trade_date < ? "
+            "ORDER BY trade_date DESC LIMIT 1", key
+        ).fetchone()
         new_row = (
             bar["symbol"], bar["trade_date"], bar["market"],
             bar["open"], bar["high"], bar["low"], bar["close"],
             bar.get("volume"), bar.get("amount"), bar.get("currency"),
-            1.0,  # price_adj_factor：本批填 1.0，D1.5 复权模块重算
-            1.0,  # share_factor 同上
+            prev["price_adj_factor"] if prev else 1.0,
+            prev["share_factor"] if prev else 1.0,
             "normal", source, raw_object_id, now,
         )
         if old is None:

@@ -138,9 +138,37 @@ def test_price_ingest_ok(conn, tmp_path):
     assert len(rows) == 2
     assert rows[0]["trade_date"] == "2026-08-06"
     assert rows[0]["amount_raw"] is None  # stock_finance_data 无 amount 列
-    assert rows[0]["price_adj_factor"] == 1.0  # D1.5 重算
+    assert rows[0]["price_adj_factor"] == 1.0  # 无历史时落 1.0
     assert rows[0]["trading_status"] == "normal"
     assert rows[0]["raw_object_id"] == r.raw_object_id
+
+
+PRICE_NEXT_DAY = """open,high,low,close,volume,thscode,time,thsname_cn,thsname_en,currency
+102,103,101,102.5,3000,603605.SH,20260810,珀莱雅,NA,CNY
+"""
+
+
+def test_price_ingest_new_bar_inherits_factor(conn, tmp_path):
+    """新 bar 因子继承上一交易日（2026-08-11 盘后例行 bug：填 1.0 会被
+    因子变化检查误判为窗口内除权，触发窗口 CSV 全量重建报 origin 缺失）。"""
+    add_calendar(conn, "CN", {"2026-08-10": (1, "trading")})
+    p = write(tmp_path, "raw/stock_finance_data/price/2026-08-09/run_t/603605.SH.csv", PRICE_GOOD)
+    ingest_file(conn, p, source="stock_finance_data", data_type="price",
+                symbol="603605.SH", parse=sfd.parse_price_csv)
+    # 模拟 D1.5 重建后的历史因子（分红股最近平台段归一化因子 ≠ 1.0）
+    conn.execute("UPDATE daily_bars SET price_adj_factor=1.0584, share_factor=0.5 "
+                 "WHERE symbol='603605.SH'")
+    conn.commit()
+    p2 = write(tmp_path, "raw/stock_finance_data/price/2026-08-10/run_t/603605.SH.csv",
+               PRICE_NEXT_DAY)
+    r = ingest_file(conn, p2, source="stock_finance_data", data_type="price",
+                    symbol="603605.SH", parse=sfd.parse_price_csv)
+    assert r.status == "ok", r.summary()
+    row = conn.execute(
+        "SELECT price_adj_factor, share_factor FROM daily_bars "
+        "WHERE symbol='603605.SH' AND trade_date='2026-08-10'").fetchone()
+    assert row["price_adj_factor"] == pytest.approx(1.0584)
+    assert row["share_factor"] == pytest.approx(0.5)
 
 
 def test_price_rejects_bad_ohlc_rollback(conn, tmp_path):
