@@ -1,6 +1,7 @@
 # {股票名}（{代码}）估值排期卡
 
 > 数据截至 {日期} 收盘 {现价} 元。本卡按「估值锚定档 + 胜率打分 + 衰竭信号择时 + 证伪线退出」框架编制，每个季度财报后复核一次。
+> **锚定指标**：{PE 刻度 pe_scale / 静态折算 PE pe_static_scale / PB pb / PS ps / 价格底带 price_band / 混合 mixed}——{一句话为什么该股用这个指标（如：PE 在亏损/微利期失真 → 价格底带+PB；盈利爆发致折算刻度被动下移 → 静态折算 PE）}。draft JSON 须在 valuation.anchor 写入 {metric, note}（缺省时 create-draft 仅 warning，UI 回退推断）。
 
 ---
 

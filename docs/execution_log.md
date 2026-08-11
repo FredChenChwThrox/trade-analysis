@@ -273,3 +273,10 @@
 - §5.5：event_assessments Schema 新增 `scope` 字段（company/industry/policy/macro，与 direction 正交），资讯流每条资讯展示 direction×scope 双标签；scope 列落地需配套 migration，随二期第③步实施。
 - §9.4：第 4 步指向 §3.6 二期子序；补二期可选扩展=采集资产负债表自算历史 PB（一期 PB/PS 用 forecast 快照单点值）。
 - 背景：用户确认消息面四层面（基本面/政策面/行业/公司）当前仅覆盖公司级，政策/行业无来源，故作此二期设计。
+
+## 2026-08-11（卡片锚指标明示 + 单股页基本面区块）
+
+- **锚指标明示（工作流 C）**：① `card.py` 新增 `valuation.anchor` 语义校验——`metric` 枚举（pe_scale/pe_static_scale/pb/ps/price_band/mixed）非法拒绝、缺失仅 warning 不拒绝（兼容存量 draft，`card_input_warnings`）；② skill `card-template.md` 卡首强制「锚定指标」行；③ 单股页卡片面板新增「锚定指标」行：优先 `valuation.anchor`（枚举映射中文），回退 `input_snapshot.anchor_type_note`（4 张新卡），再回退「PE(TTM) 刻度（默认）」（3 张老卡真实情况）；非 PE 锚时「PE 三情景」标注「非锚，仅分位参考」；④ 存量 7 卡不动库（不可变版本纪律）。tests/test_card.py +3 用例。
+- **基本面区块（工作流 B）**：`queries.py` 新增 `_fundamentals`（最新年报/季报营收净利+同比，口径同 card_inputs 同季匹配；PB/PS 取自最新 forecasts.payload_json 同花顺快照单点值并标注快照日期；一致预期 FY1–3）接入 `get_stock_overview`；stock.html 数字卡行下新增「基本面」6 格区块；stock.js `renderFundamentals`（缺失「—」+ PB/PS 快照角标提示）。tests/test_ui_queries.py +2 用例（含缺失不猜）。
+- 验证：API `/api/stocks/601899.SH/overview` 返回真实 fundamentals（FY2025 营收 3490.79 亿 +14.96%、PB 4.74 快照 08-10 等）；南航卡 API 无结构化 anchor、回退链命中 anchor_type_note；UI 服务已重启加载新代码（bash-ebwcyx82）。
+- `uv run pytest -q` **275 全绿**（270 + 新增 5）。

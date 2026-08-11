@@ -393,3 +393,54 @@ def test_get_benchmark_bars(ui_conn):
 def test_search_stocks(ui_conn):
     items = queries.search_stocks(ui_conn, "平安")
     assert items and items[0]["symbol"] == "601318.SH"
+
+
+def test_get_stock_overview_fundamentals(ui_conn):
+    now = "2026-08-10T00:00:00Z"
+    # 两年年报 + 一季季报（同比口径：同 period_type/is_cumulative/月日 上一财年）
+    for period_end, ptype, fy, rev, np_ in [
+            ("2024-12-31", "annual", 2024, "40000000000", "800000000"),
+            ("2025-12-31", "annual", 2025, "50000000000", "1000000000"),
+            ("2025-03-31", "quarterly", 2025, "10000000000", "200000000"),
+            ("2026-03-31", "quarterly", 2026, "12000000000", "300000000")]:
+        cur = ui_conn.execute(
+            """
+            INSERT INTO financial_reports (symbol, period_end, period_type, fiscal_year,
+                available_at, revision, currency, unit, is_cumulative, ingested_at)
+            VALUES ('601318.SH', ?, ?, ?, ?, 1, 'CNY', 'CNY', 1, ?)
+            """,
+            (period_end, ptype, fy, now, now))
+        ui_conn.execute(
+            "INSERT INTO financial_facts (report_id, revenue, net_profit_attr, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (cur.lastrowid, rev, np_, now))
+    payload = {"rows": [
+        {"ths_fore_np_fy1_stock": "1500000000", "ths_fore_np_fy2_stock": "1800000000",
+         "ths_fore_np_fy3_stock": "2100000000"},
+        {"ths_pb_mrq_stock": "2.35", "ths_ps_lyr_stock": "6.96"}]}
+    ui_conn.execute(
+        "INSERT INTO forecasts (symbol, snapshot_at, source, payload_json, ingested_at) "
+        "VALUES ('601318.SH', ?, 'stock_finance_data', ?, ?)",
+        (now, json.dumps(payload), now))
+    ui_conn.commit()
+
+    ov = queries.get_stock_overview(ui_conn, "601318.SH")
+    f = ov["fundamentals"]
+    assert f["annual"]["fiscal_year"] == 2025
+    assert f["annual"]["revenue_yi"] == 500.0
+    assert f["annual"]["net_profit_yi"] == 10.0
+    assert f["annual"]["revenue_yoy"] == 0.25
+    assert f["annual"]["net_profit_yoy"] == 0.25
+    assert f["interim"]["period_end"] == "2026-03-31"
+    assert f["interim"]["net_profit_yoy"] == 0.5
+    assert f["valuation_snapshot"]["pb_mrq"] == 2.35
+    assert f["valuation_snapshot"]["ps_lyr"] == 6.96
+    assert f["forecast_np_yi"]["fy1"] == 15.0
+
+
+def test_get_stock_overview_fundamentals_missing(ui_conn):
+    # 无财报/预期数据：fundamentals 各块为 None（§2.5 不猜）
+    ov = queries.get_stock_overview(ui_conn, "0700.HK")
+    f = ov["fundamentals"]
+    assert f["annual"] is None and f["interim"] is None
+    assert f["valuation_snapshot"] is None and f["forecast_np_yi"] is None

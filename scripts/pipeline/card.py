@@ -124,6 +124,8 @@ class CardCLIError(Exception):
     """可预期的 CLI 错误（退出码 2）。"""
 
 
+_ANCHOR_METRICS = ("pe_scale", "pe_static_scale", "pb", "ps", "price_band", "mixed")
+
 # ---------------------------------------------------------------- 校验
 
 def validate_card_input(doc: dict) -> list[str]:
@@ -150,7 +152,20 @@ def validate_card_input(doc: dict) -> list[str]:
         if box.get(lo_k) is not None and box.get(hi_k) is not None:
             if Decimal(box[lo_k]) > Decimal(box[hi_k]):
                 errors.append(f"swing_box: {lo_k} > {hi_k}")
+    anchor = (doc.get("valuation") or {}).get("anchor")
+    if anchor is not None:
+        if not isinstance(anchor, dict) or anchor.get("metric") not in _ANCHOR_METRICS:
+            errors.append(
+                f"valuation.anchor.metric 须为 {('/'.join(_ANCHOR_METRICS))} 之一")
     return errors
+
+
+def card_input_warnings(doc: dict) -> list[str]:
+    """非阻断提示：新卡应显式声明锚定指标（2026-08-11 起，存量卡回退展示）。"""
+    if (doc.get("valuation") or {}).get("anchor") is None:
+        return ["valuation.anchor 缺失：建议显式声明锚定指标"
+                f"（{'/'.join(_ANCHOR_METRICS)} + note），UI 将回退推断展示"]
+    return []
 
 
 # ---------------------------------------------------------------- 查询
@@ -319,6 +334,8 @@ def create_draft(conn: sqlite3.Connection, symbol: str, json_path: str,
     errors = validate_card_input(doc)
     if errors:
         raise CardCLIError("卡片 JSON 校验失败:\n  " + "\n  ".join(errors))
+    for w in card_input_warnings(doc):
+        print(f"WARNING: {w}")
     wl = conn.execute(
         "SELECT symbol FROM watchlist WHERE symbol = ?", (symbol,)).fetchone()
     if wl is None:

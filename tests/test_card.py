@@ -107,6 +107,27 @@ def test_create_draft_unknown_symbol(conn, tmp_path):
         card_cli.create_draft(conn, "NOPE.SH", _write_json(tmp_path, CARD_INPUT))
 
 
+def test_create_draft_anchor_metric_accepted(conn, tmp_path):
+    doc = json.loads(json.dumps(CARD_INPUT))
+    doc["valuation"]["anchor"] = {"metric": "price_band", "note": "强周期 PE 失真"}
+    card_id = _make_draft(conn, tmp_path, doc)
+    row = conn.execute("SELECT valuation_scenarios_json FROM strategy_card_versions "
+                       "WHERE card_version_id = ?", (card_id,)).fetchone()
+    assert json.loads(row[0])["anchor"]["metric"] == "price_band"
+
+
+def test_create_draft_rejects_bad_anchor_metric(conn, tmp_path):
+    doc = json.loads(json.dumps(CARD_INPUT))
+    doc["valuation"]["anchor"] = {"metric": "ev_ebitda"}
+    with pytest.raises(card_cli.CardCLIError, match="anchor.metric"):
+        _make_draft(conn, tmp_path, doc)
+
+
+def test_create_draft_missing_anchor_warns_not_rejects(conn, tmp_path, capsys):
+    _make_draft(conn, tmp_path)  # CARD_INPUT 无 anchor：warning 但不拒绝
+    assert "valuation.anchor 缺失" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------- activate
 
 def test_activate_single_active(conn, tmp_path):

@@ -544,6 +544,92 @@ def list_signal_events(conn: sqlite3.Connection, symbol: str,
     return {"total": total, "items": items}
 
 
+def _yi(value) -> float | None:
+    """元 → 亿（float，2 位小数）；None/空 → None。"""
+    if value in (None, ""):
+        return None
+    try:
+        return round(float(value) / 1e8, 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fundamentals(conn: sqlite3.Connection, symbol: str) -> dict:
+    """单股页基本面区块：最新年报/季报（含同比）、PB/PS 快照、一致预期。
+
+    数据缺失按 §2.5 给 None，前端显示"—"。yoy 计算与 card_inputs 同口径
+    （同 period_type + is_cumulative + 月日，上一财年）。PB/PS 为 forecast
+    快照单点值（同花顺，非历史序列，§9.4 二期可选扩展为资产负债表自算）。
+    """
+    rows = conn.execute(
+        """
+        SELECT r.period_end, r.period_type, r.fiscal_year, r.is_cumulative,
+               f.revenue, f.net_profit_attr
+        FROM financial_reports r
+        LEFT JOIN financial_facts f ON f.report_id = r.report_id
+        WHERE r.symbol = ? ORDER BY r.period_end
+        """,
+        (symbol,),
+    ).fetchall()
+    by_key = {(r["period_type"], bool(r["is_cumulative"]),
+               r["period_end"][5:], r["fiscal_year"]): r for r in rows}
+
+    def with_yoy(r: sqlite3.Row) -> dict:
+        prev = by_key.get((r["period_type"], bool(r["is_cumulative"]),
+                           r["period_end"][5:], r["fiscal_year"] - 1))
+
+        def yoy(cur, old) -> float | None:
+            if cur in (None, "") or old in (None, "") or float(old) == 0:
+                return None
+            return round(float(cur) / float(old) - 1.0, 4)
+
+        return {
+            "period_end": r["period_end"],
+            "fiscal_year": r["fiscal_year"],
+            "revenue_yi": _yi(r["revenue"]),
+            "net_profit_yi": _yi(r["net_profit_attr"]),
+            "revenue_yoy": yoy(r["revenue"], prev["revenue"] if prev else None),
+            "net_profit_yoy": yoy(r["net_profit_attr"],
+                                  prev["net_profit_attr"] if prev else None),
+        }
+
+    annual = next((with_yoy(r) for r in reversed(rows)
+                   if r["period_type"] == "annual"), None)
+    interim = next((with_yoy(r) for r in reversed(rows)
+                    if r["period_type"] != "annual"), None)
+
+    valuation_snapshot = None
+    forecast_np_yi = None
+    fc = conn.execute(
+        "SELECT payload_json, snapshot_at FROM forecasts WHERE symbol = ? "
+        "ORDER BY snapshot_at DESC LIMIT 1", (symbol,)).fetchone()
+    if fc:
+        payload = json.loads(fc["payload_json"])
+        pb = ps = None
+        fy: dict[str, float | None] = {}
+        for row in payload.get("rows", []):
+            pb = pb or row.get("ths_pb_mrq_stock") or None
+            ps = ps or row.get("ths_ps_lyr_stock") or None
+            for k in ("fy1", "fy2", "fy3"):
+                v = row.get(f"ths_fore_np_{k}_stock")
+                if v not in (None, "") and k not in fy:
+                    fy[k] = _yi(v)
+        if pb or ps:
+            valuation_snapshot = {
+                "pb_mrq": round(float(pb), 2) if pb else None,
+                "ps_lyr": round(float(ps), 2) if ps else None,
+                "snapshot_at": fc["snapshot_at"],
+            }
+        if fy:
+            forecast_np_yi = {"fy1": fy.get("fy1"), "fy2": fy.get("fy2"),
+                              "fy3": fy.get("fy3"),
+                              "snapshot_at": fc["snapshot_at"]}
+
+    return {"annual": annual, "interim": interim,
+            "valuation_snapshot": valuation_snapshot,
+            "forecast_np_yi": forecast_np_yi}
+
+
 def get_stock_overview(conn: sqlite3.Connection, symbol: str,
                        event_limit: int = 20, event_offset: int = 0) -> dict | None:
     """单股页首屏总览：关键数字 + 信号摘要 + 事件流（缺数据字段 None，前端显示"—"）。"""
@@ -636,6 +722,7 @@ def get_stock_overview(conn: sqlite3.Connection, symbol: str,
         "accumulation": _sig_entry("accumulation"),
         "exhaustion": exhaustion,
         "summaries": summaries,
+        "fundamentals": _fundamentals(conn, symbol),
         "events": events["items"], "events_total": events["total"],
     }
 

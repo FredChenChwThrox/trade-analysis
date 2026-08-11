@@ -28,6 +28,22 @@
     </div>
   </section>
 
+  <!-- 基本面：年报/季报、PB/PS 快照、一致预期（stock.js 经 overview.fundamentals 填充，缺失显示 —） -->
+  <section class="bg-white rounded-lg border border-gray-200 p-3">
+    <div class="flex items-baseline gap-2 mb-2">
+      <h3 class="text-sm font-medium text-gray-700">基本面</h3>
+      <span class="text-[11px] text-gray-400" id="fund-note"></span>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2" id="fund-grid">
+      <div class="num-card"><div class="label">年报营收</div><div class="value" id="fd-rev">—</div><div class="sub" id="fd-rev-sub"></div></div>
+      <div class="num-card"><div class="label">年报归母净利</div><div class="value" id="fd-np">—</div><div class="sub" id="fd-np-sub"></div></div>
+      <div class="num-card"><div class="label" id="fd-interim-label">最新季报净利</div><div class="value" id="fd-interim">—</div><div class="sub" id="fd-interim-sub"></div></div>
+      <div class="num-card"><div class="label">PB(MRQ)</div><div class="value" id="fd-pb">—</div><div class="sub" id="fd-pb-sub"></div></div>
+      <div class="num-card"><div class="label">PS(LYR)</div><div class="value" id="fd-ps">—</div><div class="sub" id="fd-ps-sub"></div></div>
+      <div class="num-card"><div class="label">券商一致预期</div><div class="value text-sm" id="fd-fc">—</div><div class="sub" id="fd-fc-sub"></div></div>
+    </div>
+  </section>
+
   <!-- 主图区：价格/成交量/MACD 同一时间轴三联图（单 ECharts 实例） -->
   <section class="bg-white rounded-lg border border-gray-200 p-3">
     <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-1 text-xs text-gray-500">

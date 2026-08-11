@@ -68,6 +68,7 @@
     executions = execData.items;
     document.getElementById('chart-note').textContent = PRICE_NOTE[state.price] || '';
     renderNumCards(ovData);
+    renderFundamentals(ovData);
     renderSummary(ovData);
     renderCardPanel(ovData).catch((e) => UI.showToast(e.message, 'error'));
     renderExec();
@@ -127,6 +128,36 @@
     const ex = ov.exhaustion;
     setCard('exhaust', ex ? ex.active + '/' + ex.total + ' 活跃' : '—',
             ex ? '完成周 ' + ex.week_end : '');
+  }
+
+  // ---------------------------------------------------------------- 基本面
+  function _yoyTxt(r) {
+    return r == null ? '' : (r > 0 ? '+' : '') + (Number(r) * 100).toFixed(1) + '%';
+  }
+  function _setFund(id, value, sub) {
+    document.getElementById(id).textContent = value;
+    if (sub != null) document.getElementById(id + '-sub').textContent = sub;
+  }
+  function renderFundamentals(ov) {
+    const f = ov.fundamentals || {};
+    const a = f.annual, it = f.interim, vs = f.valuation_snapshot, fc = f.forecast_np_yi;
+    _setFund('fd-rev', a && a.revenue_yi != null ? a.revenue_yi + ' 亿' : '—',
+             a ? `FY${a.fiscal_year} ${_yoyTxt(a.revenue_yoy)}` : '');
+    _setFund('fd-np', a && a.net_profit_yi != null ? a.net_profit_yi + ' 亿' : '—',
+             a ? `FY${a.fiscal_year} ${_yoyTxt(a.net_profit_yoy)}` : '');
+    _setFund('fd-interim', it && it.net_profit_yi != null ? it.net_profit_yi + ' 亿' : '—',
+             it ? `${it.period_end} ${_yoyTxt(it.net_profit_yoy)}` : '');
+    if (it) document.getElementById('fd-interim-label').textContent = '最新季报净利';
+    _setFund('fd-pb', vs && vs.pb_mrq != null ? vs.pb_mrq : '—',
+             vs ? '同花顺快照 ' + UI.formatDate(vs.snapshot_at) : '');
+    _setFund('fd-ps', vs && vs.ps_lyr != null ? vs.ps_lyr : '—',
+             vs ? '同花顺快照 ' + UI.formatDate(vs.snapshot_at) : '');
+    _setFund('fd-fc', fc ? `FY1 ${fc.fy1 ?? '—'} / FY2 ${fc.fy2 ?? '—'} / FY3 ${fc.fy3 ?? '—'} 亿` : '—',
+             fc ? '净利一致预期 ' + UI.formatDate(fc.snapshot_at) : '');
+    const notes = [];
+    if (vs) notes.push('PB/PS 为快照单点值（非历史序列）');
+    if (!a && !it) notes.push('财报数据缺失（§2.5）');
+    document.getElementById('fund-note').textContent = notes.join('；');
   }
 
   // ---------------------------------------------------------------- 信号现状
@@ -202,6 +233,24 @@
       <td class="text-xs text-gray-500">${UI.escapeHtml(tierImplied(t, eps))}</td></tr>`).join('');
     const scalesTxt = scales.map((s) => `${s.date} PE ${s.pe_ttm}`).join(' → ');
 
+    // 锚定指标明示：优先 valuation.anchor（新卡结构化字段），回退 input_snapshot.anchor_type_note，再回退默认 PE 刻度
+    const ANCHOR_LABELS = {pe_scale: 'PE(TTM) 刻度', pe_static_scale: '静态折算 PE 刻度',
+      pb: 'PB', ps: 'PS', price_band: '价格底带', mixed: '混合锚'};
+    const anchor = val.anchor || null;
+    const snapNote = ((d.input_snapshot_json || {}).anchor_type_note) || '';
+    let anchorTxt, anchorIsPe;
+    if (anchor && anchor.metric) {
+      anchorTxt = `${ANCHOR_LABELS[anchor.metric] || anchor.metric}${anchor.note ? '——' + anchor.note : ''}`;
+      anchorIsPe = anchor.metric === 'pe_scale' || anchor.metric === 'pe_static_scale';
+    } else if (snapNote) {
+      anchorTxt = snapNote;
+      anchorIsPe = null;  // 老卡快照说明，不据此改标注
+    } else {
+      anchorTxt = 'PE(TTM) 刻度（默认，未显式声明）';
+      anchorIsPe = true;
+    }
+    const peRowLabel = anchorIsPe === false ? 'PE 三情景（非锚，仅分位参考）' : 'PE 三情景';
+
     box.innerHTML = `
       <div class="text-xs text-gray-500 mb-2">${UI.escapeHtml(d.card_version_id)} · ${UI.escapeHtml(d.status)} ·
         ${UI.formatDate(d.effective_from)} 生效 · 下次复核 ${UI.formatDate(d.next_review_at)} · 口径不复权</div>
@@ -211,8 +260,9 @@
       <th>档位</th><th>价区</th><th>反推口径</th></tr></thead><tbody>${trs}</tbody></table>
 
       <div class="text-xs font-medium text-gray-600 mt-3 mb-1">情景假设</div>
+      ${kv('锚定指标', anchorTxt)}
       ${kv('EPS 三情景', `悲观 ${eps.bear || '—'} / 中性 ${eps.base || '—'} / 乐观 ${eps.bull || '—'}`)}
-      ${kv('PE 三情景', `悲观 ${pe.pessimistic || '—'} / 中性 ${pe.neutral || '—'} / 乐观 ${pe.optimistic || '—'}`)}
+      ${kv(peRowLabel, `悲观 ${pe.pessimistic || '—'} / 中性 ${pe.neutral || '—'} / 乐观 ${pe.optimistic || '—'}`)}
       ${kv('恐慌底刻度', scalesTxt || '—')}
       ${kv('样本窗口', `${win.from || '—'} ~ ${win.to || '—'}（${win.note || '—'}）`)}
       ${kv('体系判断', val.regime || '—')}
