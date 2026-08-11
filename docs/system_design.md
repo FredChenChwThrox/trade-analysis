@@ -177,12 +177,18 @@ adjusted_volume_t = raw_volume_t / share_factor_t
 
 ### 3.6 公告与新闻
 
-**来源**：
+**来源矩阵**（●=一期已备 adapter，◐=一期已设计未实现，○=二期新增）：
 
-- A 股公告：`stock_finance_data_get_stock_announcement`。
-- 港股公告：港交所披露易。
-- A 股新闻历史补量：新浪个股新闻页；增量：东财搜索 API。
-- 港股新闻：东财搜索，接受历史深度有限并在报告中标注覆盖区间。
+| 来源 | 渠道 | 覆盖层面 | 状态 |
+|---|---|---|---|
+| A 股公告 | `stock_finance_data_get_stock_announcement` | 公司 | ● |
+| 港股公告 | 港交所披露易 | 公司 | ◐ |
+| A 股个股新闻 | 历史：新浪个股新闻页；增量：东财搜索 API | 公司 | ◐ |
+| 港股新闻 | 东财搜索，接受历史深度有限并在报告中标注覆盖区间 | 公司 | ◐ |
+| 全市场快讯 | 财联社（政策/宏观主渠道） | 政策、宏观 | ○ |
+| 行业新闻 | 东财行业频道 | 行业 | ○ |
+
+- 每个来源接入时必须在报告中标注覆盖区间；快讯/行业源缺数时消息面标 `degraded`，不阻断确定性价格信号（§5.5 既有原则）。
 
 规范化事件只保存事实字段，不混入 LLM 评价：
 
@@ -193,8 +199,11 @@ content_hash, raw_object_id
 ```
 
 - 股票关联放在 `event_symbols(event_id, symbol)`，支持一条事件关联多只股票。
+- **行业/政策/宏观事件的个股关联（二期）**：`watchlist` 扩展 `keywords`（人工维护，如「黄金→紫金/豫光」「航油→南航」）做初筛，LLM 可建议关联但必须人工确认后才写 `event_symbols`——与卡片 draft-only 同纪律，不允许 LLM 自动关联直接生效。
 - 优先用来源 ID 去重，其次使用规范化 URL 和内容哈希；URL 查询参数不能直接作为唯一身份。
 - PDF、HTML 和新闻正文均作为不可信内容处理，进入 LLM 前移除脚本和隐藏文本，不允许正文中的指令改变系统提示或工具调用。
+
+**二期上线子序**（§9.4 第 4 步的展开）：① 公告采集入库（adapter 现成）→ ② 个股新闻 adapter → ③ LLM 评价 + 资讯流 → ④ 快讯/行业源 + scope 关联。
 
 ### 3.7 财务、股本、预测与汇率
 
@@ -389,10 +398,11 @@ LLM 对新增事件输出符合 JSON Schema 的评价，写入独立的 `event_a
 
 ```text
 event_id, assessment_version, model, prompt_version,
-assessed_at, event_type, direction, materiality,
+assessed_at, event_type, scope, direction, materiality,
 confidence, rationale, status
 ```
 
+- `scope` 为主题维度（二期新增）：`company / industry / policy / macro`，与 `direction`（正面/负面/无影响）正交；资讯流每条资讯展示 `direction × scope` 双标签。
 - 原始事件表不保存或覆盖评价列。
 - 同一事件可以因模型或提示词升级产生多个评价版本；报告明确使用哪个版本。
 - 低置信度、正文缺失或多个重大事件重叠时，状态标记为 `needs_review`，不强行归因。
@@ -591,9 +601,11 @@ tests/                        # 单元、集成和 golden tests
 1. 先完成行情、日历、复权、指标和数据质量门禁。
 2. 再完成确定性信号、卡片版本和报告快照。
 3. 用人工构造和真实历史样本验证数周。
-4. 最后接入新闻 LLM 评价、胜率重估和卡片 draft 自动生成。
+4. 最后接入新闻 LLM 评价、胜率重估和卡片 draft 自动生成（二期子序与 scope 维度见 §3.6；`event_assessments` 加 `scope` 列需配套 migration，随二期第 ③ 步实施）。
 
 在前三步通过验收前，不启用 LLM 自动更新策略状态。
+
+**二期可选扩展**：采集资产负债表自算历史 PB 序列（一期 PB/PS 仅用 forecast 快照单点值，单股页标注来源与快照日期）。
 
 ### 9.5 第一版实现分级（硬门槛 / 软约束）
 
