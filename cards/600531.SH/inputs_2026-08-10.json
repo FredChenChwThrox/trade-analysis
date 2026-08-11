@@ -1,0 +1,500 @@
+{
+  "meta": {
+    "schema": "card_inputs_v1",
+    "symbol": "600531.SH",
+    "name": "豫光金铅",
+    "market": "CN",
+    "currency": "CNY",
+    "timezone": "Asia/Shanghai",
+    "generated_at": "2026-08-11T07:19:43.998835+00:00",
+    "data_cutoff": {
+      "daily_bars": "2026-08-10",
+      "indicators_daily": "2026-08-10",
+      "weekly_bars": "2026-08-07",
+      "financial_reports": "2026-03-31",
+      "forecasts_snapshot": "2026-08-11T07:13:11.434477+00:00"
+    },
+    "notes": [
+      "价格口径：价区/前低/现价一律不复权（raw），复权价仅供技术比较（§3.4）",
+      "PE(TTM) 与 TTM 为市值口径（不复权价×股本÷TTM 归母净利），财报 available_at 为入库降级口径（与 pe_status degraded_available_at 一致）",
+      "量能阈值为调整量（volume_adj）口径，与周线衰竭信号一致"
+    ]
+  },
+  "earnings": {
+    "reports": [
+      {
+        "period_end": "2023-12-31",
+        "period_type": "annual",
+        "fiscal_year": 2023,
+        "is_cumulative": true,
+        "revenue": "32145290242.95",
+        "net_profit_attr": "581205021.84",
+        "eps_basic": "0.53",
+        "revenue_yoy": null,
+        "net_profit_yoy": null
+      },
+      {
+        "period_end": "2024-12-31",
+        "period_type": "annual",
+        "fiscal_year": 2024,
+        "is_cumulative": true,
+        "revenue": "39344538440.86",
+        "net_profit_attr": "807183809.35",
+        "eps_basic": "0.74",
+        "revenue_yoy": 0.22396,
+        "net_profit_yoy": 0.388811
+      },
+      {
+        "period_end": "2025-03-31",
+        "period_type": "quarterly",
+        "fiscal_year": 2025,
+        "is_cumulative": true,
+        "revenue": "10395324263.08",
+        "net_profit_attr": "228802305.78",
+        "eps_basic": "0.2099",
+        "revenue_yoy": null,
+        "net_profit_yoy": null
+      },
+      {
+        "period_end": "2025-06-30",
+        "period_type": "interim",
+        "fiscal_year": 2025,
+        "is_cumulative": true,
+        "revenue": "22440633829.86",
+        "net_profit_attr": "484647945.23",
+        "eps_basic": "0.4445",
+        "revenue_yoy": null,
+        "net_profit_yoy": null
+      },
+      {
+        "period_end": "2025-09-30",
+        "period_type": "quarterly",
+        "fiscal_year": 2025,
+        "is_cumulative": true,
+        "revenue": "34854997016.62",
+        "net_profit_attr": "620616871.35",
+        "eps_basic": "0.5692",
+        "revenue_yoy": null,
+        "net_profit_yoy": null
+      },
+      {
+        "period_end": "2025-12-31",
+        "period_type": "annual",
+        "fiscal_year": 2025,
+        "is_cumulative": true,
+        "revenue": "49553593201.18",
+        "net_profit_attr": "860092192.16",
+        "eps_basic": "0.79",
+        "revenue_yoy": 0.259478,
+        "net_profit_yoy": 0.065547
+      },
+      {
+        "period_end": "2026-03-31",
+        "period_type": "quarterly",
+        "fiscal_year": 2026,
+        "is_cumulative": true,
+        "revenue": "16354190230.91",
+        "net_profit_attr": "274880809.37",
+        "eps_basic": "0.2273",
+        "revenue_yoy": 0.573226,
+        "net_profit_yoy": 0.20139
+      }
+    ],
+    "ttm": {
+      "net_profit_attr": "906170695.75",
+      "eps": 0.7494,
+      "status": "ok",
+      "shares": "1209262698",
+      "note": "TTM = 最新年报 + 本财年最新累计 − 上一财年同期累计（§3.7）；EPS = TTM ÷ 最新股本"
+    },
+    "latest_report": {
+      "period_end": "2026-03-31",
+      "period_type": "quarterly",
+      "fiscal_year": 2026,
+      "is_cumulative": true,
+      "revenue": "16354190230.91",
+      "net_profit_attr": "274880809.37",
+      "eps_basic": "0.2273",
+      "revenue_yoy": 0.573226,
+      "net_profit_yoy": 0.20139
+    },
+    "currency": "CNY"
+  },
+  "forecasts": {
+    "snapshot_at": "2026-08-11T07:13:11.434477+00:00",
+    "source": "stock_finance_data",
+    "fy1_year": 2026,
+    "net_profit": {
+      "fy1": "863730000.0",
+      "fy2": "910390000.0",
+      "fy3": "1030130000.0"
+    },
+    "revenue": {
+      "fy1": "69713910000.0",
+      "fy2": "59076550000.0",
+      "fy3": "57300310000.0"
+    },
+    "yoy_pct": {
+      "fy1": 0.00423,
+      "fy2": 0.054022,
+      "fy3": 0.131526
+    },
+    "gap_check": {
+      "actual_period": "2026-03-31",
+      "actual_net_profit_yoy": 0.20139,
+      "forecast_fy1_yoy": 0.00423,
+      "gap_pp": -19.716,
+      "note": "裂口 = 券商 FY1 增速预期 − 最近季报实际增速（百分点）；裂口显著时情景设定以实际趋势为准（skill 第 2 步纪律）"
+    }
+  },
+  "valuation_scale": {
+    "panic_lows": [
+      {
+        "trade_date": "2023-08-11",
+        "raw_price": 7.3,
+        "adjusted_price": 7.3,
+        "is_fallback": true,
+        "pe_ttm": 9.7684,
+        "first_as_of": "2023-08-11"
+      },
+      {
+        "trade_date": "2023-08-18",
+        "raw_price": 6.86,
+        "adjusted_price": 6.86,
+        "is_fallback": true,
+        "pe_ttm": 9.1945,
+        "first_as_of": "2023-08-18"
+      },
+      {
+        "trade_date": "2023-08-21",
+        "raw_price": 6.78,
+        "adjusted_price": 6.78,
+        "is_fallback": true,
+        "pe_ttm": 9.0744,
+        "first_as_of": "2023-08-25"
+      },
+      {
+        "trade_date": "2023-09-22",
+        "raw_price": 6.64,
+        "adjusted_price": 6.6419,
+        "is_fallback": true,
+        "pe_ttm": 9.0211,
+        "first_as_of": "2023-09-22"
+      },
+      {
+        "trade_date": "2023-09-27",
+        "raw_price": 6.51,
+        "adjusted_price": 6.5119,
+        "is_fallback": true,
+        "pe_ttm": 8.7141,
+        "first_as_of": "2023-09-28"
+      },
+      {
+        "trade_date": "2023-10-13",
+        "raw_price": 6.28,
+        "adjusted_price": 6.2818,
+        "is_fallback": true,
+        "pe_ttm": 8.4205,
+        "first_as_of": "2023-10-13"
+      },
+      {
+        "trade_date": "2023-10-20",
+        "raw_price": 6.13,
+        "adjusted_price": 6.1318,
+        "is_fallback": true,
+        "pe_ttm": 8.1937,
+        "first_as_of": "2023-10-20"
+      },
+      {
+        "trade_date": "2023-11-10",
+        "raw_price": 6.04,
+        "adjusted_price": 6.0418,
+        "is_fallback": true,
+        "pe_ttm": 8.0869,
+        "first_as_of": "2023-11-10"
+      },
+      {
+        "trade_date": "2023-12-08",
+        "raw_price": 6.06,
+        "adjusted_price": 6.0618,
+        "is_fallback": true,
+        "pe_ttm": 8.0869,
+        "first_as_of": "2023-12-08"
+      },
+      {
+        "trade_date": "2023-12-11",
+        "raw_price": 5.88,
+        "adjusted_price": 5.8817,
+        "is_fallback": true,
+        "pe_ttm": 7.9802,
+        "first_as_of": "2023-12-15"
+      },
+      {
+        "trade_date": "2023-12-21",
+        "raw_price": 5.71,
+        "adjusted_price": 5.7117,
+        "is_fallback": true,
+        "pe_ttm": 7.78,
+        "first_as_of": "2023-12-22"
+      },
+      {
+        "trade_date": "2024-01-18",
+        "raw_price": 5.54,
+        "adjusted_price": 5.5416,
+        "is_fallback": true,
+        "pe_ttm": 7.6332,
+        "first_as_of": "2024-01-19"
+      },
+      {
+        "trade_date": "2024-02-02",
+        "raw_price": 4.86,
+        "adjusted_price": 4.8614,
+        "is_fallback": true,
+        "pe_ttm": 6.7391,
+        "first_as_of": "2024-02-02"
+      },
+      {
+        "trade_date": "2024-03-04",
+        "raw_price": 5.61,
+        "adjusted_price": 5.6116,
+        "is_fallback": false,
+        "pe_ttm": 7.5798,
+        "first_as_of": "2024-03-08"
+      },
+      {
+        "trade_date": "2024-04-01",
+        "raw_price": 6.67,
+        "adjusted_price": 6.672,
+        "is_fallback": false,
+        "pe_ttm": 9.0477,
+        "first_as_of": "2024-04-03"
+      },
+      {
+        "trade_date": "2024-04-11",
+        "raw_price": 6.88,
+        "adjusted_price": 6.882,
+        "is_fallback": false,
+        "pe_ttm": 9.5815,
+        "first_as_of": "2024-04-12"
+      },
+      {
+        "trade_date": "2024-04-16",
+        "raw_price": 6.44,
+        "adjusted_price": 6.4419,
+        "is_fallback": false,
+        "pe_ttm": 8.6474,
+        "first_as_of": "2024-04-19"
+      },
+      {
+        "trade_date": "2025-03-04",
+        "raw_price": 6.42,
+        "adjusted_price": 6.5853,
+        "is_fallback": false,
+        "pe_ttm": 8.7141,
+        "first_as_of": "2025-03-07"
+      },
+      {
+        "trade_date": "2025-03-11",
+        "raw_price": 7.31,
+        "adjusted_price": 7.4982,
+        "is_fallback": false,
+        "pe_ttm": 10.3022,
+        "first_as_of": "2025-03-14"
+      },
+      {
+        "trade_date": "2025-04-09",
+        "raw_price": 5.51,
+        "adjusted_price": 5.6519,
+        "is_fallback": false,
+        "pe_ttm": 8.0869,
+        "first_as_of": "2025-04-11"
+      },
+      {
+        "trade_date": "2025-09-08",
+        "raw_price": 9.78,
+        "adjusted_price": 10.3133,
+        "is_fallback": false,
+        "pe_ttm": 13.1713,
+        "first_as_of": "2025-09-12"
+      }
+    ],
+    "pe_ttm_quantiles": {
+      "p5": 7.4197,
+      "p25": 8.594,
+      "p50": 9.4748,
+      "p75": 15.2931,
+      "p95": 21.2449
+    },
+    "current_pe_ttm": 18.5492,
+    "sample_window": {
+      "start": "2023-08-11",
+      "end": "2026-08-10",
+      "n_days": 725,
+      "n_panic_lows": 21,
+      "note": "PE 刻度样本区间强制标注（§3.2）：第一版仅 3 年样本，引用更早历史估值须声明为样本外，禁止当作同体系刻度"
+    }
+  },
+  "market_snapshot": {
+    "trade_date": "2026-08-10",
+    "close_raw": 13.9,
+    "pe_ttm": 18.5492,
+    "pe_status": "ok;degraded_available_at",
+    "shares_issued": "1209262698",
+    "price_basis": "raw（不复权绝对价位）"
+  },
+  "exhaustion_params": {
+    "as_of": "2025-09-12",
+    "anchor": {
+      "panic_low": {
+        "trade_date": "2025-09-08",
+        "raw_price": 9.78,
+        "adjusted_price": 10.3133,
+        "is_fallback": false
+      },
+      "decline_start": {
+        "trade_date": "2025-09-05",
+        "raw_price": 10.0,
+        "adjusted_price": 10.5453,
+        "is_fallback": false
+      }
+    },
+    "prev_low_raw": 9.78,
+    "params_echo": {
+      "vol_multiple": 2.0,
+      "dryup_base_weeks": 4,
+      "dryup_vol_ratio": 0.5,
+      "dryup_vol_ratio_band": [
+        0.4,
+        0.6
+      ],
+      "no_new_low_weeks": 3,
+      "duration_weeks": 8,
+      "min_active_signals": 2
+    },
+    "base": {
+      "decline_week": "2025-09-05",
+      "base_weeks": [
+        "2025-09-12",
+        "2025-09-19",
+        "2025-09-26",
+        "2025-09-30"
+      ],
+      "volumes_adj": [
+        537252900.0,
+        597985900.0,
+        416499400.0,
+        212527200.0
+      ],
+      "mean_volume_adj": 441066350.0,
+      "note": "下跌起点后前 4 个完成周均量（调整量，不含当前周，§4.1 shift(1)）"
+    },
+    "thresholds": {
+      "panic_volume_x2": 882132700.0,
+      "dryup_volume_040": 176426540.0,
+      "dryup_volume_050": 220533175.0,
+      "dryup_volume_060": 264639810.0
+    }
+  },
+  "signal_status": {
+    "week_end_date": "2026-08-07",
+    "anchor_id": 992,
+    "active_count": 0,
+    "active_signals": [],
+    "min_active_signals": 2,
+    "meets_min": false,
+    "signals": [
+      {
+        "signal": "divergence",
+        "state": "inactive",
+        "triggered": true,
+        "active_until": "2025-09-12",
+        "reason": "episode_ended"
+      },
+      {
+        "signal": "dry_up",
+        "state": "inactive",
+        "triggered": false,
+        "active_until": null,
+        "reason": "condition_not_met"
+      },
+      {
+        "signal": "duration",
+        "state": "inactive",
+        "triggered": false,
+        "active_until": null,
+        "reason": "episode_ended"
+      },
+      {
+        "signal": "no_new_low_3w",
+        "state": "inactive",
+        "triggered": false,
+        "active_until": null,
+        "reason": "episode_ended"
+      },
+      {
+        "signal": "panic",
+        "state": "inactive",
+        "triggered": false,
+        "active_until": null,
+        "reason": "condition_not_met"
+      }
+    ]
+  },
+  "daily_watch": {
+    "as_of": "2026-08-10",
+    "active_card": null,
+    "facts": {
+      "daily_watch": {
+        "observed_on": "2026-08-10",
+        "state": "incomplete",
+        "triggered": false
+      }
+    },
+    "note": "当前无 active 卡（§2.5：卡片相关监测为 incomplete）"
+  },
+  "config_params": {
+    "config_hash": "04c7f52f63ac3985f6c6756aaf33383ea72004d900d41082afd6802312f0bb48",
+    "rule_version": "signals_v1",
+    "source": "config/signals.yaml defaults",
+    "anchors": {
+      "lookback_weeks": 26
+    },
+    "exhaustion": {
+      "panic": {
+        "vol_ma_weeks": 20,
+        "vol_multiple": 2.0,
+        "lower_shadow_body_ratio": 2.0,
+        "lower_shadow_range_pct": 0.35,
+        "big_yang_body_pct": 0.6,
+        "big_yang_gain_pct": 0.05
+      },
+      "dryup": {
+        "base_weeks": 4,
+        "vol_ratio": 0.5
+      },
+      "no_new_low_weeks": 3,
+      "duration_weeks": 8,
+      "active_weeks": {
+        "panic": 4,
+        "divergence": 4
+      },
+      "min_active_signals": 2
+    },
+    "daily_watch": {
+      "falsification": {
+        "breach_pct": 0.01,
+        "confirm_days": 2
+      },
+      "tier_proximity_pct": 0.03
+    },
+    "right_side": {
+      "breakout_pct": 0.01,
+      "vol_ma_days": 20,
+      "vol_multiple": 2.0,
+      "retest_window_days": 10,
+      "retest_band_pct": 0.02,
+      "retest_hold_pct": 0.01,
+      "invalidate_pct": 0.01
+    }
+  }
+}
