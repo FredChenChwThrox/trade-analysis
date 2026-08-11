@@ -29,7 +29,7 @@ def test_list_card_status(ui_conn):
 
 def test_list_stocks_happy_path(ui_conn):
     data = queries.list_stocks(ui_conn, {}, page=1, page_size=50)
-    assert data["total"] == 7
+    assert data["total"] == 8
     assert data["page"] == 1
     by_symbol = {it["symbol"]: it for it in data["items"]}
 
@@ -110,7 +110,7 @@ def test_list_stocks_filter_recent_signal_days(ui_conn):
 def test_list_stocks_sort_and_pagination(ui_conn):
     data = queries.list_stocks(ui_conn, {}, page=1, page_size=2, sort="latest_close", order="desc")
     assert data["page_size"] == 2
-    assert data["total"] == 7
+    assert data["total"] == 8
     assert data["items"][0]["symbol"] == "0700.HK"  # close 314 > 79
     asc = queries.list_stocks(ui_conn, {}, page=1, page_size=2, sort="pe_ttm", order="asc")
     # 0700.HK pe 为 NULL，升序时 NULL 排前
@@ -371,7 +371,7 @@ def test_list_report_runs_filters(ui_conn):
 
 def test_get_watchlist(ui_conn):
     items = queries.get_watchlist(ui_conn)
-    assert len(items) == 7
+    assert len(items) == 8
     assert {it["symbol"] for it in items} >= {"603605.SH", "0700.HK"}
 
 

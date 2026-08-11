@@ -44,3 +44,10 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
+  - symbol: 600531.SH
+    market: CN
+    name: 豫光金铅
+    aliases: [豫光金铅, 豫光, Yuguang]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai

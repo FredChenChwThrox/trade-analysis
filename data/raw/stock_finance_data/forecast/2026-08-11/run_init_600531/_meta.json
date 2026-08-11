@@ -1,0 +1,20 @@
+{
+  "run_id": "run_init_600531",
+  "source": "stock_finance_data",
+  "data_type": "forecast",
+  "fetched_at": "2026-08-11T15:12:46+08:00",
+  "purpose": "豫光金铅 600531.SH 全量初始化（新入池第 7 只）",
+  "requests": [
+    {
+      "api": "stock_finance_data_get_forecast",
+      "params": {
+        "ticker": "600531.SH",
+        "format": "json"
+      },
+      "file": "600531.SH.csv",
+      "status": "ok",
+      "note": "FY1 8.64 亿 / FY2 9.10 亿 / FY3 10.30 亿（快照 2026-08-11）",
+      "error": null
+    }
+  ]
+}

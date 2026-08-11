@@ -232,3 +232,13 @@
 
 - 人工确认激活 601899SH_85cd7f52，effective_from=2026-08-11；生成卡片 MD 并刷新 current.md。
 - 11:18 盘中跑 daily：6 只全部 incomplete（当日 bar 未发布，基准亦无）→ 报告 degraded P1，§2.5 正确行为。参照昨日经验（EOD 约 20:00 发布），今晚 20:00 后采集增量并重跑验证紫金卡片信号计算。
+
+## 2026-08-11（豫光金铅 600531.SH 入池）
+
+- watchlist 第 7 只：`config/watchlist.yaml` 新增 600531.SH 豫光金铅 → `db seed` 导入（watchlist 7 只）。
+- 全量初始化采集（run_init_600531，data/raw/**/2026-08-11/）：行情 none+forward 3 年各 725 行（2023-08-11..2026-08-10，2023-08-10 起会超来源 1095 天上限故起始后移 1 天）；利润表 7 期（3 年报+4 季报）；一致预期快照（FY1 8.64 亿/FY2 9.10 亿/FY3 10.30 亿）；yahoo get_stock_info 股本快照（sharesOutstanding=1,209,262,698；返回文本 ticker 误写 000733.SZ，数据体确认为豫光金铅，meta 已标注）。
+- 入库：daily_bars 725 行 + 财报 7 期（available_at 降级为入库时间，来源无披露时间）+ forecast；股本经 `valuation.load_share_snapshot` 写 share_capital_events（effective_at=2023-08-11 区间起点，同前 6 只惯例）。
+- 复权因子全量重建（adjust）：11 个平台段（分红型切换，corporate_actions 无记录已 NOTE）；周线重建 154 周。
+- daily 2026-08-10（revision=6）：600531.SH 报告 degraded(no_active_card)（§2.5 正确行为，同步观察无卡）；现价 13.90；吸筹状态机 idle；衰竭锚 2025-09-08（9.78 不复权）0 项 active；汇总 ok=7。
+- 测试修复：UI 测试 7 处硬编码股票总数 7→8（test_ui_queries×3 / test_ui_api×3 / test_ui_app×1，注释同步 6CN+1HK→7CN+1HK）；`uv run pytest -q` 270 全绿。
+- 今晚 20:22 盘后增量 cron 已更新为 7 只（eb027c36，原 fe5f4df6 删除）。
