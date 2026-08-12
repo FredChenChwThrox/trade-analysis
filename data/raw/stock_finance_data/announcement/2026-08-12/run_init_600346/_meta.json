@@ -1,0 +1,17 @@
+{
+  "run_id": "run_init_600346",
+  "source": "stock_finance_data",
+  "data_type": "announcement",
+  "fetched_at": "2026-08-12T23:13:45+08:00",
+  "purpose": "恒力石化 600346.SH 公告 1 年（消息面素材）",
+  "requests": [
+    {
+      "api": "stock_finance_data_get_stock_announcement",
+      "params": {"ticker": "600346.SH", "start_date": "2025-08-12", "end_date": "2026-08-12"},
+      "file": "600346.SH.csv",
+      "status": "ok",
+      "note": "121 条。要点：07-07 半年度业绩预增公告；07-20 第五期回购报告书+07-21 首次回购+08-04 回购进展；04-26 重要子公司被美国财政部列入 SDN 清单；05-26 2025 年度权益分派实施",
+      "error": null
+    }
+  ]
+}

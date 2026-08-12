@@ -440,12 +440,13 @@ def parse_financials_csv(conn: sqlite3.Connection, path: Path, raw_object_id: st
 
 # ---------------------------------------------------------------- 公告 → events/event_symbols
 
-# ⚠️ 公告接口实测 EMPTY_DATA（2026-08-09，603605.SH 与 600519.SH 近 3 个月均空），
-# 以下列名按接口文档描述（日期/发布时间/标题/PDF URL/序号）推断，未经真实样本验证。
+# ⚠️ 公告接口实测 EMPTY_DATA（2026-08-09，603605.SH 与 600519.SH 近 3 个月均空）。
+# 2026-08-12 真实样本（600346.SH 近 1 年 121 条）列名为 reportDate/reportTitle/pdfURL/
+# seq/thscode/ctime/time（time 为空），已补入别名；原推断列名保留兼容。
 _ANN_COL_CANDIDATES = {
-    "date": ("time", "date", "announcement_date", "公告日期"),
-    "title": ("title", "announcement_title", "公告标题"),
-    "url": ("url", "pdf_url", "announcement_url", "公告链接"),
+    "date": ("reportdate", "time", "date", "announcement_date", "公告日期"),
+    "title": ("reporttitle", "title", "announcement_title", "公告标题"),
+    "url": ("pdfurl", "url", "pdf_url", "announcement_url", "公告链接"),
     "seq": ("seq", "sequence", "announcement_id", "id", "公告序号"),
     "symbol": ("thscode", "ticker", "symbol"),
 }
@@ -479,6 +480,12 @@ def parse_announcement_csv(conn: sqlite3.Connection, path: Path, raw_object_id: 
         title = _pick(rec, _ANN_COL_CANDIDATES["title"])
         date_s = _pick(rec, _ANN_COL_CANDIDATES["date"])
         symbol = _pick(rec, _ANN_COL_CANDIDATES["symbol"])
+        if not symbol:
+            # 真实样本 thscode 列为空（2026-08-12，600346.SH）：单股公告文件
+            # 回退用文件名（stem 即 ticker）关联 event_symbols，避免公告成孤儿事件
+            stem = path.stem
+            if re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", stem):
+                symbol = stem
         if not title or not date_s:
             result.conflicts += 1
             result.errors.append(

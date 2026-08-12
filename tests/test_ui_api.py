@@ -5,7 +5,7 @@ def test_api_stocks_default(client):
     rv = client.get("/api/stocks")
     assert rv.status_code == 200
     data = rv.get_json()
-    assert data["total"] == 8
+    assert data["total"] == 9
     assert data["page"] == 1
     assert data["items"][0]["symbol"]
 
@@ -27,7 +27,7 @@ def test_api_stocks_sort_pagination(client):
     rv = client.get("/api/stocks?sort=latest_close&order=desc&page=1&page_size=2")
     data = rv.get_json()
     assert data["page_size"] == 2
-    assert data["total"] == 8
+    assert data["total"] == 9
     assert data["items"][0]["symbol"] == "0700.HK"
 
 
@@ -173,7 +173,7 @@ def test_api_dashboard(client):
     rv = client.get("/api/dashboard")
     assert rv.status_code == 200
     data = rv.get_json()
-    assert data["total_stocks"] == 8
+    assert data["total_stocks"] == 9
     assert data["stocks_with_active_card"] == 1
     assert data["markets"] == ["CN", "HK"]
     assert data["latest_trade_date"] == "2026-08-07"

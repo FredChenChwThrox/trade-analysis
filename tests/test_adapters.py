@@ -300,6 +300,29 @@ def test_announcement_ingest_and_dedup(conn, tmp_path):
     assert _count(conn, "events") == 2
 
 
+# 2026-08-12 真实样本列名（600346.SH 近 1 年公告）：reportDate/reportTitle/pdfURL/seq/thscode
+ANNOUNCEMENT_REAL = """reportDate,thscode,secName,ctime,reportTitle,pdfURL,seq,time
+2026-08-04,,恒力石化,2026-08-03 15:36:23,恒力石化：关于股份回购进展公告,http://example.com/c.pdf,5222961650,
+2026-07-07,,恒力石化,2026-07-06 15:55:42,恒力石化：2026年半年度业绩预增公告,http://example.com/d.pdf,5180044696,
+"""
+
+
+def test_announcement_real_column_aliases(conn, tmp_path):
+    """真实样本列名 reportDate/reportTitle/pdfURL 别名入库（2026-08-12 起）。"""
+    p = write(tmp_path, "raw/stock_finance_data/announcement/2026-08-12/run_t/600346.SH.csv",
+              ANNOUNCEMENT_REAL)
+    r = ingest_file(conn, p, source="stock_finance_data", data_type="announcement",
+                    symbol="600346.SH", parse=sfd.parse_announcement_csv)
+    assert r.inserted == 2 and r.conflicts == 0
+    ev = conn.execute("SELECT * FROM events ORDER BY published_at").fetchall()
+    assert len(ev) == 2
+    assert ev[0]["title"].startswith("恒力石化：2026年半年度业绩预增")
+    assert ev[0]["published_at"] == "2026-07-06T16:00:00+00:00"  # 2026-07-07 00:00 +08 转 UTC
+    assert ev[0]["source_external_id"] == "5180044696"
+    assert ev[0]["canonical_url"] == "http://example.com/d.pdf"
+    assert _count(conn, "event_symbols") == 2
+
+
 # ------------------------------------------------------------- 预期
 
 def test_forecast_snapshot(conn, tmp_path):
