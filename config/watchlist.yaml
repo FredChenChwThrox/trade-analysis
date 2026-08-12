@@ -51,3 +51,10 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
+  - symbol: 600346.SH
+    market: CN
+    name: 恒力石化
+    aliases: [恒力石化, 恒力, Hengli]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
