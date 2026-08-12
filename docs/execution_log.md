@@ -289,3 +289,11 @@
 - **卡片验证**：紫金卡（85cd7f52）与豫光卡（9a009077）生效首日 complete、无档位触发（33.18 远高于 T1 上沿 21.78；豫光 13.62 高于 T1 上沿 6.75）；南航卡 T1 触发（5.05 ∈ [4.95,5.20]）进日报优先级 3；海天跌出 T1 区（36.17 < 36.40，距下沿 0.6% 进优先级 4 观察）；珀莱雅距 T2 上沿 57.60 还差 2.2%（优先级 4）；埃斯顿收 36.12 站上右侧触发位 36.00 但未过突破线 36.36（=触发位×1.01），right_side 未触发，状态机 idle。
 - 今日收盘：珀莱雅 58.89 / 海天 36.17 / 平安 52.55 / 埃斯顿 36.12（+4.3%）/ 紫金 33.18（-6.4%）/ 南航 5.05 / 豫光 13.62。
 - `uv run pytest -q` **276 全绿**（275 + 新增 1）。
+
+## 2026-08-11（earnings-surge-screener skill 移植接入）
+
+- 来源：用户提供的 `earnings-surge-screener.zip`（A股"业绩兑现痕迹×景气表述"三轨选股工作流：Track A 预告大增×景气关键词 / Track B 早期痕迹 / Track C β错杀 + 通用闸门层 + 阶段二三维前瞻 + 跟踪重检）。
+- **移植**到 `skills/earnings-surge-screener/`（SKILL.md + 6 references + 2 scripts）：① 数据源层改写——删除 `scripts/gildata_query.py`（硬编码 `/app/.agents/plugins/...` 不可用于本机），改走 kimi-datasource MCP（`call_data_source_tool`，data_source_name="gildata"，params={query, file_path}）；Wind 选股兜底本环境无对应端点，降级为"换措辞重试语义选股"；② 脚本调用统一 `uv run python`；③ 新增「与本系统的衔接」节：核心候选→人工确认→watchlist→stock-collect 采集→fred-valuation-card-skill 出卡 draft→人工激活；报告存 `reports/screening/`；证据 CSV 落 `data/raw/gildata/`；证伪信号经确认转 cron；执行留痕 execution_log。LLM 只产 draft、卡片激活必须人工两条纪律不变。
+- **实调验证（gildata MCP 可得性确认）**：① `gildata_announcement_data`"2026年半年度业绩预告中提到产品供不应求"→15 行公告原文落 `data/raw/gildata/announcement/2026-08-11/ann_supply_short.csv`；② `verify_announcements.py` 正则核验：12 候选→4 合格（铜冠铜箔+486~544%、金安国纪+936~1063%、安达科技扭亏、中晶科技+55~75%），剔除预亏 1 家；③ `gildata_fin_query` 3 家×单主题（珀莱雅/海天/平安 2026-2027 一致预期净利润）一次成功，与 SKILL.md 记载的调用口径一致。
+- **parse_gildata_table.py 修 2 个 bug**：① 业绩预告表空表头/重复表头导致 `pd.concat` 抛 InvalidIndexError——表头去重命名（空名补 _colN，重名加 _2/_3）；② 首列去重静默吞掉一致预期表次年以后各行——改全行去重（仍能去掉 gildata 重复 result 块）。
+- 本 skill 定位选股研究层（LLM 主导判断流），与确定性管线是上下游关系，产出不经人工确认不进管线。
