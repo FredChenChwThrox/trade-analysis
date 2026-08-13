@@ -1,0 +1,17 @@
+{
+  "run_id": "run_init_002709",
+  "source": "stock_finance_data",
+  "data_type": "announcement",
+  "fetched_at": "2026-08-13T12:27:05+08:00",
+  "purpose": "天赐材料 002709.SZ 公告 1 年（消息面素材）",
+  "requests": [
+    {
+      "api": "stock_finance_data_get_stock_announcement",
+      "params": {"ticker": "002709.SZ", "start_date": "2025-08-13", "end_date": "2026-08-12"},
+      "file": "002709.SZ.csv",
+      "status": "ok",
+      "note": "249 条（2025-08-19..2026-08-12）。要点：07-10 2026 半年度业绩预告；08-04 2026 中期利润分配方案+07-21 控股股东中期分红提议；04-22 2025 年度及回报股东特别分红权益分派实施；03-28 申请发行 H 股并上市进展；03-27 股票期权行权 467 万股上市；07-04 子公司南通天赐终止年产 24.3 万吨锂电及含氟新材料项目",
+      "error": null
+    }
+  ]
+}

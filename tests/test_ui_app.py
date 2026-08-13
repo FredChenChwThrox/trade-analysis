@@ -26,7 +26,7 @@ def test_get_connection_row_factory(ui_db_path):
     conn = ui_db.get_connection(ui_db_path)
     try:
         row = conn.execute("SELECT COUNT(*) AS n FROM watchlist").fetchone()
-        assert row["n"] == 9  # 8 CN + 1 HK
+        assert row["n"] == 10  # 9 CN + 1 HK
     finally:
         conn.close()
 

@@ -58,3 +58,10 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
+  - symbol: 002709.SZ
+    market: CN
+    name: 天赐材料
+    aliases: [天赐材料, 天赐, Tinci]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai

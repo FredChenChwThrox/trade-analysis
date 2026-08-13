@@ -1,0 +1,25 @@
+{
+  "run_id": "run_init_002709",
+  "source": "stock_finance_data",
+  "data_type": "price",
+  "fetched_at": "2026-08-13T12:25:00+08:00",
+  "purpose": "天赐材料 002709.SZ 全量初始化（新入池第 10 只，电解液龙头）",
+  "requests": [
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {"ticker": "002709.SZ", "start_date": "2023-08-13", "end_date": "2026-08-12", "interval": "D", "adjust": "none", "format": "json"},
+      "file": "002709.SZ.csv",
+      "status": "ok",
+      "note": "726 rows, 2023-08-14..2026-08-12；区间 1094 天未超来源 3 年上限，单次采全无需分段",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {"ticker": "002709.SZ", "start_date": "2023-08-13", "end_date": "2026-08-12", "interval": "D", "adjust": "forward", "format": "json"},
+      "file": "002709.SZ_forward_3y.csv",
+      "status": "ok",
+      "note": "726 rows, 2023-08-14..2026-08-12；末日两口径 close 均 39.46（最新因子 1.0）",
+      "error": null
+    }
+  ]
+}

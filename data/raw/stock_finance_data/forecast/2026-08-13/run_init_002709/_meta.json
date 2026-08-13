@@ -1,0 +1,17 @@
+{
+  "run_id": "run_init_002709",
+  "source": "stock_finance_data",
+  "data_type": "forecast",
+  "fetched_at": "2026-08-13T12:27:00+08:00",
+  "purpose": "天赐材料 002709.SZ 一致预期快照",
+  "requests": [
+    {
+      "api": "stock_finance_data_get_forecast",
+      "params": {"ticker": "002709.SZ"},
+      "file": "002709.SZ.csv",
+      "status": "ok",
+      "note": "FY1 归母 66.74 亿 / FY2 78.54 亿 / FY3 91.87 亿，yoy +390.0%；未来 12 个月 74.01 亿；PE(LYR) 59.06 / PB(MRQ) 4.22 / PS 4.83",
+      "error": null
+    }
+  ]
+}

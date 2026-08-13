@@ -1,0 +1,17 @@
+{
+  "run_id": "run_init_002709",
+  "source": "yahoo_finance",
+  "data_type": "stock_info",
+  "fetched_at": "2026-08-13T12:27:30+08:00",
+  "purpose": "天赐材料 002709.SZ 股本快照（share_capital_events 种子）",
+  "requests": [
+    {
+      "api": "get_stock_info",
+      "params": {"ticker": "002709.SZ"},
+      "file": "stock_info_002709.SZ.csv",
+      "status": "ok",
+      "note": "sharesOutstanding=2,038,561,744（与 gildata 总股本 20.39 亿股一致，交叉核对件 data/raw/gildata/fin_query/2026-08-13/share_check_002709.csv）。注意：天赐转债(127073)2025Q4 集中转股，总股本 2025-09-30 19.14 亿 → 2026-03-30 20.39 亿，单点快照假设在 2025-11 前高估股本约 6%，pe_ttm 该段存在口径偏差（details_json 已标注假设）",
+      "error": null
+    }
+  ]
+}
