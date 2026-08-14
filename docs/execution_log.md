@@ -385,3 +385,9 @@
 - **发现并行盘后批**：`data/raw/**/2026-08-13/run_20260813_daily/`（collected_at 2026-08-13 20:20+08:00，覆盖 9 只+002709.SZ，窗口 08-05..08-13，forward==none 逐行一致，沪深300 收 4663.95 经 gildata 交叉一致无需 _fixed 兜底）与 daily_2026-08-13 已在激活前由本会话之外的渠道完成（非本 agent、非 cron——CronList 为空）；校验为收盘后采集、全日 bar 有效（非盘中半成品），08-13 bar 已入库（002709.SZ 收 38.81）。
 - 因 08-13 批跑在激活前，002709.SZ 当日无卡片信号；激活后重跑 daily 2026-08-13（§9.5）：卡片信号补齐——收 38.81，box_position=mid_box，tier_proximity inactive（距 T1 上沿 36.50 约 6.3% > 3% 阈值），tier_triggered inactive（衰竭信号活跃 0 项），证伪线监测生效（breach_threshold 20.79）。
 - `uv run pytest -q` **277 全绿**。至此 9 只 A 股全部持卡生效（002709.SZ 第 9 张激活卡；watchlist 共 10 只含 0700.HK 待港股源）。
+
+## 2026-08-13（牧原股份 002714.SZ 加入 watchlist）
+
+- 生猪养殖龙头，第 11 只观察股（人工指定，未走筛选线）。watchlist.yaml 加行 + `db seed` 导入（active=11，含 fixture 侧 0700.HK）。
+- 仅入池未采集：002714.SZ 暂无行情/财报数据，日报该股票 incomplete（§2.5 预期行为），待人工指示后走全量采集 → 出卡 draft 流程。
+- UI 测试硬编码股票总数 10→11（test_ui_api×3 / test_ui_queries×3 / test_ui_app×1，注释 9CN+1HK→10CN+1HK）；test_ui_queries.py:341 的 `total == 10` 为 pipeline_runs 计数与股票数无关，未动。`uv run pytest -q` **277 全绿**。

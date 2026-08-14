@@ -65,3 +65,10 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
+  - symbol: 002714.SZ
+    market: CN
+    name: 牧原股份
+    aliases: [牧原股份, 牧原, Muyuan]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
