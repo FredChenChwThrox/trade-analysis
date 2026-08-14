@@ -1,0 +1,39 @@
+{
+  "run_id": "run_init_002714",
+  "source": "stock_finance_data",
+  "data_type": "price",
+  "fetched_at": "2026-08-14T10:59:54+08:00",
+  "purpose": "牧原股份 002714.SZ 全量初始化（生猪养殖龙头，第 11 只观察股）",
+  "requests": [
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {
+        "ticker": "002714.SZ",
+        "start_date": "2023-08-14",
+        "end_date": "2026-08-13",
+        "interval": "D",
+        "adjust": "none",
+        "format": "json"
+      },
+      "file": "002714.SZ.csv",
+      "status": "ok",
+      "note": "727 rows, 20230814..20260813",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {
+        "ticker": "002714.SZ",
+        "start_date": "2023-08-14",
+        "end_date": "2026-08-13",
+        "interval": "D",
+        "adjust": "forward",
+        "format": "json"
+      },
+      "file": "002714.SZ_forward_3y.csv",
+      "status": "ok",
+      "note": "727 rows, 20230814..20260813",
+      "error": null
+    }
+  ]
+}

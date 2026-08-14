@@ -1,0 +1,19 @@
+{
+  "run_id": "run_init_002714",
+  "source": "yahoo_finance",
+  "data_type": "stock_info",
+  "fetched_at": "2026-08-14T10:59:54+08:00",
+  "purpose": "牧原股份股本快照（sharesOutstanding）",
+  "requests": [
+    {
+      "api": "get_stock_info",
+      "params": {
+        "ticker": "002714.SZ"
+      },
+      "file": "stock_info_002714.SZ.csv",
+      "status": "ok",
+      "note": "sharesOutstanding 5,462,773,044（A 股口径）；impliedSharesOutstanding 5,772,996,144（含 H 股）；gildata 交叉核对件 data/raw/gildata/fin_query/2026-08-14/share_check_002714.csv：总股本 577,299.61 万股 = A 股 546,277.30 万 + H 股 31,022.31 万（2026-02-06 H 股上市 +2026-03-10 超额配售）",
+      "error": null
+    }
+  ]
+}

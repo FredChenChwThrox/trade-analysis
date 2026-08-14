@@ -1,0 +1,666 @@
+{
+  "meta": {
+    "schema": "card_inputs_v1",
+    "symbol": "002714.SZ",
+    "name": "牧原股份",
+    "market": "CN",
+    "currency": "CNY",
+    "timezone": "Asia/Shanghai",
+    "generated_at": "2026-08-14T03:01:59.401236+00:00",
+    "data_cutoff": {
+      "daily_bars": "2026-08-13",
+      "indicators_daily": "2026-08-13",
+      "weekly_bars": "2026-08-07",
+      "financial_reports": "2026-03-31",
+      "forecasts_snapshot": "2026-08-14T03:00:02.540867+00:00"
+    },
+    "notes": [
+      "价格口径：价区/前低/现价一律不复权（raw），复权价仅供技术比较（§3.4）",
+      "PE(TTM) 与 TTM 为市值口径（不复权价×股本÷TTM 归母净利），财报 available_at 为入库降级口径（与 pe_status degraded_available_at 一致）",
+      "量能阈值为调整量（volume_adj）口径，与周线衰竭信号一致"
+    ]
+  },
+  "earnings": {
+    "reports": [
+      {
+        "period_end": "2023-12-31",
+        "period_type": "annual",
+        "fiscal_year": 2023,
+        "is_cumulative": true,
+        "revenue": "110860727714.4",
+        "net_profit_attr": "-4263280820.31",
+        "eps_basic": "-0.79",
+        "revenue_yoy": null,
+        "net_profit_yoy": null
+      },
+      {
+        "period_end": "2024-09-30",
+        "period_type": "quarterly",
+        "fiscal_year": 2024,
+        "is_cumulative": true,
+        "revenue": "96775125566.31",
+        "net_profit_attr": "10481068452.78",
+        "eps_basic": "1.94",
+        "revenue_yoy": null,
+        "net_profit_yoy": null
+      },
+      {
+        "period_end": "2024-12-31",
+        "period_type": "annual",
+        "fiscal_year": 2024,
+        "is_cumulative": true,
+        "revenue": "137946892076.87",
+        "net_profit_attr": "17881260485.27",
+        "eps_basic": "3.3",
+        "revenue_yoy": 0.244326,
+        "net_profit_yoy": -5.194249
+      },
+      {
+        "period_end": "2025-03-31",
+        "period_type": "quarterly",
+        "fiscal_year": 2025,
+        "is_cumulative": true,
+        "revenue": "36061237090.13",
+        "net_profit_attr": "4491095122.49",
+        "eps_basic": "0.83",
+        "revenue_yoy": null,
+        "net_profit_yoy": null
+      },
+      {
+        "period_end": "2025-06-30",
+        "period_type": "interim",
+        "fiscal_year": 2025,
+        "is_cumulative": true,
+        "revenue": "76462752679.74",
+        "net_profit_attr": "10530051098.42",
+        "eps_basic": "1.96",
+        "revenue_yoy": null,
+        "net_profit_yoy": null
+      },
+      {
+        "period_end": "2025-09-30",
+        "period_type": "quarterly",
+        "fiscal_year": 2025,
+        "is_cumulative": true,
+        "revenue": "111790004878.72",
+        "net_profit_attr": "14778904957.09",
+        "eps_basic": "2.74",
+        "revenue_yoy": 0.155152,
+        "net_profit_yoy": 0.410057
+      },
+      {
+        "period_end": "2025-12-31",
+        "period_type": "annual",
+        "fiscal_year": 2025,
+        "is_cumulative": true,
+        "revenue": "144144965371.68",
+        "net_profit_attr": "15486891254.04",
+        "eps_basic": "2.88",
+        "revenue_yoy": 0.044931,
+        "net_profit_yoy": -0.133904
+      },
+      {
+        "period_end": "2026-03-31",
+        "period_type": "quarterly",
+        "fiscal_year": 2026,
+        "is_cumulative": true,
+        "revenue": "29893668691.43",
+        "net_profit_attr": "-1214841304.35",
+        "eps_basic": "-0.22",
+        "revenue_yoy": -0.17103,
+        "net_profit_yoy": -1.2705
+      }
+    ],
+    "ttm": {
+      "net_profit_attr": "9780954827.20",
+      "eps": 1.7905,
+      "status": "ok",
+      "shares": "5462773044",
+      "note": "TTM = 最新年报 + 本财年最新累计 − 上一财年同期累计（§3.7）；EPS = TTM ÷ 最新股本"
+    },
+    "latest_report": {
+      "period_end": "2026-03-31",
+      "period_type": "quarterly",
+      "fiscal_year": 2026,
+      "is_cumulative": true,
+      "revenue": "29893668691.43",
+      "net_profit_attr": "-1214841304.35",
+      "eps_basic": "-0.22",
+      "revenue_yoy": -0.17103,
+      "net_profit_yoy": -1.2705
+    },
+    "currency": "CNY"
+  },
+  "forecasts": {
+    "snapshot_at": "2026-08-14T03:00:02.540867+00:00",
+    "source": "stock_finance_data",
+    "fy1_year": 2026,
+    "net_profit": {
+      "fy1": "5776081225.5",
+      "fy2": "27242479917.833",
+      "fy3": "25835462309.103"
+    },
+    "revenue": {
+      "fy1": "128031916428.57",
+      "fy2": "155193743214.29",
+      "fy3": "150772534137.93"
+    },
+    "yoy_pct": {
+      "fy1": -0.627034,
+      "fy2": 3.71643,
+      "fy3": -0.051648
+    },
+    "gap_check": {
+      "actual_period": "2026-03-31",
+      "actual_net_profit_yoy": -1.2705,
+      "forecast_fy1_yoy": -0.627034,
+      "gap_pp": 64.3466,
+      "note": "裂口 = 券商 FY1 增速预期 − 最近季报实际增速（百分点）；裂口显著时情景设定以实际趋势为准（skill 第 2 步纪律）"
+    }
+  },
+  "valuation_scale": {
+    "panic_lows": [
+      {
+        "trade_date": "2023-08-17",
+        "raw_price": 40.72,
+        "adjusted_price": 40.72,
+        "is_fallback": true,
+        "pe_ttm": 23.2173,
+        "first_as_of": "2023-08-18"
+      },
+      {
+        "trade_date": "2023-08-24",
+        "raw_price": 39.1,
+        "adjusted_price": 39.1,
+        "is_fallback": true,
+        "pe_ttm": 22.441,
+        "first_as_of": "2023-08-25"
+      },
+      {
+        "trade_date": "2023-09-08",
+        "raw_price": 39.82,
+        "adjusted_price": 39.82,
+        "is_fallback": true,
+        "pe_ttm": 22.3963,
+        "first_as_of": "2023-09-08"
+      },
+      {
+        "trade_date": "2023-09-22",
+        "raw_price": 39.16,
+        "adjusted_price": 39.16,
+        "is_fallback": true,
+        "pe_ttm": 22.2343,
+        "first_as_of": "2023-09-22"
+      },
+      {
+        "trade_date": "2023-09-28",
+        "raw_price": 37.89,
+        "adjusted_price": 37.89,
+        "is_fallback": true,
+        "pe_ttm": 21.162,
+        "first_as_of": "2023-09-28"
+      },
+      {
+        "trade_date": "2023-10-09",
+        "raw_price": 34.49,
+        "adjusted_price": 34.49,
+        "is_fallback": true,
+        "pe_ttm": 19.5479,
+        "first_as_of": "2023-10-13"
+      },
+      {
+        "trade_date": "2023-10-20",
+        "raw_price": 31.44,
+        "adjusted_price": 31.44,
+        "is_fallback": true,
+        "pe_ttm": 17.6713,
+        "first_as_of": "2023-10-20"
+      },
+      {
+        "trade_date": "2024-02-02",
+        "raw_price": 34.51,
+        "adjusted_price": 34.51,
+        "is_fallback": true,
+        "pe_ttm": 19.7378,
+        "first_as_of": "2024-04-26"
+      },
+      {
+        "trade_date": "2024-02-05",
+        "raw_price": 34.24,
+        "adjusted_price": 34.24,
+        "is_fallback": true,
+        "pe_ttm": 19.9389,
+        "first_as_of": "2024-08-09"
+      },
+      {
+        "trade_date": "2024-03-01",
+        "raw_price": 37.59,
+        "adjusted_price": 37.59,
+        "is_fallback": true,
+        "pe_ttm": 21.3184,
+        "first_as_of": "2024-08-16"
+      },
+      {
+        "trade_date": "2024-03-15",
+        "raw_price": 38.19,
+        "adjusted_price": 38.19,
+        "is_fallback": true,
+        "pe_ttm": 21.4468,
+        "first_as_of": "2024-08-30"
+      },
+      {
+        "trade_date": "2024-09-05",
+        "raw_price": 37.7,
+        "adjusted_price": 37.7,
+        "is_fallback": true,
+        "pe_ttm": 21.2737,
+        "first_as_of": "2024-09-06"
+      },
+      {
+        "trade_date": "2024-09-13",
+        "raw_price": 36.85,
+        "adjusted_price": 36.85,
+        "is_fallback": true,
+        "pe_ttm": 20.8939,
+        "first_as_of": "2024-09-13"
+      },
+      {
+        "trade_date": "2024-09-20",
+        "raw_price": 35.02,
+        "adjusted_price": 35.02,
+        "is_fallback": true,
+        "pe_ttm": 20.0673,
+        "first_as_of": "2024-09-20"
+      },
+      {
+        "trade_date": "2025-01-10",
+        "raw_price": 36.15,
+        "adjusted_price": 36.9196,
+        "is_fallback": true,
+        "pe_ttm": 20.2181,
+        "first_as_of": "2025-03-21"
+      },
+      {
+        "trade_date": "2025-02-28",
+        "raw_price": 36.2,
+        "adjusted_price": 36.9707,
+        "is_fallback": true,
+        "pe_ttm": 20.2684,
+        "first_as_of": "2025-07-11"
+      },
+      {
+        "trade_date": "2025-03-03",
+        "raw_price": 36.11,
+        "adjusted_price": 36.8787,
+        "is_fallback": true,
+        "pe_ttm": 20.4806,
+        "first_as_of": "2025-08-29"
+      },
+      {
+        "trade_date": "2025-03-11",
+        "raw_price": 36.86,
+        "adjusted_price": 37.6447,
+        "is_fallback": true,
+        "pe_ttm": 21.2793,
+        "first_as_of": "2025-09-05"
+      },
+      {
+        "trade_date": "2025-03-21",
+        "raw_price": 37.72,
+        "adjusted_price": 38.523,
+        "is_fallback": true,
+        "pe_ttm": 21.5474,
+        "first_as_of": "2025-09-12"
+      },
+      {
+        "trade_date": "2025-05-12",
+        "raw_price": 39.04,
+        "adjusted_price": 39.8711,
+        "is_fallback": true,
+        "pe_ttm": 21.916,
+        "first_as_of": "2025-09-19"
+      },
+      {
+        "trade_date": "2025-05-19",
+        "raw_price": 39.09,
+        "adjusted_price": 39.9222,
+        "is_fallback": true,
+        "pe_ttm": 21.9104,
+        "first_as_of": "2025-11-14"
+      },
+      {
+        "trade_date": "2025-05-29",
+        "raw_price": 38.16,
+        "adjusted_price": 38.9724,
+        "is_fallback": true,
+        "pe_ttm": 21.592,
+        "first_as_of": "2025-11-21"
+      },
+      {
+        "trade_date": "2025-06-03",
+        "raw_price": 40.03,
+        "adjusted_price": 40.8822,
+        "is_fallback": true,
+        "pe_ttm": 23.2006,
+        "first_as_of": "2025-11-28"
+      },
+      {
+        "trade_date": "2025-06-20",
+        "raw_price": 41.83,
+        "adjusted_price": 42.7205,
+        "is_fallback": true,
+        "pe_ttm": 23.3625,
+        "first_as_of": "2025-12-05"
+      },
+      {
+        "trade_date": "2025-06-24",
+        "raw_price": 41.28,
+        "adjusted_price": 42.1588,
+        "is_fallback": true,
+        "pe_ttm": 23.3569,
+        "first_as_of": "2025-12-19"
+      },
+      {
+        "trade_date": "2025-06-30",
+        "raw_price": 41.58,
+        "adjusted_price": 43.0383,
+        "is_fallback": true,
+        "pe_ttm": 23.4631,
+        "first_as_of": "2025-12-26"
+      },
+      {
+        "trade_date": "2025-07-08",
+        "raw_price": 42.99,
+        "adjusted_price": 44.4977,
+        "is_fallback": true,
+        "pe_ttm": 24.3902,
+        "first_as_of": "2025-12-31"
+      },
+      {
+        "trade_date": "2025-08-01",
+        "raw_price": 45.7,
+        "adjusted_price": 47.3028,
+        "is_fallback": true,
+        "pe_ttm": 25.5854,
+        "first_as_of": "2026-01-09"
+      },
+      {
+        "trade_date": "2025-08-15",
+        "raw_price": 45.76,
+        "adjusted_price": 47.3649,
+        "is_fallback": true,
+        "pe_ttm": 25.7306,
+        "first_as_of": "2026-01-30"
+      },
+      {
+        "trade_date": "2026-02-13",
+        "raw_price": 45.02,
+        "adjusted_price": 47.4172,
+        "is_fallback": true,
+        "pe_ttm": 25.3285,
+        "first_as_of": "2026-02-13"
+      },
+      {
+        "trade_date": "2026-03-24",
+        "raw_price": 42.3,
+        "adjusted_price": 44.5524,
+        "is_fallback": true,
+        "pe_ttm": 24.2952,
+        "first_as_of": "2026-03-27"
+      },
+      {
+        "trade_date": "2026-03-31",
+        "raw_price": 41.23,
+        "adjusted_price": 43.4254,
+        "is_fallback": true,
+        "pe_ttm": 23.2955,
+        "first_as_of": "2026-04-03"
+      },
+      {
+        "trade_date": "2026-05-15",
+        "raw_price": 41.7,
+        "adjusted_price": 43.9204,
+        "is_fallback": true,
+        "pe_ttm": 23.7367,
+        "first_as_of": "2026-05-15"
+      },
+      {
+        "trade_date": "2026-05-22",
+        "raw_price": 38.65,
+        "adjusted_price": 40.708,
+        "is_fallback": true,
+        "pe_ttm": 21.6926,
+        "first_as_of": "2026-05-22"
+      },
+      {
+        "trade_date": "2026-05-28",
+        "raw_price": 36.75,
+        "adjusted_price": 39.1318,
+        "is_fallback": true,
+        "pe_ttm": 20.6928,
+        "first_as_of": "2026-05-29"
+      },
+      {
+        "trade_date": "2026-06-05",
+        "raw_price": 34.85,
+        "adjusted_price": 37.1087,
+        "is_fallback": true,
+        "pe_ttm": 19.5814,
+        "first_as_of": "2026-06-05"
+      },
+      {
+        "trade_date": "2026-06-12",
+        "raw_price": 33.75,
+        "adjusted_price": 35.9374,
+        "is_fallback": true,
+        "pe_ttm": 19.4697,
+        "first_as_of": "2026-06-12"
+      },
+      {
+        "trade_date": "2026-06-18",
+        "raw_price": 33.52,
+        "adjusted_price": 35.6925,
+        "is_fallback": true,
+        "pe_ttm": 18.7827,
+        "first_as_of": "2026-06-18"
+      },
+      {
+        "trade_date": "2026-06-25",
+        "raw_price": 31.81,
+        "adjusted_price": 33.8717,
+        "is_fallback": true,
+        "pe_ttm": 18.0734,
+        "first_as_of": "2026-06-26"
+      },
+      {
+        "trade_date": "2026-06-29",
+        "raw_price": 33.11,
+        "adjusted_price": 35.2559,
+        "is_fallback": false,
+        "pe_ttm": 20.1008,
+        "first_as_of": "2026-07-03"
+      }
+    ],
+    "pe_ttm_quantiles": {
+      "p5": 20.0299,
+      "p25": 21.5809,
+      "p50": 23.3234,
+      "p75": 25.577,
+      "p95": 28.4076
+    },
+    "current_pe_ttm": 22.4242,
+    "sample_window": {
+      "start": "2023-08-14",
+      "end": "2026-08-13",
+      "n_days": 727,
+      "n_panic_lows": 40,
+      "note": "PE 刻度样本区间强制标注（§3.2）：第一版仅 3 年样本，引用更早历史估值须声明为样本外，禁止当作同体系刻度"
+    }
+  },
+  "market_snapshot": {
+    "trade_date": "2026-08-13",
+    "close_raw": 40.15,
+    "pe_ttm": 22.4242,
+    "pe_status": "ok;degraded_available_at",
+    "shares_issued": "5462773044",
+    "price_basis": "raw（不复权绝对价位）"
+  },
+  "exhaustion_params": {
+    "as_of": "2026-07-03",
+    "anchor": {
+      "panic_low": {
+        "trade_date": "2026-06-29",
+        "raw_price": 33.11,
+        "adjusted_price": 35.2559,
+        "is_fallback": false
+      },
+      "decline_start": {
+        "trade_date": "2025-12-31",
+        "raw_price": 50.58,
+        "adjusted_price": 53.2733,
+        "is_fallback": false
+      }
+    },
+    "prev_low_raw": 33.11,
+    "params_echo": {
+      "vol_multiple": 2.0,
+      "dryup_base_weeks": 4,
+      "dryup_vol_ratio": 0.5,
+      "dryup_vol_ratio_band": [
+        0.4,
+        0.6
+      ],
+      "no_new_low_weeks": 3,
+      "duration_weeks": 8,
+      "min_active_signals": 2
+    },
+    "base": {
+      "decline_week": "2025-12-31",
+      "base_weeks": [
+        "2026-01-09",
+        "2026-01-16",
+        "2026-01-23",
+        "2026-01-30"
+      ],
+      "volumes_adj": [
+        169868600.0,
+        221934500.0,
+        217393900.0,
+        332204100.0
+      ],
+      "mean_volume_adj": 235350275.0,
+      "note": "下跌起点后前 4 个完成周均量（调整量，不含当前周，§4.1 shift(1)）"
+    },
+    "thresholds": {
+      "panic_volume_x2": 470700550.0,
+      "dryup_volume_040": 94140110.0,
+      "dryup_volume_050": 117675137.5,
+      "dryup_volume_060": 141210165.0
+    }
+  },
+  "signal_status": {
+    "week_end_date": "2026-08-07",
+    "anchor_id": 3210,
+    "active_count": 2,
+    "active_signals": [
+      "duration",
+      "no_new_low_3w"
+    ],
+    "min_active_signals": 2,
+    "meets_min": true,
+    "signals": [
+      {
+        "signal": "divergence",
+        "state": "inactive",
+        "triggered": false,
+        "active_until": null,
+        "reason": "no_pivot_confirmed"
+      },
+      {
+        "signal": "dry_up",
+        "state": "inactive",
+        "triggered": false,
+        "active_until": null,
+        "reason": "condition_not_met"
+      },
+      {
+        "signal": "duration",
+        "state": "active",
+        "triggered": false,
+        "active_until": null,
+        "reason": "condition_met"
+      },
+      {
+        "signal": "no_new_low_3w",
+        "state": "active",
+        "triggered": false,
+        "active_until": null,
+        "reason": "holding"
+      },
+      {
+        "signal": "panic",
+        "state": "inactive",
+        "triggered": false,
+        "active_until": null,
+        "reason": "condition_not_met"
+      }
+    ]
+  },
+  "daily_watch": {
+    "as_of": "2026-08-13",
+    "active_card": null,
+    "facts": {
+      "daily_watch": {
+        "observed_on": "2026-08-13",
+        "state": "incomplete",
+        "triggered": false
+      }
+    },
+    "note": "当前无 active 卡（§2.5：卡片相关监测为 incomplete）"
+  },
+  "config_params": {
+    "config_hash": "04c7f52f63ac3985f6c6756aaf33383ea72004d900d41082afd6802312f0bb48",
+    "rule_version": "signals_v1",
+    "source": "config/signals.yaml defaults",
+    "anchors": {
+      "lookback_weeks": 26
+    },
+    "exhaustion": {
+      "panic": {
+        "vol_ma_weeks": 20,
+        "vol_multiple": 2.0,
+        "lower_shadow_body_ratio": 2.0,
+        "lower_shadow_range_pct": 0.35,
+        "big_yang_body_pct": 0.6,
+        "big_yang_gain_pct": 0.05
+      },
+      "dryup": {
+        "base_weeks": 4,
+        "vol_ratio": 0.5
+      },
+      "no_new_low_weeks": 3,
+      "duration_weeks": 8,
+      "active_weeks": {
+        "panic": 4,
+        "divergence": 4
+      },
+      "min_active_signals": 2
+    },
+    "daily_watch": {
+      "falsification": {
+        "breach_pct": 0.01,
+        "confirm_days": 2
+      },
+      "tier_proximity_pct": 0.03
+    },
+    "right_side": {
+      "breakout_pct": 0.01,
+      "vol_ma_days": 20,
+      "vol_multiple": 2.0,
+      "retest_window_days": 10,
+      "retest_band_pct": 0.02,
+      "retest_hold_pct": 0.01,
+      "invalidate_pct": 0.01
+    }
+  }
+}
