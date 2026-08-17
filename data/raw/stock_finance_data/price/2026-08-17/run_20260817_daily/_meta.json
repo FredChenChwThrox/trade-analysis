@@ -1,0 +1,195 @@
+{
+  "run_id": "run_20260817_daily",
+  "collected_at": "2026-08-17T20:50+08:00",
+  "mode": "incremental",
+  "overlap_window": "2026-08-10..2026-08-17",
+  "source": "stock_finance_data",
+  "data_type": "price",
+  "watchlist_basis": "watchlist 表当日 active=13 只 CN A 股（不含 0700.HK 无源）",
+  "forward_eq_none": "13/13 逐文件 cmp 一致（窗口内无除权）",
+  "note": "MCP file_path 相对路径按插件 cwd 解析，文件初落插件目录，已移入本目录（后续采集应传绝对路径）",
+  "requests": [
+    {
+      "ticker": "002299.SZ",
+      "adjust": "none",
+      "file": "002299.SZ.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "002299.SZ",
+      "adjust": "forward",
+      "file": "002299.SZ_forward.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "002557.SZ",
+      "adjust": "none",
+      "file": "002557.SZ.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "002557.SZ",
+      "adjust": "forward",
+      "file": "002557.SZ_forward.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "002709.SZ",
+      "adjust": "none",
+      "file": "002709.SZ.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "002709.SZ",
+      "adjust": "forward",
+      "file": "002709.SZ_forward.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "002714.SZ",
+      "adjust": "none",
+      "file": "002714.SZ.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "002714.SZ",
+      "adjust": "forward",
+      "file": "002714.SZ_forward.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "002747.SZ",
+      "adjust": "none",
+      "file": "002747.SZ.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "002747.SZ",
+      "adjust": "forward",
+      "file": "002747.SZ_forward.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "600029.SH",
+      "adjust": "none",
+      "file": "600029.SH.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "600029.SH",
+      "adjust": "forward",
+      "file": "600029.SH_forward.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "600346.SH",
+      "adjust": "none",
+      "file": "600346.SH.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "600346.SH",
+      "adjust": "forward",
+      "file": "600346.SH_forward.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "600531.SH",
+      "adjust": "none",
+      "file": "600531.SH.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "600531.SH",
+      "adjust": "forward",
+      "file": "600531.SH_forward.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "601318.SH",
+      "adjust": "none",
+      "file": "601318.SH.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "601318.SH",
+      "adjust": "forward",
+      "file": "601318.SH_forward.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "601899.SH",
+      "adjust": "none",
+      "file": "601899.SH.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "601899.SH",
+      "adjust": "forward",
+      "file": "601899.SH_forward.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "603288.SH",
+      "adjust": "none",
+      "file": "603288.SH.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "603288.SH",
+      "adjust": "forward",
+      "file": "603288.SH_forward.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "603605.SH",
+      "adjust": "none",
+      "file": "603605.SH.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "603605.SH",
+      "adjust": "forward",
+      "file": "603605.SH_forward.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "603697.SH",
+      "adjust": "none",
+      "file": "603697.SH.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    },
+    {
+      "ticker": "603697.SH",
+      "adjust": "forward",
+      "file": "603697.SH_forward.csv",
+      "rows": 6,
+      "range": "2026-08-10..2026-08-17"
+    }
+  ]
+}
