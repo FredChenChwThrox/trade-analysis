@@ -1,0 +1,40 @@
+{
+  "run_id": "run_init_603697",
+  "source": "stock_finance_data",
+  "data_type": "price",
+  "fetched_at": "2026-08-16T10:41:00+08:00",
+  "purpose": "有友食品全量初始化：日线 3 年（2023-08-16..2026-08-14，未超单次 3 年上限），none 不复权 + forward 前复权",
+  "requests": [
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {
+        "ticker": "603697.SH",
+        "start_date": "2023-08-16",
+        "end_date": "2026-08-14",
+        "adjust": "none",
+        "interval": "D",
+        "format": "json"
+      },
+      "file": "603697.SH.csv",
+      "status": "ok",
+      "note": "726 行，2023-08-16..2026-08-14",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_price",
+      "params": {
+        "ticker": "603697.SH",
+        "start_date": "2023-08-16",
+        "end_date": "2026-08-14",
+        "adjust": "forward",
+        "interval": "D",
+        "format": "json"
+      },
+      "file": "603697.SH_forward.csv",
+      "status": "ok",
+      "note": "726 行，2023-08-16..2026-08-14；末日 2026-08-14 forward==none（9.63）",
+      "error": null
+    }
+  ],
+  "errors": []
+}

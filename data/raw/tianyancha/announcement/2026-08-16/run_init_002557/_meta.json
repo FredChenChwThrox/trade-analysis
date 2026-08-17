@@ -1,0 +1,20 @@
+{
+  "run_id": "run_init_002557",
+  "source": "tianyancha",
+  "data_type": "announcement",
+  "fetched_at": "2026-08-16T10:44:00+08:00",
+  "purpose": "洽洽食品 002557.SZ 全量初始化：公告 1 年窗口（2025-08-16..2026-08-16）。stock_finance_data get_stock_announcement 故障中（2026-08-13 起持续 EMPTY_DATA），改走天眼查（同 08-15 八只补采先例）。首页已核对 stock_code=002557 一致，纯 A 股无 HK 混排行",
+  "stop_condition": "第 10 页末行 time=2025-06-04 已越过窗口下界 2025-08-16，跨界行保留落盘；每页 20 行共 10 页 200 行",
+  "requests": [
+    {"api": "tianyancha_api_call", "params": {"api_call_name": "上市信息-上市公告", "api_call_params": {"keyword": "洽洽食品股份有限公司", "pageNum": 1, "pageSize": 20}}, "file": "002557.SZ_p1.csv", "status": "ok", "note": "20 rows, 2026-08-08..2026-05-09", "error": null},
+    {"api": "tianyancha_api_call", "params": {"api_call_name": "上市信息-上市公告", "api_call_params": {"keyword": "洽洽食品股份有限公司", "pageNum": 2, "pageSize": 20}}, "file": "002557.SZ_p2.csv", "status": "ok", "note": "20 rows, 2026-05-09..2026-04-21", "error": null},
+    {"api": "tianyancha_api_call", "params": {"api_call_name": "上市信息-上市公告", "api_call_params": {"keyword": "洽洽食品股份有限公司", "pageNum": 3, "pageSize": 20}}, "file": "002557.SZ_p3.csv", "status": "ok", "note": "20 rows, 2026-04-21 同批", "error": null},
+    {"api": "tianyancha_api_call", "params": {"api_call_name": "上市信息-上市公告", "api_call_params": {"keyword": "洽洽食品股份有限公司", "pageNum": 4, "pageSize": 20}}, "file": "002557.SZ_p4.csv", "status": "ok", "note": "20 rows, 2026-04-21..2026-03-03", "error": null},
+    {"api": "tianyancha_api_call", "params": {"api_call_name": "上市信息-上市公告", "api_call_params": {"keyword": "洽洽食品股份有限公司", "pageNum": 5, "pageSize": 20}}, "file": "002557.SZ_p5.csv", "status": "ok", "note": "20 rows, 2026-03-03..2026-01-29", "error": null},
+    {"api": "tianyancha_api_call", "params": {"api_call_name": "上市信息-上市公告", "api_call_params": {"keyword": "洽洽食品股份有限公司", "pageNum": 6, "pageSize": 20}}, "file": "002557.SZ_p6.csv", "status": "ok", "note": "20 rows, 2026-01-05..2025-11-15", "error": null},
+    {"api": "tianyancha_api_call", "params": {"api_call_name": "上市信息-上市公告", "api_call_params": {"keyword": "洽洽食品股份有限公司", "pageNum": 7, "pageSize": 20}}, "file": "002557.SZ_p7.csv", "status": "ok", "note": "20 rows, 2025-11-15..2025-10-24", "error": null},
+    {"api": "tianyancha_api_call", "params": {"api_call_name": "上市信息-上市公告", "api_call_params": {"keyword": "洽洽食品股份有限公司", "pageNum": 8, "pageSize": 20}}, "file": "002557.SZ_p8.csv", "status": "ok", "note": "20 rows, 2025-10-14..2025-08-22", "error": null},
+    {"api": "tianyancha_api_call", "params": {"api_call_name": "上市信息-上市公告", "api_call_params": {"keyword": "洽洽食品股份有限公司", "pageNum": 9, "pageSize": 20}}, "file": "002557.SZ_p9.csv", "status": "ok", "note": "20 rows, 2025-08-22 同批", "error": null},
+    {"api": "tianyancha_api_call", "params": {"api_call_name": "上市信息-上市公告", "api_call_params": {"keyword": "洽洽食品股份有限公司", "pageNum": 10, "pageSize": 20}}, "file": "002557.SZ_p10.csv", "status": "ok", "note": "20 rows, 2025-08-22..2025-06-04（末页越界止采）", "error": null}
+  ]
+}

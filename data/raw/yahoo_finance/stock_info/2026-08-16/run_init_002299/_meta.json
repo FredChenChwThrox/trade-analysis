@@ -1,0 +1,18 @@
+{
+  "run_id": "run_init_002299",
+  "source": "yahoo_finance",
+  "data_type": "stock_info",
+  "fetched_at": "2026-08-16T10:41:00+08:00",
+  "purpose": "圣农发展股本快照（sharesOutstanding）；ingest ROUTES 无 (yahoo_finance, stock_info) 路由，股本经 scripts.indicators.valuation.load_share_snapshot 单独入库",
+  "requests": [
+    {
+      "api": "get_stock_info",
+      "params": {"ticker": "002299.SZ"},
+      "file": "stock_info_002299.SZ.csv",
+      "status": "ok",
+      "note": "sharesOutstanding 1,242,770,322；floatShares 571,533,045；impliedSharesOutstanding 1,242,770,322（纯 A 股，无 H）；纯搬运未核对，单点快照假设见 details_json",
+      "error": null
+    }
+  ],
+  "errors": []
+}

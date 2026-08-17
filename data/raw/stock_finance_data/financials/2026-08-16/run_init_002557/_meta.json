@@ -1,0 +1,81 @@
+{
+  "run_id": "run_init_002557",
+  "source": "stock_finance_data",
+  "data_type": "financials",
+  "fetched_at": "2026-08-16T10:44:00+08:00",
+  "purpose": "洽洽食品利润表：最近 3 个年报 + 最近 8 个季报期口径（同牧原 run_init_002714 先例 9 请求，含 20240930 供 2025Q3 同比）",
+  "requests": [
+    {
+      "api": "stock_finance_data_get_financial_statements",
+      "params": {"ticker": "002557.SZ", "statement": "is", "financial_parameter": "20231231", "format": "json"},
+      "file": "002557.SZ_is_20231231.csv",
+      "status": "ok",
+      "note": "1 row；FY2023 归母 8.03 亿",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_financial_statements",
+      "params": {"ticker": "002557.SZ", "statement": "is", "financial_parameter": "20241231", "format": "json"},
+      "file": "002557.SZ_is_20241231.csv",
+      "status": "ok",
+      "note": "1 row；FY2024 归母 8.49 亿",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_financial_statements",
+      "params": {"ticker": "002557.SZ", "statement": "is", "financial_parameter": "20251231", "format": "json"},
+      "file": "002557.SZ_is_20251231.csv",
+      "status": "ok",
+      "note": "1 row；FY2025 归母 3.18 亿（同比大幅下滑）",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_financial_statements",
+      "params": {"ticker": "002557.SZ", "statement": "is", "financial_parameter": "20240930", "format": "json"},
+      "file": "002557.SZ_is_20240930.csv",
+      "status": "ok",
+      "note": "1 row",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_financial_statements",
+      "params": {"ticker": "002557.SZ", "statement": "is", "financial_parameter": "20250331", "format": "json"},
+      "file": "002557.SZ_is_20250331.csv",
+      "status": "ok",
+      "note": "1 row",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_financial_statements",
+      "params": {"ticker": "002557.SZ", "statement": "is", "financial_parameter": "20250630", "format": "json"},
+      "file": "002557.SZ_is_20250630.csv",
+      "status": "ok",
+      "note": "1 row",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_financial_statements",
+      "params": {"ticker": "002557.SZ", "statement": "is", "financial_parameter": "20250930", "format": "json"},
+      "file": "002557.SZ_is_20250930.csv",
+      "status": "ok",
+      "note": "1 row",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_financial_statements",
+      "params": {"ticker": "002557.SZ", "statement": "is", "financial_parameter": "20260331", "format": "json"},
+      "file": "002557.SZ_is_20260331.csv",
+      "status": "ok",
+      "note": "1 row；2026Q1 归母 1.68 亿",
+      "error": null
+    },
+    {
+      "api": "stock_finance_data_get_financial_statements",
+      "params": {"ticker": "002557.SZ", "statement": "is", "financial_parameter": "20260630", "format": "json"},
+      "file": "002557.SZ_is_20260630.csv",
+      "status": "missing",
+      "note": "2026 中报未披露：返回全空行（仅 thscode），文件已删除，按 §2.5 记缺失（洽洽中报惯例 8 月下旬披露；07-14 已发 2026 年半年度业绩预告，见 tianyancha 公告 p1）",
+      "error": null
+    }
+  ]
+}

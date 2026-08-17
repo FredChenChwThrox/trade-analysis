@@ -1,0 +1,18 @@
+{
+  "run_id": "run_init_603697",
+  "source": "stock_finance_data",
+  "data_type": "forecast",
+  "fetched_at": "2026-08-16T10:43:00+08:00",
+  "purpose": "有友食品一致预期快照",
+  "requests": [
+    {
+      "api": "stock_finance_data_get_forecast",
+      "params": {"ticker": "603697.SH", "format": "json"},
+      "file": "603697.SH.csv",
+      "status": "ok",
+      "note": "2 行；FY1 归母 2.44 亿（yoy +31.5%）/ FY2 2.90 亿 / FY3 3.26 亿；PE(LYR) 22.20、PB(MRQ) 2.27",
+      "error": null
+    }
+  ],
+  "errors": []
+}

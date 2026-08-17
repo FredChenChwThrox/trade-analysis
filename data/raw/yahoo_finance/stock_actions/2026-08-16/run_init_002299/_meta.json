@@ -1,0 +1,18 @@
+{
+  "run_id": "run_init_002299",
+  "source": "yahoo_finance",
+  "data_type": "stock_actions",
+  "fetched_at": "2026-08-16T10:41:00+08:00",
+  "purpose": "圣农发展公司行为（分红/拆股）留痕 + 入 corporate_actions（ingest ROUTES 支持 yahoo stock_actions）",
+  "requests": [
+    {
+      "api": "get_stock_actions",
+      "params": {"ticker": "002299.SZ"},
+      "file": "002299.SZ.csv",
+      "status": "ok",
+      "note": "14 rows（2010-04-26..2026-05-20；13 笔现金分红 + 2011-02-23 一笔 2.0 拆股/送转）；文件名用 {ticker}.csv 以适配 parse_stock_actions_csv 的 stem→symbol 约定",
+      "error": null
+    }
+  ],
+  "errors": []
+}

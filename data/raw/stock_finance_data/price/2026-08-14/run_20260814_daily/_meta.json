@@ -1,0 +1,157 @@
+{
+  "run_id": "run_20260814_daily",
+  "collected_at": "2026-08-14T21:58+08:00",
+  "mode": "incremental",
+  "overlap_window": "2026-08-06..2026-08-14",
+  "source": "stock_finance_data",
+  "data_type": "price",
+  "requests": [
+    {
+      "ticker": "603605.SH",
+      "adjust": "none",
+      "file": "603605.SH.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "603288.SH",
+      "adjust": "none",
+      "file": "603288.SH.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "601318.SH",
+      "adjust": "none",
+      "file": "601318.SH.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "002747.SZ",
+      "adjust": "none",
+      "file": "002747.SZ.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "601899.SH",
+      "adjust": "none",
+      "file": "601899.SH.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "600029.SH",
+      "adjust": "none",
+      "file": "600029.SH.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "600531.SH",
+      "adjust": "none",
+      "file": "600531.SH.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "600346.SH",
+      "adjust": "none",
+      "file": "600346.SH.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "002709.SZ",
+      "adjust": "none",
+      "file": "002709.SZ.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "603605.SH",
+      "adjust": "forward",
+      "file": "603605.SH_forward.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "603288.SH",
+      "adjust": "forward",
+      "file": "603288.SH_forward.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "601318.SH",
+      "adjust": "forward",
+      "file": "601318.SH_forward.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "002747.SZ",
+      "adjust": "forward",
+      "file": "002747.SZ_forward.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "601899.SH",
+      "adjust": "forward",
+      "file": "601899.SH_forward.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "600029.SH",
+      "adjust": "forward",
+      "file": "600029.SH_forward.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "600531.SH",
+      "adjust": "forward",
+      "file": "600531.SH_forward.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "600346.SH",
+      "adjust": "forward",
+      "file": "600346.SH_forward.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "002709.SZ",
+      "adjust": "forward",
+      "file": "002709.SZ_forward.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    },
+    {
+      "ticker": "002714.SZ",
+      "adjust": "none",
+      "file": "002714.SZ.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14",
+      "note": "首跑漏采（当日新入池 watchlist），发现 P1 suspended 误报后补采重跑"
+    },
+    {
+      "ticker": "002714.SZ",
+      "adjust": "forward",
+      "file": "002714.SZ_forward.csv",
+      "rows": 7,
+      "range": "2026-08-06..2026-08-14"
+    }
+  ],
+  "errors": [],
+  "notes": [
+    "窗口内 9 只 forward 与 none 逐行一致（无分红除权事件）",
+    "2026-08-14 收盘：603605.SH 57.18；603288.SH 35.82；601318.SH 51.75；002747.SZ 34.75；601899.SH 32.53；600029.SH 5.02；600531.SH 13.05；600346.SH 17.13；002709.SZ 39.47；002714.SZ 39.29（补采）",
+    "沪深300（yahoo 000300.SS）2026-08-14 收 4665.88（+0.04%），单行文件存 data/raw/yahoo_finance/index/2026-08-14/run_20260814_daily/000300.SS.csv；OHLC 经 gildata 指数日行情逐字段交叉一致（核对件 data/raw/gildata/fin_query/2026-08-14/index_check_000300.csv）"
+  ]
+}
