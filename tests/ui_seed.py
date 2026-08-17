@@ -12,6 +12,13 @@ import datetime as dt
 import json
 
 import sqlite3
+import yaml
+
+from scripts.pipeline.db import CONFIG_DIR
+
+# watchlist.yaml 股票数 + 本模块补种的 0700.HK（池子扩充时断言不用改）
+EXPECTED_STOCK_TOTAL = len(yaml.safe_load(
+    (CONFIG_DIR / "watchlist.yaml").read_text(encoding="utf-8"))["stocks"]) + 1
 
 TRADE_END = dt.date(2026, 8, 7)
 N_DAYS = 30

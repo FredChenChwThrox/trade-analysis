@@ -6,6 +6,8 @@ import pytest
 
 from scripts.ui import queries
 
+from tests.ui_seed import EXPECTED_STOCK_TOTAL
+
 
 def _bar_by_date(bars, d):
     return next(b for b in bars if b["trade_date"] == d)
@@ -29,7 +31,7 @@ def test_list_card_status(ui_conn):
 
 def test_list_stocks_happy_path(ui_conn):
     data = queries.list_stocks(ui_conn, {}, page=1, page_size=50)
-    assert data["total"] == 11
+    assert data["total"] == EXPECTED_STOCK_TOTAL
     assert data["page"] == 1
     by_symbol = {it["symbol"]: it for it in data["items"]}
 
@@ -110,12 +112,12 @@ def test_list_stocks_filter_recent_signal_days(ui_conn):
 def test_list_stocks_sort_and_pagination(ui_conn):
     data = queries.list_stocks(ui_conn, {}, page=1, page_size=2, sort="latest_close", order="desc")
     assert data["page_size"] == 2
-    assert data["total"] == 11
+    assert data["total"] == EXPECTED_STOCK_TOTAL
     assert data["items"][0]["symbol"] == "0700.HK"  # close 314 > 79
     asc = queries.list_stocks(ui_conn, {}, page=1, page_size=2, sort="pe_ttm", order="asc")
-    # 002709.SZ（yaml 新入池，fixture 无 bars/pe）与 0700.HK pe 均为 NULL，
-    # 升序时 NULL 排前，并列按 symbol 字典序 002709.SZ < 0700.HK
-    assert asc["items"][0]["symbol"] == "002709.SZ"
+    # 多只 yaml 股（fixture 无 bars/pe）与 0700.HK pe 均为 NULL，
+    # 升序时 NULL 排前，并列按 symbol 字典序，最小者为 002299.SZ
+    assert asc["items"][0]["symbol"] == "002299.SZ"
     assert asc["items"][0]["pe_ttm"] is None
 
 
@@ -373,7 +375,7 @@ def test_list_report_runs_filters(ui_conn):
 
 def test_get_watchlist(ui_conn):
     items = queries.get_watchlist(ui_conn)
-    assert len(items) == 11
+    assert len(items) == EXPECTED_STOCK_TOTAL
     assert {it["symbol"] for it in items} >= {"603605.SH", "0700.HK"}
 
 

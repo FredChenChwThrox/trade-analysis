@@ -72,3 +72,25 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
+  # 2026-08-16 消费筛选核心候选入池（reports/screening/2026-08-16-消费.md）
+  - symbol: 002299.SZ
+    market: CN
+    name: 圣农发展
+    aliases: [圣农发展, 圣农, Sunner]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 002557.SZ
+    market: CN
+    name: 洽洽食品
+    aliases: [洽洽食品, 洽洽, Qiaqia]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 603697.SH
+    market: CN
+    name: 有友食品
+    aliases: [有友食品, 有友, Youyou]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
