@@ -218,7 +218,7 @@ is_cumulative, raw_object_id
 财务事实通过 `report_id` 关联，至少包括营收、归母净利、基本/稀释 EPS、期末已发行股数和期末流通股数。相同报告期的更正报告新增 revision，不覆盖旧版本。PE 使用哪一种股数必须在配置中明确，默认使用已发行股数，不得在运行中临时切换。
 
 - 初始化读取最近 3 个年报和最近 8 个季报或中期报告；按股票实际财年处理，不能假定所有港股以 12 月为财年末。
-- `share_capital_events` 保存增发、回购注销、送转和转股导致的已发行股数变化，包含 `effective_at` 与 `available_at`；若数据源只提供流通股数，必须标注 `share_count_type`，不得当作总股本使用。
+- `share_capital_events` 保存增发、回购注销、送转和转股导致的已发行股数变化，包含 `effective_at` 与 `available_at`；若数据源只提供流通股数，必须标注 `share_count_type`，不得当作总股本使用。`share_count_type` 取值：`issued`（已发行股数，yahoo 快照口径，A/H 双上市公司实际只含 A 股）、`float`（流通股）、`group_total`（A+H 集团总股本，stock_finance_data `ths_total_shares_stock` 口径，vendor 通用 PE 股本口径）。PE 取数规则：`effective_at <= as_of` 最新事件，同一 `effective_at` 多口径并存时优先 `group_total`，无则回退 `issued`（2026-08-17 起为 watchlist 全部 13 只写入 group_total 单点快照，修复 A/H 公司 PE 分母只用 A 股股本的口径缺陷；单点快照假设在 details_json 标注）。
 - `forecasts` 保存每次抓取快照，不只保留最新一批；历史查询必须选择 `snapshot_at <= as_of` 的最新快照。
 - `fx_rates` 保存财务币种到交易币种的日汇率。币种不一致且缺少汇率时，不计算 PE。
 
@@ -260,7 +260,7 @@ TTM 在任意 `as_of` 上按当时可见的最新修订计算：
 - 所有滚动窗口默认要求完整窗口，样本不足返回空值，不用较短窗口冒充。
 - 成交额若可用，另计算同参数的均值和标准差；成交额不做股份因子调整。
 - 信号判定中的“历史均值”统一对序列 `shift(1)` 后计算，排除正在判断的当前 bar。
-- `pe_ttm = close_raw × 当日已生效股本 ÷ 已换算到交易币种的 TTM 归母净利`。TTM 小于等于 0、股本或汇率缺失时，PE 为空并保存原因码。
+- `pe_ttm = close_raw × 当日已生效股本 ÷ 已换算到交易币种的 TTM 归母净利`。股本口径取 `group_total`（A+H 集团总股本）优先、回退 `issued`（§3.7）。TTM 小于等于 0、股本或汇率缺失时，PE 为空并保存原因码。
 
 ### 4.2 参数和实现版本
 

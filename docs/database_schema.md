@@ -171,7 +171,7 @@ report_id 引用 financial_reports。金额/股数为关键决策值存 TEXT 定
 
 ### share_capital_events — 股本变动 [事实]
 
-字段：effective_at（生效日）、available_at、event_type（issuance / buyback_cancel / bonus_share / conversion / snapshot_issued——当前数据为 yahoo get_stock_info 快照）、share_change、shares_issued_after、share_count_type、details_json（§3.7 三来源优先级标注）、source。PE 股本口径取 effective_at ≤ 计算日最新记录。
+字段：effective_at（生效日）、available_at、event_type（issuance / buyback_cancel / bonus_share / conversion / snapshot_issued（yahoo 快照）/ snapshot_group_total（stock_finance_data 快照）——当前数据均为单点快照）、share_change、shares_issued_after、share_count_type（issued=已发行股数（A/H 双上市公司的 yahoo 快照实际只含 A 股）/ float=流通股 / group_total=A+H 集团总股本，vendor 通用 PE 股本口径）、details_json（§3.7 三来源优先级标注 + 单点快照假设）、source。PE 股本口径取 effective_at ≤ 计算日最新记录，同一 effective_at 多口径并存时优先 group_total、回退 issued（2026-08-17 起 13 只均有 group_total 快照，详见执行日志当日条目）。
 
 ### fx_rates — 汇率 [事实]
 

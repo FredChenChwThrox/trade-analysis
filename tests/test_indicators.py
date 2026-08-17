@@ -209,6 +209,79 @@ def test_shares_at_effective_date():
     assert valuation.shares_at(events, "2023-08-09") == Decimal("100")
 
 
+def test_shares_at_prefers_group_total():
+    """同一 effective_at 下 group_total（A+H 集团总股本）优先，无则回退 issued。"""
+    issued = valuation.ShareEventView("2023-08-10", "2026-08-10T00:00:00+00:00",
+                                      Decimal("100"), "issued")
+    group = valuation.ShareEventView("2023-08-10", "2026-08-17T00:00:00+00:00",
+                                     Decimal("170"), "group_total")
+    assert valuation.shares_at([issued, group], "2023-08-10") == Decimal("170")
+    assert valuation.shares_at([issued], "2023-08-10") == Decimal("100")   # 纯 A 股回退
+    later_issued = valuation.ShareEventView("2024-01-01", "2026-08-10T00:00:00+00:00",
+                                            Decimal("105"), "issued")
+    # 更晚 effective_at 的 issued 仍按时间优先（group_total 只赢同日期）
+    assert valuation.shares_at([group, later_issued], "2024-01-01") == Decimal("105")
+
+
+# ---------------------------------------------------------------- 股本快照 loader
+
+THS_CSV = (
+    "ths_stock_short_name_stock,ths_total_shares_stock,thscode,time\n"
+    "中国平安,18107641995.0,601318.SH,\n"
+    "紫金矿业,26590714622.0,601899.SH,\n"
+)
+
+
+def test_load_group_total_snapshot(conn, tmp_path):
+    """ths get_stock_info 集团总股本快照：按 thscode 定位行、写 group_total、幂等、
+    冲突校验只在同 share_count_type 内（与 issued 快照并存不冲突）。"""
+    csv_path = tmp_path / "stock_info.csv"
+    csv_path.write_text(THS_CSV, encoding="utf-8")
+
+    res = valuation.load_group_total_snapshot(
+        conn, "601318.SH", csv_path, effective_at="2023-08-10", run_id="run_gt1")
+    assert res["inserted"] is True and res["shares"] == "18107641995"
+    row = conn.execute(
+        "SELECT * FROM share_capital_events WHERE sce_id = ?", (res["sce_id"],)
+    ).fetchone()
+    assert row["share_count_type"] == "group_total"
+    assert row["event_type"] == "snapshot_group_total"
+    assert row["source"] == "stock_finance_data get_stock_info"
+    assert "单点快照" in row["details_json"]
+    assert conn.execute(
+        "SELECT 1 FROM raw_objects WHERE raw_object_id = ?",
+        (res["raw_object_id"],)).fetchone() is not None
+
+    # 幂等：同股数重插跳过
+    res2 = valuation.load_group_total_snapshot(
+        conn, "601318.SH", csv_path, effective_at="2023-08-10", run_id="run_gt2")
+    assert res2["inserted"] is False and res2["sce_id"] == res["sce_id"]
+
+    # 同 share_count_type 异股数 → 股本冲突
+    bad = tmp_path / "stock_info_bad.csv"
+    bad.write_text(THS_CSV.replace("18107641995.0", "18000000000.0"), encoding="utf-8")
+    with pytest.raises(ValueError, match="股本冲突"):
+        valuation.load_group_total_snapshot(
+            conn, "601318.SH", bad, effective_at="2023-08-10", run_id="run_gt3")
+
+    # 同 effective_at 的 yahoo issued 快照（不同股数、不同口径）不视为冲突
+    yahoo_csv = tmp_path / "yahoo_info.csv"
+    yahoo_csv.write_text("sharesOutstanding,floatShares\n10660065083,10660065083\n",
+                         encoding="utf-8")
+    res3 = valuation.load_share_snapshot(
+        conn, "601318.SH", yahoo_csv, effective_at="2023-08-10", run_id="run_gt4")
+    assert res3["inserted"] is True and res3["shares"] == "10660065083"
+
+    # PE 取数：两口径并存时优先 group_total
+    events = valuation.load_share_events(conn, "601318.SH")
+    assert valuation.shares_at(events, "2026-08-17") == Decimal("18107641995")
+
+    # CSV 缺 symbol 行 / 缺字段值 → 抛错不猜（§2.5）
+    with pytest.raises(ValueError, match="无 002747.SZ 对应行"):
+        valuation.load_group_total_snapshot(
+            conn, "002747.SZ", csv_path, effective_at="2023-08-10", run_id="run_gt5")
+
+
 # ---------------------------------------------------------------- 集成：小样本全量重算
 
 def _weekdays(start: str, end: str) -> list[str]:

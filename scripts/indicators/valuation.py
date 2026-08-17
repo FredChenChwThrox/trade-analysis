@@ -7,13 +7,17 @@
         TTM = 上一财年年报 + 本财年最新累计 − 上一财年同期累计。
   三个组成项都必须在 as_of 时可见，任一缺失 → TTM 为空（不补历史空洞）。
 - pe_ttm = close_raw × 当日已生效股本 ÷ TTM 归母净利（不复权市值口径，§4.1）。
-  股本取 share_capital_events 中 effective_at <= as_of 的最新事件（已发行股数口径）。
+  股本取 share_capital_events 中 effective_at <= as_of 的最新事件；同一 effective_at
+  有多口径记录时优先 group_total（A+H 集团总股本，vendor 通用口径），无则回退 issued。
 - TTM<=0、股本缺失、币种不一致且缺汇率 → PE 为空并保存原因码（pe_status）。
 - 财务金额为关键决策值（TEXT 定点），内部用 Decimal 运算，写库展示值转 float。
 
 股本快照落盘：yahoo_finance get_stock_info 只有当前快照（无历史事件流），
 按 §3.7 降级作为 share_capital_events 单点事件写入，share_count_type=issued，
 details_json 标注来源与覆盖假设（整个保留区间股本不变，后续需交叉验证）。
+2026-08-17 起 A/H 双上市公司改用 stock_finance_data get_stock_info 的
+ths_total_shares_stock 写 share_count_type=group_total 单点快照（A+H 全口径），
+与旧 issued 快照并存，PE 计算优先取 group_total（§3.7）。
 """
 
 from __future__ import annotations
@@ -62,7 +66,7 @@ class ShareEventView:
     effective_at: str        # 市场本地日期
     available_at: str        # UTC
     shares: Decimal
-    share_count_type: str    # issued / float
+    share_count_type: str    # issued / float / group_total（A+H 集团总股本）
 
 
 # ---------------------------------------------------------------- TTM（纯函数，golden tests 锁定）
@@ -137,12 +141,22 @@ def pe_ttm(close_raw: float, shares: Decimal | None, ttm: Decimal | None,
     return float(Decimal(str(close_raw)) * shares / ttm_traded), S_OK
 
 
+# 同一 effective_at 下股本口径优先级：group_total（A+H 集团总股本）> 其他
+_SHARE_TYPE_PRIORITY = {"group_total": 1}
+
+
 def shares_at(events: list[ShareEventView], as_of_date: str) -> Decimal | None:
-    """as_of 当日已生效（effective_at <= as_of）的最新股本。"""
+    """as_of 当日已生效（effective_at <= as_of）的最新股本。
+
+    同一 effective_at 存在多口径记录时优先 group_total（A/H 双上市公司
+    PE 分母用集团总股本，vendor 通用口径），无则回退 issued 等其余口径
+    （纯 A 股股票行为不变）。
+    """
     valid = [e for e in events if e.effective_at <= as_of_date]
     if not valid:
         return None
-    return max(valid, key=lambda e: e.effective_at).shares
+    return max(valid, key=lambda e: (
+        e.effective_at, _SHARE_TYPE_PRIORITY.get(e.share_count_type, 0))).shares
 
 
 # ---------------------------------------------------------------- DB 读取
@@ -246,8 +260,9 @@ def load_share_snapshot(
 
     快照只有当前值：作为单点事件写入，effective_at 取覆盖区间起点（整个保留区间
     按此股本计算，details_json 标注假设）；share_count_type=issued（sharesOutstanding
-    为已发行总股本，floatShares 仅记入 details）。已存在同 effective_at/source 的
-    事件且股本一致时跳过（幂等）。
+    为已发行总股本，floatShares 仅记入 details）。已存在同 effective_at/source/
+    share_count_type 的事件且股本一致时跳过（幂等）；冲突校验只在同 share_count_type
+    内比对（与 group_total 口径快照并存不视为冲突）。
     """
     csv_path = Path(csv_path)
     with open(csv_path, newline="", encoding="utf-8") as f:
@@ -286,6 +301,7 @@ def load_share_snapshot(
         """
         SELECT sce_id, shares_issued_after FROM share_capital_events
         WHERE symbol = ? AND effective_at = ? AND source = 'yahoo_finance get_stock_info'
+          AND share_count_type = 'issued'
         """,
         (symbol, effective_at),
     ).fetchone()
@@ -302,6 +318,95 @@ def load_share_snapshot(
             raw_object_id, created_at)
         VALUES (?, ?, ?, 'snapshot_issued', NULL, ?, 'issued', ?,
                 'yahoo_finance get_stock_info', ?, ?)
+        """,
+        (symbol, effective_at, now, str(shares),
+         json.dumps(details, ensure_ascii=False), raw_object_id, now),
+    )
+    return {"inserted": True, "shares": str(shares), "sce_id": cur.lastrowid,
+            "raw_object_id": raw_object_id}
+
+
+# ------------------------------------------------- group_total 快照入库（stock_finance_data，§3.7）
+
+def load_group_total_snapshot(
+    conn: sqlite3.Connection,
+    symbol: str,
+    csv_path: str | Path,
+    *,
+    effective_at: str,
+    run_id: str,
+) -> dict:
+    """解析 stock_finance_data get_stock_info CSV 的集团总股本（A+H 全口径）快照，
+    以 share_count_type='group_total' 写入 share_capital_events。
+
+    ths_total_shares_stock 为 A+H 集团总股本（vendor 通用 PE 股本口径）。
+    CSV 可为多股票批量文件，按 thscode 列定位 symbol 对应行。快照只有当前值：
+    作为单点事件写入（event_type='snapshot_group_total'），effective_at 取覆盖区间
+    起点，details_json 标注单点快照假设（H 股上市/增发/回购前的历史区间按当前
+    总股本计算，存在口径偏差，后续可用 get_stock_actions 细化）。
+    已存在同 effective_at/source/share_count_type 的事件且股本一致时跳过（幂等）；
+    同类型股本不一致抛"股本冲突"，与 issued 等其他口径并存不视为冲突。
+    """
+    csv_path = Path(csv_path)
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    rec = next((r for r in rows if (r.get("thscode") or "").strip() == symbol), None)
+    if rec is None:
+        raise ValueError(f"{csv_path} 无 {symbol} 对应行（thscode 列）")
+    shares_raw = (rec.get("ths_total_shares_stock") or "").strip()
+    if not shares_raw:
+        raise ValueError(f"{csv_path} {symbol} 无 ths_total_shares_stock 字段值（§2.5 不猜）")
+    shares = Decimal(shares_raw)
+    if shares != shares.to_integral_value():
+        raise ValueError(f"{csv_path} {symbol} 总股本非整数：{shares_raw}")
+    shares = shares.to_integral_value()
+
+    content_hash = sha256_file(csv_path)
+    now = utc_now()
+    raw_object_id = f"raw_ths_stock_info_{symbol.replace('.', '')}_{content_hash[:12]}"
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO raw_objects (raw_object_id, run_id, source, data_type,
+            symbol, request_params_json, file_path, content_hash, fetch_status, ingested_at)
+        VALUES (?, ?, 'stock_finance_data', 'stock_info', ?, ?, ?, ?, 'ok', ?)
+        """,
+        (raw_object_id, run_id, symbol,
+         json.dumps({"api": "get_stock_info", "field": "ths_total_shares_stock",
+                     "ticker_csv": csv_path.name}, ensure_ascii=False),
+         str(csv_path), content_hash, now),
+    )
+
+    details = {
+        "snapshot": "stock_finance_data get_stock_info ths_total_shares_stock"
+                    "（A+H 集团总股本，单点快照，无历史事件流）",
+        "assumption": f"整个保留区间（自 {effective_at} 起）集团总股本按此值；H 股上市/"
+                      "增发/回购注销前的历史区间存在口径偏差，需后续用 get_stock_actions "
+                      "与 financial_facts 期末股数交叉验证细化（§3.7 来源②③）",
+        "raw_object_id": raw_object_id,
+    }
+    existing = conn.execute(
+        """
+        SELECT sce_id, shares_issued_after FROM share_capital_events
+        WHERE symbol = ? AND effective_at = ?
+          AND source = 'stock_finance_data get_stock_info'
+          AND share_count_type = 'group_total'
+        """,
+        (symbol, effective_at),
+    ).fetchone()
+    if existing is not None:
+        if Decimal(existing["shares_issued_after"]) == shares:
+            return {"inserted": False, "shares": str(shares), "sce_id": existing["sce_id"],
+                    "raw_object_id": raw_object_id}
+        raise ValueError(
+            f"股本冲突：已有 group_total {existing['shares_issued_after']}，"
+            f"新快照 {shares}（§3.2 数据冲突）")
+    cur = conn.execute(
+        """
+        INSERT INTO share_capital_events (symbol, effective_at, available_at, event_type,
+            share_change, shares_issued_after, share_count_type, details_json, source,
+            raw_object_id, created_at)
+        VALUES (?, ?, ?, 'snapshot_group_total', NULL, ?, 'group_total', ?,
+                'stock_finance_data get_stock_info', ?, ?)
         """,
         (symbol, effective_at, now, str(shares),
          json.dumps(details, ensure_ascii=False), raw_object_id, now),
