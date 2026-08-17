@@ -1,6 +1,6 @@
 """每日盘后 pipeline（D1.8 + D2.6 接入，设计 §8.1、§2.5 失败原则、§8.3 幂等）。
 
-覆盖 §8.1 的 1-5 步与 7 步（LLM 消息阶段 6 本版不含）：
+覆盖 §8.1 的 1-5 步、步骤 6 的确定性部分与 7 步（LLM 消息评价本版不含）：
 1. 按 trading_calendar 判定该日各市场状态，创建 pipeline_run（§2.3 版本字段全填）；
 2. --raw-dir 中的新文件 ingest 入库（raw content hash 去重，§8.3）；
 3. 对 watchlist 每只股票跑日历门禁（calendar_check）；
@@ -8,7 +8,9 @@
 5. 周线/指标全量重算（weekly/compute），随后在同一事务内依次重算信号：
    weekly_signals → daily_watch → right_side → accumulation → corporate_action
    检测（§8.1 步骤 5）；
-7. 全部股票处理完后生成单股报告 + 全池日报（report.run_reports，§8.1 步骤 7）。
+6. 池级事件研究（event_study，§5.5 确定性部分）：全部股票处理完后对库内
+   公告事件跑 T+1/T+5 研究写 event_assessments（event_study_v1）；
+7. 生成单股报告 + 全池日报（report.run_reports，§8.1 步骤 7）。
 
 契约：
 - 原子性：单只股票的"入库→因子→周线→指标→信号"在一个事务内；失败回滚并标记
@@ -16,6 +18,10 @@
 - 信号阶段韧性：单个信号模块异常不拖垮该股其余产物——记 notes 标 degraded
   继续下一模块（信号为派生数据可重算，§2.2 第 3 类）；入库/门禁/指标失败仍整体回滚。
 - 报告阶段失败不阻断前面阶段：异常被捕获，pipeline_runs 阶段 report 记 degraded。
+- 事件研究阶段失败不阻断报告阶段：异常被捕获记 notes 并以 _record_stage 记
+  daily 台账 stage='event_study' degraded（派生数据可重算，§2.2 第 3 类）；
+  run_event_study 自身另记一条其 run_id 的 pipeline_runs（与 accumulation
+  双记录模式一致）。
 - 幂等：同一 date 重跑安全——run_id 固定为 daily_{date}，pipeline_runs 同 run_id
   覆盖阶段状态；raw content hash 不重复解析；指标/周线/信号 DELETE+重插；
   报告按 §9.5 降级生成 revision 新行（report_runs 随重跑增长是设计行为）。
@@ -67,6 +73,7 @@ from scripts.pipeline import report as report_mod
 from scripts.signals import accumulation as acc_mod
 from scripts.signals import corporate_action as ca_mod
 from scripts.signals import daily_watch as dw_mod
+from scripts.signals import event_study as es_mod
 from scripts.signals import right_side as rs_mod
 from scripts.signals import weekly_signals as ws_mod
 
@@ -389,6 +396,30 @@ def run_daily(
             _record_stage(conn, run_id, f"symbol:{symbol}", trade_date, stage_status,
                           error=sr.reason or None, started_at=started,
                           config_hash=config_hash, git_commit=git_commit)
+
+    # ---- 步骤 6（确定性部分）：池级事件研究（§5.5；LLM 消息评价本版不含）。
+    # 派生数据可重算（§2.2 第 3 类）：失败记 degraded 不阻断报告阶段。
+    started = utc_now()
+    try:
+        with conn:  # 池级事务：事件落库 + run_event_study 自记的 pipeline_runs 同事务
+            es_res = es_mod.run_event_study(conn, run_id=f"{run_id}_event_study")
+        es_counts = "、".join(
+            f"{k} {es_res.status_counts[k]}"
+            for k in ("ok", "suspended", "degraded")
+            if es_res.status_counts.get(k)) or "无"
+        result.notes.append(
+            f"事件研究 event_study: 公告事件 {es_res.events_seen} 条，"
+            f"写入 {es_res.written} 行（含 pending 重算 {es_res.recomputed}），"
+            f"跳过已完成 {es_res.skipped} 行；状态分布: {es_counts}")
+        es_status, es_error = "success", None
+    except Exception as exc:
+        es_status = "degraded"
+        es_error = f"{type(exc).__name__}: {exc}"
+        result.notes.append(f"event_study degraded: {es_error}")
+    with conn:
+        _record_stage(conn, run_id, "event_study", trade_date, es_status,
+                      error=es_error, started_at=started,
+                      config_hash=config_hash, git_commit=git_commit)
 
     # ---- 步骤 7：报告生成（单股 + 全池日报；失败不阻断前面阶段，记 degraded）
     started = utc_now()

@@ -234,6 +234,10 @@ def test_single_report_seven_sections(conn, tmp_path):
     # 关键数字带来源与截止（§6.4）
     assert "来源 daily_bars" in text and "截止 2026-08-07" in text
     assert "config_hash" in text and "signals_v1" in text
+    # 消息评价口径如实表述：LLM 评价（D3）未接入；确定性事件研究已接入
+    assert "LLM 消息评价（D3）未接入" in text
+    assert "确定性事件研究 event_study_v1 已接入" in text
+    assert "event_assessments 未接入" not in text
 
 
 def test_decision_point_and_no_decision(conn, tmp_path):
@@ -261,8 +265,37 @@ def test_exhaustion_section_has_anchor_details(conn, tmp_path):
     assert "干涸阈值" in md and "距阈值还差" in md
 
 
-# ---------------------------------------------------------------- 全池排序（§6.3）
+def test_message_section_event_study_counts(conn, tmp_path):
+    """§7 来源与异常：event_study_v1 行存在时带出状态分布与 pending 终点计数。"""
+    now = db.utc_now()
+    conn.execute(
+        """
+        INSERT INTO events (event_id, event_type, available_at, title, source,
+                            ingested_at)
+        VALUES ('evt_r1', 'announcement', '2026-08-03T16:00:00+00:00', '测试公告',
+                'test', ?)
+        """, (now,))
+    conn.execute(
+        "INSERT INTO event_symbols (event_id, symbol) VALUES ('evt_r1', 'TRIG.SH')")
+    conn.execute(
+        """
+        INSERT INTO event_assessments (event_id, assessment_version, model,
+            assessed_at, event_type, status, event_study_json, run_id)
+        VALUES ('evt_r1', 'event_study_v1', 'deterministic', ?, 'announcement',
+                'ok', '{"t1": {"mark": null}, "t5": {"mark": "pending"}}', 'test')
+        """, (now,))
+    conn.commit()
 
+    _run(conn, tmp_path)
+    md = (tmp_path / "reports" / "TRIG.SH" / f"{RUN_DATE}.md").read_text(
+        encoding="utf-8")
+
+    assert ("确定性事件研究 event_study_v1 已接入: 库内 1 条"
+            "（ok 1，含 pending 终点 1 条，来源 event_assessments）") in md
+    assert "LLM 消息评价（D3）未接入" in md
+
+
+# ---------------------------------------------------------------- 全池排序（§6.3）
 def test_daily_report_priority_ordering(conn, tmp_path):
     res = _run(conn, tmp_path)
     daily_md = Path(res.daily_path)

@@ -414,6 +414,8 @@ confidence, rationale, status
 - 股票停牌导致终点无价格时结果为空并标记 `suspended`，不自动顺延冒充 T+1/T+5。
 - 事件研究是描述性证据，不宣称单一新闻与收益之间存在因果关系。
 
+确定性事件研究已实现（`scripts/signals/event_study.py`，2026-08-14）：不写 LLM 评价列，只写 event_study_json（assessment_version='event_study_v1'、model='deterministic'）。交易日历用 trading_calendar（CN）权威开市日，index_bars（000300.SH）仅作基准价格——指数在开市日缺 bar 落 degraded（bench_missing），不静默顺延；个股开市日无 bar 为停牌 suspended；终点日 > 数据截止（个股与基准最大 bar 日取小）标 pending。幂等：degraded/pending 行重跑重算（数据回补后自动转正），完整 ok/suspended 行跳过；LLM 评价使用其他 assessment_version 命名空间，互不影响。
+
 ### 5.6 排期卡版本
 
 `strategy_card_versions` 保存不可变版本，主要字段包括：
@@ -550,6 +552,9 @@ tests/                        # 单元、集成和 golden tests
 4. 在单一事务中发布规范化行情和因子版本。
 5. 重算受影响股票的周线、指标、信号和状态机。
 6. 抓取新增公告、新闻并运行版本化评价；失败时标记消息阶段 degraded。
+   （当前实现：仅确定性部分——池级事件研究 event_study（§5.5，event_study_v1）
+   已接入 daily，位于逐股信号之后、报告之前，池级事务，失败记 degraded 不阻断
+   报告；LLM 消息评价（D3）仍不含。）
 7. 生成单股报告，再汇总全池日报。
 8. 保存报告输入快照和各阶段状态，结束 pipeline run。
 

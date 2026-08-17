@@ -32,7 +32,7 @@
 | adjustment_factor_versions | [事实] | version_id | 因子重建版本（origin/方向/算法） | pipeline/adjust.py |
 | weekly_bars | [派生] | (symbol, week_end_date) | 完成周复权周线 | pipeline/weekly.py |
 | index_bars | [事实] | (index_code, trade_date) | 基准指数日线（日历交叉校验） | adapters/stock_finance_data.py |
-| events | [事实] | event_id | 公告/新闻事件事实（不含评价） | adapters/stock_finance_data.py |
+| events | [事实] | event_id | 公告/新闻事件事实（不含评价） | adapters/stock_finance_data.py, adapters/tianyancha.py |
 | event_symbols | [事实] | (event_id, symbol) | 事件-股票关联 | adapters/stock_finance_data.py |
 | event_assessments | [决策] | (event_id, assessment_version) | LLM 消息评价版本（未接入） | —（D3 预留） |
 | financial_reports | [事实] | report_id；UNIQUE(symbol, period_end, period_type, is_cumulative, revision) | 财报头（修订新增 revision） | adapters/stock_finance_data.py |
@@ -74,7 +74,7 @@
 |---|---|---|
 | raw_object_id | TEXT PK | 来源文件标识 |
 | run_id | TEXT | 采集批次 |
-| source | TEXT | stock_finance_data / yahoo_finance / ... |
+| source | TEXT | stock_finance_data / yahoo_finance / tianyancha / ... |
 | data_type | TEXT | price / announcement / fx / stock_actions / financials / forecast / ... |
 | symbol | TEXT | 标的（指数/汇率可为空） |
 | request_params_json | TEXT | 请求参数 JSON |
@@ -157,7 +157,7 @@ UNIQUE(symbol, ex_date, action_type)。字段：ex_date（除权除息生效日�
 
 ### event_assessments — LLM 消息评价 [决策]
 
-(event_id, assessment_version) 版本化，不覆盖（§5.5）。字段：model、prompt_version、assessed_at、direction（positive/negative/neutral）、materiality、confidence、rationale、status（ok/needs_review/degraded）、event_study_json（T+1/T+5 事件研究）。**D3 未接入，当前无数据。**
+(event_id, assessment_version) 版本化，不覆盖（§5.5）。字段：model、prompt_version、assessed_at、direction（positive/negative/neutral）、materiality、confidence、rationale、status（ok/needs_review/degraded）、event_study_json（T+1/T+5 事件研究）。**LLM 评价（D3）仍未接入**；2026-08-14 起由 `scripts/signals/event_study.py` 写入确定性事件研究行（assessment_version='event_study_v1'、model='deterministic'，direction/materiality/confidence/rationale 置 NULL 不冒充评价，status 取值 ok/suspended/degraded，event_study_json 含 base/t1/t5 明细与 pending/suspended 标记）。
 
 ## 7. 财务、股本、预测与汇率
 

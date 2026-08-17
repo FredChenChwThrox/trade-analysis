@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
@@ -27,6 +28,7 @@ from scripts.pipeline.daily import (
     run_daily,
     symbol_status,
 )
+from scripts.signals import event_study as es_mod
 
 RUN_DATE = "2026-08-07"  # 周五
 WEEK = ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07"]
@@ -90,6 +92,40 @@ def _add_bars(conn: sqlite3.Connection, symbol: str, days: list[str]) -> None:
             """,
             (symbol, d, p - 0.3, p + 0.5, p - 0.6, p, now),
         )
+    conn.commit()
+
+
+def _add_index_bars(conn: sqlite3.Connection, days: list[str]) -> None:
+    now = db.utc_now()
+    for i, d in enumerate(days):
+        c = 4005.0 + i
+        conn.execute(
+            """
+            INSERT INTO index_bars (index_code, trade_date, open, high, low,
+                close, volume, currency, source, updated_at)
+            VALUES ('000300.SH', ?, ?, ?, ?, ?, 1e8, 'CNY', 'test', ?)
+            """,
+            (d, c - 5, c + 5, c - 10, c, now),
+        )
+    conn.commit()
+
+
+def _add_event(conn: sqlite3.Connection, symbol: str, event_id: str = "evt_t1",
+               available_at: str = "2026-08-03T16:00:00+00:00") -> None:
+    """公告事件：available_at 本地日 2026-08-04 → base=08-03，T+1=08-04，T+5=08-10。"""
+    now = db.utc_now()
+    conn.execute(
+        """
+        INSERT INTO events (event_id, event_type, published_at, published_tz,
+            available_at, title, source, ingested_at)
+        VALUES (?, 'announcement', ?, 'Asia/Shanghai', ?, '测试公告', 'test', ?)
+        """,
+        (event_id, available_at, available_at, now),
+    )
+    conn.execute(
+        "INSERT INTO event_symbols (event_id, symbol) VALUES (?, ?)",
+        (event_id, symbol),
+    )
     conn.commit()
 
 
@@ -257,6 +293,68 @@ def test_missing_calendar_market_incomplete(conn, tmp_path):
         (f"daily_{RUN_DATE}",))}
     assert stages["symbol:0700.HK"] == "degraded"
     assert stages["summary"] == "degraded"
+
+
+# ---------------------------------------------------------------- 事件研究阶段（§8.1 步骤 6 确定性部分）
+
+def test_event_study_stage(conn, tmp_path):
+    """预埋事件+行情+基准指数：run_daily 后 event_assessments 落 event_study_v1 行，
+    pipeline_runs 有 daily 台账 event_study 阶段与 run_event_study 自记 run。"""
+    _add_watchlist(conn, "TEST.SH")
+    days = WEEK + ["2026-08-10"]  # 覆盖 T+5
+    _add_bars(conn, "TEST.SH", days)
+    _add_index_bars(conn, days)
+    _add_event(conn, "TEST.SH")
+
+    res = run_daily(conn, RUN_DATE, reports_root=str(tmp_path / "reports"))
+
+    row = conn.execute(
+        "SELECT status, model, event_study_json FROM event_assessments "
+        "WHERE event_id = 'evt_t1' AND assessment_version = 'event_study_v1'",
+    ).fetchone()
+    assert row is not None and row["model"] == "deterministic"
+    assert row["status"] == "ok"
+    study = json.loads(row["event_study_json"])
+    assert study["base_date"] == "2026-08-03"
+    assert study["t5"]["date"] == "2026-08-10" and study["t5"]["excess"] is not None
+    stages = {r["stage"]: r["status"] for r in conn.execute(
+        "SELECT stage, status FROM pipeline_runs WHERE run_id = ?",
+        (f"daily_{RUN_DATE}",))}
+    assert stages["event_study"] == "success"
+    own = conn.execute(
+        "SELECT status FROM pipeline_runs "
+        "WHERE run_id = ? AND stage = 'event_study'",
+        (f"daily_{RUN_DATE}_event_study",)).fetchone()
+    assert own is not None and own["status"] == "success"
+    assert any("事件研究 event_study" in n for n in res.notes)
+
+
+def test_event_study_failure_not_blocking_report(conn, tmp_path, monkeypatch):
+    """event_study 内部抛错：记 degraded 不阻断报告与汇总阶段（§2.2 第 3 类）。"""
+    _add_watchlist(conn, "TEST.SH")
+    _add_bars(conn, "TEST.SH", WEEK)
+    _add_event(conn, "TEST.SH")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(es_mod, "run_event_study", boom)
+
+    res = run_daily(conn, RUN_DATE, reports_root=str(tmp_path / "reports"))
+
+    assert res.symbols[0].status == ST_OK
+    assert any("event_study degraded: RuntimeError: boom" in n for n in res.notes)
+    stages = {r["stage"]: r["status"] for r in conn.execute(
+        "SELECT stage, status FROM pipeline_runs WHERE run_id = ?",
+        (f"daily_{RUN_DATE}",))}
+    assert stages["event_study"] == "degraded"
+    assert "report" in stages  # 报告阶段照常执行
+    assert stages["summary"] == "success"
+    # 异常事务回滚：不落 assessment、不留 event_study 自记 run
+    assert conn.execute("SELECT COUNT(*) FROM event_assessments").fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM pipeline_runs WHERE run_id = ?",
+        (f"daily_{RUN_DATE}_event_study",)).fetchone()[0] == 0
 
 
 # ---------------------------------------------------------------- 状态查询

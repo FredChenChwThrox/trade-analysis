@@ -585,7 +585,22 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
     if ind and ind["pe_status"] and "degraded" in (ind["pe_status"] or ""):
         a(f"- PE 降级标注: pe_status={ind['pe_status']}（财报披露日缺失降级，"
           "待披露日来源补齐后消除）")
-    a(f"- 消息评价: event_assessments 未接入（LLM 阶段不在本批），消息面缺失已标注")
+    es_rows = conn.execute(
+        """
+        SELECT ea.status AS st, COUNT(*) AS c,
+               SUM(CASE WHEN ea.event_study_json LIKE '%"mark": "pending"%'
+                        THEN 1 ELSE 0 END) AS p
+        FROM event_assessments ea
+        JOIN event_symbols es ON ea.event_id = es.event_id
+        WHERE es.symbol = ? AND ea.assessment_version = 'event_study_v1'
+        GROUP BY ea.status
+        """, (symbol,)).fetchall()
+    es_total = sum(r["c"] for r in es_rows)
+    es_pending = sum(r["p"] or 0 for r in es_rows)
+    es_dist = " / ".join(f"{r['st']} {r['c']}" for r in es_rows) or "无"
+    a(f"- 消息评价: LLM 消息评价（D3）未接入，消息面评价部分按缺失标注（§2.5）；"
+      f"确定性事件研究 event_study_v1 已接入: 库内 {es_total} 条"
+      f"（{es_dist}，含 pending 终点 {es_pending} 条，来源 event_assessments）")
     a(f"- 卡片: {rep.card_version_id or '无 active'}；信号 rule_version="
       f"{SIGNALS_RULE_VERSION}，config_hash={config_hash[:12]}…")
     if rep.reasons:
