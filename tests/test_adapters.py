@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from scripts.adapters import stock_finance_data as sfd
+from scripts.adapters import tianyancha as tyc
 from scripts.adapters import yahoo_finance as yf
 from scripts.adapters.common import ingest_file
 from scripts.pipeline import db
@@ -321,6 +322,93 @@ def test_announcement_real_column_aliases(conn, tmp_path):
     assert ev[0]["source_external_id"] == "5180044696"
     assert ev[0]["canonical_url"] == "http://example.com/d.pdf"
     assert _count(conn, "event_symbols") == 2
+
+
+# ------------------------------------------------------------- tianyancha 公告
+
+# 天眼查「上市信息-上市公告」列（2026-08-15 probe 实测，样例见
+# data/raw/tianyancha/announcement/2026-08-15/probe_603605_p1.csv）
+TYC_ANNOUNCEMENT = """stock_name,ossUrl,companyName,name,id,time,announcementType,title,uuid,stock_code
+珀莱雅,http://stock.tianyancha.com/Announcement/eastmoney/aaa.pdf,珀莱雅化妆品股份有限公司,珀莱雅,23546324,2026-08-04,回购进展情况,珀莱雅:关于股份回购进展公告,aaa111,603605
+珀莱雅,http://stock.tianyancha.com/Announcement/eastmoney/bbb.pdf,珀莱雅化妆品股份有限公司,珀莱雅,23546323,2026-08-04,公司注册资本变更,珀莱雅:关于完成工商变更登记的公告,bbb222,603605
+"""
+
+TYC_MISSING_TITLE = """stock_name,ossUrl,companyName,name,id,time,announcementType,title,uuid,stock_code
+珀莱雅,http://example.com/a.pdf,珀莱雅化妆品股份有限公司,珀莱雅,1,2026-08-04,其他,,ccc333,603605
+"""
+
+TYC_CODE_MISMATCH = """stock_name,ossUrl,companyName,name,id,time,announcementType,title,uuid,stock_code
+珀莱雅,http://example.com/a.pdf,珀莱雅化妆品股份有限公司,珀莱雅,1,2026-08-04,其他,某公告,ddd444,600519
+"""
+
+
+def _ingest_tyc(conn, tmp_path, content, name="603605.SH_p1.csv", run="run_t"):
+    p = write(tmp_path, f"raw/tianyancha/announcement/2026-08-15/{run}/{name}",
+              content)
+    return ingest_file(conn, p, source="tianyancha", data_type="announcement",
+                       symbol="603605.SH", parse=tyc.parse_announcement_csv)
+
+
+def test_tyc_announcement_ingest(conn, tmp_path):
+    """字段映射：time/title/ossUrl/uuid/announcementType；ticker 取自文件名；
+    available_at=下一开市日 00:00 本地（08-04 周二发布 → 08-05 开市）。"""
+    r = _ingest_tyc(conn, tmp_path, TYC_ANNOUNCEMENT)
+    assert r.inserted == 2 and r.conflicts == 0
+    ev = conn.execute("SELECT * FROM events ORDER BY source_external_id").fetchall()
+    assert len(ev) == 2
+    assert ev[0]["source"] == "tianyancha"
+    assert ev[0]["event_type"] == "announcement"
+    assert ev[0]["source_external_id"] == "aaa111"        # uuid 作去重 ID
+    assert ev[0]["canonical_url"].endswith("aaa.pdf")     # ossUrl
+    assert ev[0]["summary"] == "回购进展情况"              # announcementType
+    assert ev[0]["published_at"] == "2026-08-03T16:00:00+00:00"
+    assert ev[0]["available_at"] == "2026-08-04T16:00:00+00:00"  # 08-05 00:00+08
+    rows = conn.execute("SELECT symbol FROM event_symbols").fetchall()
+    assert {r_["symbol"] for r_ in rows} == {"603605.SH"}
+
+
+def test_tyc_announcement_uuid_dedup(conn, tmp_path):
+    """二次 ingest（新文件新 hash、同 uuid）→ 按 uuid 去重跳过，行数不变。"""
+    _ingest_tyc(conn, tmp_path, TYC_ANNOUNCEMENT)
+    r2 = _ingest_tyc(conn, tmp_path, TYC_ANNOUNCEMENT + "\n", run="run_t2")
+    assert r2.inserted == 0 and r2.skipped == 2
+    assert _count(conn, "events") == 2
+    assert _count(conn, "event_symbols") == 2
+
+
+def test_tyc_announcement_missing_title_conflict(conn, tmp_path):
+    """缺标题行 → conflict 整批回滚（§3.2）。"""
+    r = _ingest_tyc(conn, tmp_path, TYC_MISSING_TITLE)
+    assert r.status == "conflict" and r.conflicts == 1
+    assert _count(conn, "events") == 0
+
+
+def test_tyc_announcement_stock_code_mismatch(conn, tmp_path):
+    """不同 A 股 6 位代码（采错公司）→ conflict 整批回滚。"""
+    r = _ingest_tyc(conn, tmp_path, TYC_CODE_MISMATCH)
+    assert r.status == "conflict" and r.conflicts == 1
+    assert "600519" in r.errors[0]
+    assert _count(conn, "events") == 0
+
+
+TYC_WITH_HK = """stock_name,ossUrl,companyName,name,id,time,announcementType,title,uuid,stock_code
+海天味业,http://example.com/a.pdf,佛山市海天调味食品股份有限公司,海天味业,1,2026-08-04,回购进展情况,海天味业:A股回购进展公告,eee555,603288
+海天味业,http://example.com/b.pdf,佛山市海天调味食品股份有限公司,海天味业,2,2026-08-06,月報表,证券变动月报表,fff666,HK.03288
+"""
+
+
+def test_tyc_announcement_hk_row_skipped(conn, tmp_path):
+    """A+H 两地上市混入 H 股公告（HK.03288）→ 行级跳过，不影响 A 股行入库。"""
+    p = write(tmp_path, "raw/tianyancha/announcement/2026-08-15/run_t/603288.SH_p1.csv",
+              TYC_WITH_HK)
+    r = ingest_file(conn, p, source="tianyancha", data_type="announcement",
+                    symbol="603288.SH", parse=tyc.parse_announcement_csv)
+    assert r.inserted == 1 and r.skipped == 1 and r.conflicts == 0
+    assert any("HK.03288" in n for n in r.notes)
+    ev = conn.execute("SELECT * FROM events").fetchall()
+    assert len(ev) == 1 and ev[0]["source_external_id"] == "eee555"
+    row = conn.execute("SELECT symbol FROM event_symbols").fetchone()
+    assert row["symbol"] == "603288.SH"
 
 
 # ------------------------------------------------------------- 预期

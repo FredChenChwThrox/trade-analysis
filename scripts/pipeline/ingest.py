@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from scripts.adapters import stock_finance_data as sfd
+from scripts.adapters import tianyancha as tyc
 from scripts.adapters import yahoo_finance as yf
 from scripts.adapters.common import IngestResult, ingest_file
 from scripts.pipeline.db import DEFAULT_DB_PATH, connect
@@ -31,6 +32,7 @@ _ROUTES = {
     ("yahoo_finance", "fx"): yf.parse_fx_csv,
     ("yahoo_finance", "stock_actions"): yf.parse_stock_actions_csv,
     ("yahoo_finance", "index"): yf.parse_index_csv,
+    ("tianyancha", "announcement"): tyc.parse_announcement_csv,
 }
 
 
