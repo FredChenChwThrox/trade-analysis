@@ -692,3 +692,11 @@
 - **未核实未修（留待下批）**：wilder_rma NaN、新 bar 因子继承、周线截断 calendar、pit_backfill 全池执行、corporate_action 两点、event_study degraded 退出码、TDX 去重、UI 只读、CHECK 约束、config schema。
 - **文档**：database_schema.md 已同步（event_assessments/weekly_anchors/share_capital_events 三处）；system_design.md 无需改（修复均为代码向设计对齐）。
 - **遗留备注**：① `assessment_version` 列 INTEGER 亲和 vs 代码写 TEXT 'event_study_v1' 的不严谨未修（避免迁移面扩大）；② 0002 已应用于 data/market.db；③ 既有失败适配：test_db.py migrate 断言更新为 [0001, 0002]，test_report.py event_assessments 插入补 symbol。
+
+## 2026-08-23（P0 续批：wilder_rma NaN + daily.py 信号阶段事务边界）
+
+- **核实结论**：① `wilder_rma` 中段 NaN 会把 avg 清空、下一观测以 `x/window` 重新初始化（core.py 旧 :90-94），RSI 跨缺口后失真——属实 P0；② daily.py 信号阶段与基础阶段同事务，单模块异常被 catch 后部分写入随外层 commit 残留——属实 P0；③ weekly.py「截断 calendar 生成不完整周」——非 bug：calendar 整年种子不存在年内截断，跨年缺失周走 `open_by_week.get(key)` 空 → note+跳过（weekly.py:93-96），整库缺失 → incomplete（:74-76），防御已够，未改。
+- **wilder_rma 修复**（`scripts/indicators/core.py`）：中段 NaN 当日输出 NaN 但 avg 保持递推不清空（缺观测不重置 Wilder 平滑状态），删除 `x/window` 重初始化分支；docstring 同步。新增 `test_wilder_rma_mid_series_nan_keeps_avg`（锁定 125/27 递推值，旧实现 7/3 会失败）。
+- **daily.py 事务拆分**（方案 D 简化版，用户拍板）：`_process_symbol` 基础阶段（入库→因子→周线→指标）保持单一事务整体回滚；信号阶段（weekly_signals→daily_watch→right_side→accumulation→corporate_action）拆出，每阶段独立 `with conn:` 子事务，单阶段异常只回滚该阶段（不残留部分写入）、记 notes degraded、`res.status=incomplete`、`reason={stage}_failed` 并 **break**（后续阶段不跑，避免用前序失败留下的旧派生数据判定）；已成功阶段提交保留（§2.2 第 3 类）。suspended 覆写改为仅在 ST_OK 时生效（不覆盖 incomplete）。已核实五个信号模块的 `with conn:` 均在各自 CLI main，重算函数本身不管事务，拆分安全。
+- **设计同步**：`docs/system_design.md` §8.1 末段改为「行情、指标发布原子化 + 信号阶段独立子事务」表述；daily.py 模块 docstring 契约同步。
+- **测试**：新增 `test_signal_stage_failure_rolls_back_and_breaks`（daily_watch 中途写 signal_facts 后抛错 → 标记行回滚不存在、right_side/accumulation/corporate_action 未执行、指标与新 bar 保留、status=incomplete）；全量 `uv run pytest -q` **359 全绿**（357+2）。

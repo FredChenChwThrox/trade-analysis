@@ -67,6 +67,20 @@ def test_rsi_boundary_all_up_all_down_flat():
     assert core.rsi(pd.Series([5.0] * 7), 6).iloc[6] == 50.0   # 走平：增益/损失皆 0
 
 
+def test_wilder_rma_mid_series_nan_keeps_avg():
+    """中段 NaN：当日输出 NaN，但 avg 保持递推不清空（旧实现会以 x/window 重置，RSI 失真）。"""
+    s = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, float("nan"), 7.0, 8.0])
+    r = core.wilder_rma(s, 3)
+    assert r.iloc[2] == pytest.approx(2.0)            # 首值 = (1+2+3)/3
+    assert r.iloc[3] == pytest.approx(8.0 / 3)        # (2×2+4)/3
+    assert r.iloc[4] == pytest.approx(31.0 / 9)       # (8/3×2+5)/3
+    assert pd.isna(r.iloc[5])                         # NaN 日输出 NaN
+    # avg 保持 31/9 继续递推：(31/9×2+7)/3 = 125/27；旧实现会重置为 7/3
+    assert r.iloc[6] == pytest.approx(125.0 / 27)
+    assert r.iloc[6] != pytest.approx(7.0 / 3)
+    assert r.iloc[7] == pytest.approx((125.0 / 27 * 2 + 8.0) / 3)
+
+
 # ---------------------------------------------------------------- core：BOLL / KDJ / shift(1)
 
 def test_boll_ddof0_and_bandwidth():

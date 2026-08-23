@@ -5,18 +5,20 @@
 2. --raw-dir 中的新文件 ingest 入库（raw content hash 去重，§8.3）；
 3. 对 watchlist 每只股票跑日历门禁（calendar_check）；
 4. 因子变化检查（adjust 重叠窗口逻辑，raw-dir 中有该股 *_forward* 文件时）；
-5. 周线/指标全量重算（weekly/compute），随后在同一事务内依次重算信号：
+5. 周线/指标全量重算（weekly/compute），随后依次重算信号：
    weekly_signals → daily_watch → right_side → accumulation → corporate_action
-   检测（§8.1 步骤 5）；
+   检测（§8.1 步骤 5，信号阶段各自独立事务）；
 6. 池级事件研究（event_study，§5.5 确定性部分）：全部股票处理完后对库内
    公告事件跑 T+1/T+5 研究写 event_assessments（event_study_v1）；
 7. 生成单股报告 + 全池日报（report.run_reports，§8.1 步骤 7）。
 
 契约：
-- 原子性：单只股票的"入库→因子→周线→指标→信号"在一个事务内；失败回滚并标记
-  该股 failed，不影响其他股票（§8.1：保留上一次成功版本供查询）。
-- 信号阶段韧性：单个信号模块异常不拖垮该股其余产物——记 notes 标 degraded
-  继续下一模块（信号为派生数据可重算，§2.2 第 3 类）；入库/门禁/指标失败仍整体回滚。
+- 原子性：单只股票的"入库→因子→周线→指标"基础阶段在一个事务内；失败回滚并
+  标记该股 failed，不影响其他股票（§8.1：保留上一次成功版本供查询）。
+- 信号阶段事务边界：每个信号模块在独立子事务内顺序执行；单模块异常只回滚该
+  模块（不残留部分写入）、记 notes 标 degraded、状态记 incomplete 并 break
+  （后续模块不跑，避免基于前序失败留下的旧派生数据继续判定）；已成功模块的
+  提交保留（信号为派生数据可重算，§2.2 第 3 类）。
 - 报告阶段失败不阻断前面阶段：异常被捕获，pipeline_runs 阶段 report 记 degraded。
 - 事件研究阶段失败不阻断报告阶段：异常被捕获记 notes 并以 _record_stage 记
   daily 台账 stage='event_study' degraded（派生数据可重算，§2.2 第 3 类）；
@@ -237,7 +239,11 @@ def _process_symbol(
     files: list[Path],
     forward_files: list[Path],
 ) -> SymbolResult:
-    """单股：门禁 →（事务：入库→因子→周线→指标）。失败回滚标记 failed（§8.1）。"""
+    """单股：门禁 →（事务：入库→因子→周线→指标）→（信号阶段各自独立事务）。
+
+    基础阶段任一失败整体回滚标 failed（§8.1）；信号阶段顺序执行，单阶段异常
+    只回滚该阶段、后续阶段跳过、标 incomplete（派生数据可重算，§2.2 第 3 类）。
+    """
     market = market_of(symbol)
     mstatus, mreason = market_day_status(conn, market, trade_date)
     if mstatus == "missing":
@@ -286,45 +292,53 @@ def _process_symbol(
             res.notes.append(
                 f"指标重算 daily={comp.daily_rows} weekly={comp.weekly_rows} "
                 f"pe_ttm 非空={comp.pe_ok} 空={comp.pe_null}")
-
-            # ---- 信号阶段（§8.1 步骤 5）：weekly_signals → daily_watch →
-            # right_side → accumulation → corporate_action 检测。同一事务；
-            # 单模块异常记 degraded 不拖垮其余阶段（派生数据可重算，§2.2 第 3 类）。
-            signal_stages = (
-                ("weekly_signals", lambda: ws_mod.recompute_weekly_signals(
-                    conn, symbol, run_id=f"{run_id}_weekly_signals_{symbol}")),
-                ("daily_watch", lambda: dw_mod.run_daily_watch(
-                    conn, symbol, as_of=trade_date,
-                    run_id=f"{run_id}_daily_watch_{symbol}")),
-                ("right_side", lambda: rs_mod.run_right_side(
-                    conn, symbol, as_of=trade_date,
-                    run_id=f"{run_id}_right_side_{symbol}")),
-                ("accumulation", lambda: acc_mod.run_accumulation(
-                    conn, symbol, as_of=trade_date,
-                    run_id=f"{run_id}_accumulation_{symbol}")),
-                ("corporate_action", lambda: ca_mod.process_pending(
-                    conn, symbol, as_of=trade_date,
-                    run_id=f"{run_id}_corporate_action_{symbol}")),
-            )
-            for stage_name, fn in signal_stages:
-                try:
-                    r = fn()
-                    res.notes.append(f"信号 {stage_name}: {getattr(r, 'status', 'ok')}"
-                                     + (f"（{r.reason}）" if getattr(r, 'reason', '') else ""))
-                except Exception as exc:  # 单模块失败不阻断其他信号阶段
-                    res.notes.append(
-                        f"信号 {stage_name} degraded: {type(exc).__name__}: {exc}")
-
-            if gate.status == STATUS_SUSPENDED:
-                res.status = ST_SUSPENDED
-                res.reason = gate.reason
     except BatchRejected as reject:
         res.status = ST_FAILED
         res.reason = "入库校验失败，该股当日全部阶段回滚: " + (
             "; ".join(reject.result.errors) or str(reject))
+        return res
     except Exception as exc:  # 单股失败不影响其他股票（§8.1）
         res.status = ST_FAILED
         res.reason = f"{type(exc).__name__}: {exc}（该股当日全部阶段回滚）"
+        return res
+
+    # ---- 信号阶段（§8.1 步骤 5）：weekly_signals → daily_watch →
+    # right_side → accumulation → corporate_action 检测。每阶段独立事务：
+    # 单阶段异常只回滚该阶段、记 degraded 并 break（后续阶段不跑，避免基于
+    # 前序失败留下的旧派生数据继续判定）；已成功阶段的提交保留（§2.2 第 3 类）。
+    signal_stages = (
+        ("weekly_signals", lambda: ws_mod.recompute_weekly_signals(
+            conn, symbol, run_id=f"{run_id}_weekly_signals_{symbol}")),
+        ("daily_watch", lambda: dw_mod.run_daily_watch(
+            conn, symbol, as_of=trade_date,
+            run_id=f"{run_id}_daily_watch_{symbol}")),
+        ("right_side", lambda: rs_mod.run_right_side(
+            conn, symbol, as_of=trade_date,
+            run_id=f"{run_id}_right_side_{symbol}")),
+        ("accumulation", lambda: acc_mod.run_accumulation(
+            conn, symbol, as_of=trade_date,
+            run_id=f"{run_id}_accumulation_{symbol}")),
+        ("corporate_action", lambda: ca_mod.process_pending(
+            conn, symbol, as_of=trade_date,
+            run_id=f"{run_id}_corporate_action_{symbol}")),
+    )
+    for stage_name, fn in signal_stages:
+        try:
+            with conn:  # 阶段独立事务：异常回滚本阶段，不残留部分写入
+                r = fn()
+            res.notes.append(f"信号 {stage_name}: {getattr(r, 'status', 'ok')}"
+                             + (f"（{r.reason}）" if getattr(r, 'reason', '') else ""))
+        except Exception as exc:
+            res.notes.append(
+                f"信号 {stage_name} degraded: {type(exc).__name__}: {exc}"
+                f"（该阶段已回滚，后续信号阶段跳过）")
+            res.status = ST_INCOMPLETE
+            res.reason = f"{stage_name}_failed"
+            break
+
+    if gate.status == STATUS_SUSPENDED and res.status == ST_OK:
+        res.status = ST_SUSPENDED
+        res.reason = gate.reason
     return res
 
 

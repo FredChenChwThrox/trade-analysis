@@ -65,7 +65,8 @@ def macd(close: pd.Series, fast: int, slow: int, signal: int) -> tuple[pd.Series
 
 def wilder_rma(s: pd.Series, window: int) -> pd.Series:
     """Wilder 平滑均值：首个值 = 前 window 个观测的简单平均（位置 window−1），
-    其后递推 avg_t = (avg_{t−1}×(window−1) + x_t)/window；之前为 NaN。"""
+    其后递推 avg_t = (avg_{t−1}×(window−1) + x_t)/window；之前为 NaN。
+    序列中段 NaN：当日输出 NaN 但 avg 保持不清空（观测缺失不重置平滑状态）。"""
     out = pd.Series(math.nan, index=s.index, dtype=float)
     vals = s.to_numpy(dtype=float)
     if len(vals) < window:
@@ -89,9 +90,8 @@ def wilder_rma(s: pd.Series, window: int) -> pd.Series:
         x = vals[i]
         if pd.isna(x):
             out.iloc[i] = math.nan
-            avg = math.nan
-            continue
-        avg = x / window if pd.isna(avg) else (avg * (window - 1) + x) / window
+            continue  # avg 保持不变：缺观测日不重置 Wilder 平滑
+        avg = (avg * (window - 1) + x) / window
         out.iloc[i] = avg
     return out
 

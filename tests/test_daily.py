@@ -6,6 +6,8 @@
 - 同一 date 幂等重跑：raw content hash 去重、指标 DELETE+重插结果一致、
   pipeline_runs 同 run_id 覆盖不膨胀；
 - 单股入库校验失败 → 该股当日全部阶段回滚标记 failed，不影响其他股票；
+- 信号阶段事务隔离：单模块中途异常 → 本阶段部分写入回滚、后续信号阶段跳过、
+  标 incomplete；基础阶段（入库/周线/指标）提交保留；
 - 日历缺失市场输出 incomplete（§2.5 不猜）。
 """
 
@@ -274,6 +276,60 @@ def test_symbol_failure_isolated(conn, tmp_path):
     assert {r["status"] for r in conn.execute(
         "SELECT status FROM pipeline_runs WHERE run_id=? AND stage='summary'",
         (f"daily_{RUN_DATE}",))} == {"failed"}
+
+
+# ---------------------------------------------------------------- 信号阶段事务隔离
+
+def test_signal_stage_failure_rolls_back_and_breaks(conn, tmp_path, monkeypatch):
+    """信号阶段各自独立事务：daily_watch 中途异常 → 本阶段部分写入回滚、
+    后续信号阶段跳过（break）、标 incomplete；基础阶段（入库/周线/指标）已提交保留。"""
+    from scripts.signals import accumulation as acc_mod
+    from scripts.signals import corporate_action as ca_mod
+    from scripts.signals import daily_watch as dw_mod
+    from scripts.signals import right_side as rs_mod
+
+    _add_watchlist(conn, "TEST.SH")
+    _add_bars(conn, "TEST.SH", WEEK[:-1])
+    raw = _raw_dir(tmp_path, {"TEST.SH.csv": _price_csv("TEST.SH", RUN_DATE, 104.0)})
+
+    def boom(conn_arg, symbol, as_of, run_id):
+        conn_arg.execute(
+            "INSERT INTO signal_facts (symbol, observed_on, signal, state,"
+            " triggered, created_at) VALUES (?, ?, 'boom_marker', 'active', 0, ?)",
+            (symbol, as_of, db.utc_now()))
+        raise RuntimeError("boom")
+
+    called: list[str] = []
+
+    def recorder(name):
+        def fn(*args, **kwargs):
+            called.append(name)
+            return None
+        return fn
+
+    monkeypatch.setattr(dw_mod, "run_daily_watch", boom)
+    monkeypatch.setattr(rs_mod, "run_right_side", recorder("right_side"))
+    monkeypatch.setattr(acc_mod, "run_accumulation", recorder("accumulation"))
+    monkeypatch.setattr(ca_mod, "process_pending", recorder("corporate_action"))
+
+    res = run_daily(conn, RUN_DATE, raw_dir=raw, reports_root=str(tmp_path / "reports"))
+    sr = res.symbols[0]
+
+    assert sr.status == ST_INCOMPLETE
+    assert sr.reason == "daily_watch_failed"
+    assert any("信号 daily_watch degraded" in n and "后续信号阶段跳过" in n
+               for n in sr.notes)
+    # 失败阶段的部分写入已回滚，不残留
+    assert conn.execute(
+        "SELECT COUNT(*) FROM signal_facts WHERE signal='boom_marker'").fetchone()[0] == 0
+    # 后续信号阶段未执行（避免基于失败前序的旧派生数据判定）
+    assert called == []
+    # 基础阶段已提交保留：新 bar 入库、指标重算结果在
+    assert conn.execute(
+        "SELECT COUNT(*) FROM indicators_daily WHERE symbol='TEST.SH'").fetchone()[0] == 5
+    assert conn.execute(
+        "SELECT close_raw FROM daily_bars WHERE symbol='TEST.SH' AND trade_date=?",
+        (RUN_DATE,)).fetchone()[0] == pytest.approx(104.0)
 
 
 # ---------------------------------------------------------------- 日历缺失市场
