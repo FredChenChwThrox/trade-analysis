@@ -116,6 +116,18 @@ QUOTES = """code,setcode,name,snapshot_at,hqdate,hqtime,now,close,pe,pb,mgsy,mgj
 603605,1,珀莱雅,2026-08-07,20260807,110000,57.02,57.39,15.38,3.57,0.93,16.05,22554798100,39597.61,39597.61,73274,15.34,891212.625,640617.625,36668.67,230534.469,10697.11
 """
 
+# 通达信 A 股利润表 CSV（ph_agf10_cw_lyb fixedTag=00101 年报；单位「元」原始）
+# 字段顺序：code,setcode,period_end,fiscal_year,revenue,net_profit_attr,
+#           eps_basic,eps_diluted,currency,unit,is_cumulative,published_at
+FIN_A = """code,setcode,period_end,fiscal_year,revenue,net_profit_attr,eps_basic,eps_diluted,currency,unit,is_cumulative,published_at
+600563,1,2025-12-31,2025,5326963978,1679653938,5.30,5.30,CNY,yuan,1,
+"""
+
+# 港股利润表 CSV（skef10_hk_cwfx fixedTag=1；单位「万元」，含公告日期）
+FIN_HK = """code,setcode,period_end,fiscal_year,revenue,net_profit_attr,eps_basic,eps_diluted,currency,unit,is_cumulative,published_at
+00700,31,2025-12-31,2025,6602570000,1650000000,17.50,17.50,CNY,万元,1,2026-03-18
+"""
+
 
 # ------------------------------------------------------------- K线 → daily_bars
 
@@ -336,6 +348,151 @@ def test_ingest_cli_routes_tdx_announcement(conn, tmp_path):
     assert total.status == "ok"
     assert total.inserted == 2
     assert _count(conn, "events") == 2
+
+
+# ------------------------------------------------------------- 财报 → financial_reports/facts
+
+def test_financials_a_stock_ingest_yuan(conn, tmp_path):
+    """A 股年报：原始「元」入库（ph_agf10_cw_lyb fixedTag=00101）。"""
+    p = write(tmp_path, "raw/tdx/financials/2026-08-23/run_init/600563.SH_is_20251231.csv", FIN_A)
+    r = ingest_file(conn, p, source="tdx", data_type="financials",
+                    symbol="600563.SH", parse=tdx.parse_financials_csv)
+    # A 股 entry 不返回 published_at → incomplete（记 degraded_available_at）
+    assert r.inserted == 1
+    assert r.incomplete_reasons, r.summary()
+    row = conn.execute(
+        "SELECT r.symbol, r.period_end, r.period_type, r.fiscal_year, "
+        "r.currency, r.unit, r.is_cumulative, r.revision, r.published_at, "
+        "f.revenue, f.net_profit_attr, f.eps_basic "
+        "FROM financial_reports r JOIN financial_facts f ON f.report_id = r.report_id "
+        "WHERE r.symbol='600563.SH'"
+    ).fetchone()
+    assert row["period_end"] == "2025-12-31"
+    assert row["period_type"] == "annual"
+    assert row["fiscal_year"] == 2025
+    assert row["currency"] == "CNY"
+    assert row["unit"] == "yuan"
+    assert row["is_cumulative"] == 1
+    assert row["revision"] == 1
+    assert row["published_at"] is None   # A 股接口原样无此字段
+    # revenue=5,326,963,978 元（原 CSV 写的就是元）；EPS=5.30 元
+    assert row["revenue"] == "5326963978"
+    assert row["net_profit_attr"] == "1679653938"
+    assert row["eps_basic"] == "5.30"
+
+
+def test_financials_hk_unit_convert_wan_yuan(conn, tmp_path):
+    """港股利润表：原始「万元」→ /1e4 转「元」入库；published_at 走港股 entry 自带「公告日期」。"""
+    p = write(tmp_path, "raw/tdx/financials/2026-08-23/run_init/00700.HK_is_20251231.csv", FIN_HK)
+    r = ingest_file(conn, p, source="tdx", data_type="financials",
+                    symbol="00700.HK", parse=tdx.parse_financials_csv)
+    assert r.inserted == 1, r.summary()
+    row = conn.execute(
+        "SELECT r.symbol, r.period_end, r.currency, r.unit, r.published_at, r.published_tz, "
+        "f.revenue, f.net_profit_attr, f.eps_basic "
+        "FROM financial_reports r JOIN financial_facts f ON f.report_id = r.report_id "
+        "WHERE r.symbol='00700.HK'"
+    ).fetchone()
+    # 6602570000 万元 → 66,025,700,000,000 元（6.6 万亿，符合腾讯规模）
+    assert row["revenue"] == "66025700000000"
+    assert row["net_profit_attr"] == "16500000000000"
+    assert row["eps_basic"] == "17.50"
+    assert row["currency"] == "CNY"
+    assert row["unit"] == "yuan"
+    # 港股 entry 带「公告日期」2026-03-18 → published_at 非空
+    assert row["published_at"] is not None
+    assert row["published_at"].startswith("2026-03-17") or row["published_at"].startswith("2026-03-18")
+    assert row["published_tz"] in ("Asia/Hong_Kong", "Asia/Shanghai")
+
+
+def test_financials_revision_upgrade(conn, tmp_path):
+    """同一报告期内容变化 → 新增 revision 不覆盖旧版（§3.7）。"""
+    p1 = write(tmp_path, "raw/tdx/financials/2026-08-23/run_a/600563.SH_is_20251231.csv", FIN_A)
+    ingest_file(conn, p1, source="tdx", data_type="financials",
+                symbol="600563.SH", parse=tdx.parse_financials_csv)
+    # 更正版：营收 +1 亿
+    fin_revised = FIN_A.replace("5326963978", "5426963978")
+    p2 = write(tmp_path, "raw/tdx/financials/2026-08-23/run_b/600563.SH_is_20251231.csv", fin_revised)
+    r2 = ingest_file(conn, p2, source="tdx", data_type="financials",
+                     symbol="600563.SH", parse=tdx.parse_financials_csv)
+    assert r2.inserted == 1
+    assert any("新增 revision=2" in n for n in r2.notes)
+    rows = conn.execute(
+        "SELECT revision, revenue FROM financial_reports r "
+        "JOIN financial_facts f ON f.report_id = r.report_id "
+        "WHERE r.symbol='600563.SH' AND r.period_end='2025-12-31' "
+        "ORDER BY revision"
+    ).fetchall()
+    assert len(rows) == 2
+    assert rows[0]["revision"] == 1 and rows[0]["revenue"] == "5326963978"
+    assert rows[1]["revision"] == 2 and rows[1]["revenue"] == "5426963978"
+
+
+def test_financials_same_content_skipped(conn, tmp_path):
+    """同一报告期同内容 → 跳过（content hash 去重 + 内容比对）。"""
+    p = write(tmp_path, "raw/tdx/financials/2026-08-23/run_a/600563.SH_is_20251231.csv", FIN_A)
+    r1 = ingest_file(conn, p, source="tdx", data_type="financials",
+                     symbol="600563.SH", parse=tdx.parse_financials_csv)
+    assert r1.inserted == 1
+    r2 = ingest_file(conn, p, source="tdx", data_type="financials",
+                     symbol="600563.SH", parse=tdx.parse_financials_csv)
+    assert r2.skipped == 1
+
+
+def test_financials_period_end_fallback_from_csv(conn, tmp_path):
+    """文件名缺 `_is_YYYYMMDD` → 回退 CSV period_end 列入库（2026-08-23 起不再是 conflict）。"""
+    p = write(tmp_path, "raw/tdx/financials/2026-08-23/run_a/600563.SH.csv", FIN_A)
+    r = ingest_file(conn, p, source="tdx", data_type="financials",
+                    symbol="600563.SH", parse=tdx.parse_financials_csv)
+    assert r.inserted == 1, r.summary()
+    assert any("period_end 列取值" in n for n in r.notes)
+    row = conn.execute(
+        "SELECT period_end, period_type FROM financial_reports WHERE symbol='600563.SH'"
+    ).fetchone()
+    assert row["period_end"] == "2025-12-31"
+    assert row["period_type"] == "annual"
+
+
+def test_financials_bad_filename_and_bad_period_end(conn, tmp_path):
+    """文件名无 _is_ 且 CSV period_end 列缺失/非法 → conflict 不入库。"""
+    bad = FIN_A.replace("2025-12-31", "")
+    p = write(tmp_path, "raw/tdx/financials/2026-08-23/run_a/600563.SH.csv", bad)
+    r = ingest_file(conn, p, source="tdx", data_type="financials",
+                    symbol="600563.SH", parse=tdx.parse_financials_csv)
+    assert r.conflicts == 1
+    assert any("period_end 列缺失/非法" in e for e in r.errors)
+
+
+def test_financials_revision_run_id_is_batch_dir(conn, tmp_path):
+    """record_revision 的 run_id 取采集批次目录名（与 yahoo_finance 约定一致），非 raw_object_id。"""
+    p = write(tmp_path, "raw/tdx/financials/2026-08-23/run_batch9/600563.SH_is_20251231.csv", FIN_A)
+    r = ingest_file(conn, p, source="tdx", data_type="financials",
+                    symbol="600563.SH", parse=tdx.parse_financials_csv)
+    assert r.inserted == 1
+    row = conn.execute(
+        "SELECT run_id FROM data_revisions WHERE table_name='financial_reports'"
+    ).fetchone()
+    assert row["run_id"] == "run_batch9"
+
+
+def test_financials_missing_code_setcode(conn, tmp_path):
+    """缺 code/setcode → conflict。"""
+    bad = """period_end,fiscal_year,revenue,net_profit_attr,eps_basic,eps_diluted,currency,unit,is_cumulative,published_at
+2025-12-31,2025,5326963978,1679653938,5.30,5.30,CNY,yuan,1,
+"""
+    p = write(tmp_path, "raw/tdx/financials/2026-08-23/run_a/600563.SH_is_20251231.csv", bad)
+    r = ingest_file(conn, p, source="tdx", data_type="financials",
+                    symbol="600563.SH", parse=tdx.parse_financials_csv)
+    assert r.conflicts == 1
+
+
+def test_ingest_cli_routes_tdx_financials(conn, tmp_path):
+    """ingest CLI 按路径 → (tdx, financials) 路由。"""
+    p = write(tmp_path, "raw/tdx/financials/2026-08-23/run_a/600563.SH_is_20251231.csv", FIN_A)
+    results, total = ingest_paths(conn, [str(p)])
+    assert total.inserted == 1
+    assert _count(conn, "financial_reports") == 1
+    assert _count(conn, "financial_facts") == 1
 
 
 def test_ingest_cli_routes_tdx_quotes(conn, tmp_path):

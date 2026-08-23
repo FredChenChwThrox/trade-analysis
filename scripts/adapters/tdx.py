@@ -9,6 +9,10 @@
                 （wenda_notice_query 返回，无 uuid，按 title|date 哈希去重）
 - quotes       估值/股本快照 CSV → share_capital_events（snapshot_group_total_tdx）
                 （tdx_quotes hasCwInfo=1，含 PE/PB/ROE/总市值/股东人数 GDRS）
+- financials   财报 CSV → financial_reports + financial_facts（2026-08-23 起新增，
+                弥补 kimi 鉴权失效时的财报通道；A 股 ph_agf10_cw_lyb / 港股
+                skef10_hk_cwfx。已替代原 SKILL 「已知限制」中提到的 A/H 财务
+                parse_financials_csv 缺口）
 
 CSV 列约定（skills/tdx-collect SKILL.md 落盘格式）：
 - kline:     code, setcode, data, open, high, low, close, volume, amount,
@@ -18,6 +22,10 @@ CSV 列约定（skills/tdx-collect SKILL.md 落盘格式）：
 - quotes:    code, setcode, name, snapshot_at, hqdate, hqtime, now, close,
               pe, pb, mgsy, mgjzc, zsz, zgb, ltgb, gdrs, ipoprice,
               zzc, jzc, jly, yysr, jyxjl
+- financials: code, setcode, period_end, fiscal_year, revenue, net_profit_attr,
+              eps_basic, eps_diluted, currency, unit, is_cumulative, published_at
+              （A 股 tdx_api_data 利润表 ph_agf10_cw_lyb / 港股 skef10_hk_cwfx fixedTag=1；
+              每期一行；与 stock_finance_data 同命名约定 `{symbol}_is_{period}.csv`）
 
 setcode → symbol 后缀（与 SUFFIX_MARKET 对齐）：
   1=SH(沪A) 0=SZ(深A) 2=BJ(北交所) 31=HK(港股) 62=SH(中证指数,系统内 .SH)
@@ -43,6 +51,7 @@ import json
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from scripts.adapters.common import (
@@ -483,5 +492,233 @@ def parse_quotes_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,
          json.dumps(details, ensure_ascii=False),
          SOURCE, raw_object_id, now),
     )
+    result.inserted += 1
+    return result
+
+
+# ---------------------------------------------------------------- 财报 → financial_reports/facts
+
+# tdx 财务数据通过 tdx_api_data 工具获取，金额单位不一致（A 股「元」、港股「万元」）。
+# 统一转「元」入库。period_type 按 MM-DD 推断（与 stock_finance_data 一致）。
+_FIN_PERIOD_TYPE = {"1231": "annual", "0630": "interim", "0331": "quarterly", "0930": "quarterly"}
+
+# tdx 港股财务接口返回的「币种」字段（agent 探查 2026-08-23 确认）：00700.HK
+# 该字段显示"人民币"而非港元；系统按 CNY 入库，由 valuation.py 自行处理汇率。
+
+# 报表口径单位。tdx A 股 ph_agf10_cw_lyb 返回「元」原始，港股 skef10_hk_cwfx 返回「万元」。
+# CSV 的 `unit` 列可显式标 raw_unit；adapter 按 unit 折算。系数用 int 保证 Decimal 精确。
+_UNIT_TO_YUAN = {
+    "yuan": 1,        # A 股原始
+    "万元": 10_000,
+    "wan_yuan": 10_000,
+    "百万元": 1_000_000,
+    "million_yuan": 1_000_000,
+    "亿元": 100_000_000,
+    "hundred_million_yuan": 100_000_000,
+}
+
+
+def _fin_unit_to_yuan(unit_s: str | None) -> int | None:
+    """CSV unit 文本 → 元换算系数（int，Decimal 精确）。未知单位返 None（按不猜处理，让调用方记录 incomplete）。"""
+    if unit_s is None:
+        return None
+    s = str(unit_s).strip()
+    return _UNIT_TO_YUAN.get(s)
+
+
+def _fin_period_from_filename(path: Path) -> str | None:
+    """文件名 `{symbol}_is_{YYYYMMDD}.csv` → YYYY-MM-DD（与 sfd._period_from_filename 复用规则）。"""
+    m = re.search(r"_is_(\d{8})", path.name)
+    if not m:
+        return None
+    d = m.group(1)
+    return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+
+
+def parse_financials_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,
+                         result: IngestResult) -> IngestResult:
+    """tdx_api_data 财报 CSV → financial_reports + financial_facts（2026-08-23 新增）。
+
+    raw CSV 列：code,setcode,period_end,fiscal_year,revenue,net_profit_attr,
+              eps_basic,eps_diluted,currency,unit,is_cumulative,published_at
+    报告期取文件名 `{symbol}_is_{YYYYMMDD}.csv`；文件名无 _is_ 时回退 CSV
+    period_end 列（YYYY-MM-DD 校验），两者皆无 → conflict 不入库。
+
+    支持 entry：
+    - A 股：TdxShareCW.ph_agf10_cw_lyb（fixedTag=00101 年报 / 00102 单季）
+    - 港股：TdxSharePCCW.skef10_hk_cwfx（fixedTag=1 损益）
+
+    单位处理：A 股原始「元」/ 港股「万元」→ 统一转「元」入库（§9.5 关键决策值定点）。
+    period_type 从 period_end MM-DD 推断；is_cumulative 默认 1（季报/中报累计）。
+    published_at：A 股原始接口不返回，留 NULL（pit_backfill 用 wenda_notice_query 回填）；
+              港股 entry 直接返回「公告日期」，可填入。
+    修订语义：相同报告期内容变化 → 新增 revision 行，不覆盖（§3.7 硬门槛，与 sfd 一致）。
+    股本字段（shares_issued_end/float_end）：tdx 财报接口不返回，本批不入库；
+              后续走 tdxf10_gg_gbjg 股本结构另行采集。
+    """
+    period_end = _fin_period_from_filename(path)
+
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f))
+    if not rows:
+        result.conflicts += 1
+        result.errors.append("财报 CSV 无数据行")
+        return result
+    rec = rows[0]
+    if period_end is None:
+        # 文件名无 _is_YYYYMMDD：回退 CSV period_end 列（YYYY-MM-DD）
+        pe_raw = (rec.get("period_end") or "").strip()
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", pe_raw):
+            period_end = pe_raw
+            result.notes.append(
+                f"文件名无 _is_ 报告期，按 CSV period_end 列取值: {period_end}")
+        else:
+            result.conflicts += 1
+            result.errors.append(
+                f"文件名不含 _is_YYYYMMDD 且 CSV period_end 列缺失/非法: {path.name}")
+            return result
+    if len(rows) > 1:
+        result.notes.append(f"财报 CSV 含 {len(rows)} 行，仅取首行入库（按单期约定）")
+
+    code = (rec.get("code") or "").strip()
+    setcode = (rec.get("setcode") or "").strip()
+    if not code or not setcode:
+        result.conflicts += 1
+        result.errors.append(f"缺 code/setcode 列或值为空: {path.name}")
+        return result
+    try:
+        symbol = _symbol_from_code_setcode(code, setcode)
+    except ValueError as e:
+        result.conflicts += 1
+        result.errors.append(str(e))
+        return result
+
+    mmdd = period_end[5:7] + period_end[8:10]
+    period_type = _FIN_PERIOD_TYPE.get(mmdd, "quarterly")
+    fiscal_year = int(period_end[:4])
+    is_cumulative_raw = (rec.get("is_cumulative") or "1").strip()
+    is_cumulative = 1 if is_cumulative_raw in ("1", "true", "True", "yes") else 0
+
+    # currency：A 股默认 CNY；港股 entry 的「币种」字段若指明则按指明值入库（agent 实测显示「人民币」）
+    market = market_of(symbol)
+    currency = (rec.get("currency") or "").strip()
+    if not currency:
+        currency = "CNY"
+    if market == "HK":
+        # 港股报表在 tdx 体系下都按人民币计价（agent 2026-08-23 实测 00700 列「币种=人民币」），
+        # 但若数据本身标了 HKD/USD 也按原值入库，由 valuation.py 自行决定汇率换算
+        pass
+
+    # 单位换算
+    unit_s = (rec.get("unit") or "").strip() or None
+    factor = _fin_unit_to_yuan(unit_s)
+    if factor is None:
+        result.incomplete_reasons.append(
+            f"{symbol} {period_end} unit 字段不可识别 ({unit_s!r})，按 yuan=1 兜底（降级）")
+        factor = 1
+
+    def _yuan(raw: str | None) -> str | None:
+        v = dec_str(raw)
+        if v is None:
+            return None
+        try:
+            d = Decimal(v) * Decimal(factor)
+        except (InvalidOperation, ValueError):
+            return None
+        s = format(d, "f")
+        # 去掉整数末尾的 ".0+0"（_yuan 用于金额字段，EPS 走 dec_str 不经过本函数）
+        if "." in s:
+            s = s.rstrip("0").rstrip(".")
+        return s
+
+    facts = {
+        "revenue": _yuan(rec.get("revenue")),
+        "net_profit_attr": _yuan(rec.get("net_profit_attr")),
+        "eps_basic": dec_str(rec.get("eps_basic")),    # EPS 已是元小数，不换算
+        "eps_diluted": dec_str(rec.get("eps_diluted")),
+    }
+
+    # 披露日（仅港股接口原样返回）；A 股留 NULL 让 pit_backfill 回填
+    published_at_raw = (rec.get("published_at") or "").strip()
+    published_at_utc: str | None = None
+    published_tz: str | None = None
+    if published_at_raw:
+        try:
+            tz = market_tz(market)
+            published_at_utc = datetime.fromisoformat(published_at_raw).replace(
+                tzinfo=tz).astimezone(timezone.utc).isoformat()
+            published_tz = str(tz)
+        except ValueError:
+            result.incomplete_reasons.append(
+                f"{symbol} {period_end} published_at 解析失败 ({published_at_raw!r})，降级 NULL")
+
+    # 修订升级：内容一致跳过；不一致新增 revision
+    existing = conn.execute(
+        """
+        SELECT r.report_id, r.revision, f.revenue, f.net_profit_attr,
+               f.eps_basic, f.eps_diluted
+        FROM financial_reports r
+        JOIN financial_facts f ON f.report_id = r.report_id
+        WHERE r.symbol = ? AND r.period_end = ? AND r.period_type = ?
+          AND r.is_cumulative = ?
+        ORDER BY r.revision DESC
+        """,
+        (symbol, period_end, period_type, is_cumulative),
+    ).fetchall()
+
+    if existing:
+        latest = existing[0]
+        same = all(latest[k] == facts[k] for k in facts)
+        if same:
+            result.skipped += 1
+            result.notes.append(
+                f"{symbol} {period_end} 报告内容一致，跳过（已有 revision={latest['revision']}）")
+            return result
+        revision = latest["revision"] + 1
+        result.notes.append(
+            f"{symbol} {period_end} 检测到更正，新增 revision={revision}")
+    else:
+        revision = 1
+
+    now = utc_now()
+    if published_at_utc is None:
+        # A 股 entry 不返回 published_at，§2.1 降级：available_at 取入库时间，
+        # pe_status 由 valuation.py 后续打 degraded_available_at 标
+        result.incomplete_reasons.append(
+            f"{symbol} {period_end} tdx 财报接口无 published_at，"
+            f"available_at 取入库时间（降级，待 pit_backfill）")
+        available_at_utc = now
+    else:
+        available_at_utc = _next_open_available_at(
+            load_calendar(conn, market), published_at_raw, market)
+
+    cur = conn.execute(
+        """
+        INSERT INTO financial_reports (symbol, period_end, period_type, fiscal_year,
+            published_at, published_tz, available_at, revision,
+            currency, unit, is_cumulative, raw_object_id, ingested_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (symbol, period_end, period_type, fiscal_year,
+         published_at_utc, published_tz, available_at_utc, revision,
+         currency, "yuan", is_cumulative, raw_object_id, now),
+    )
+    report_id = cur.lastrowid
+    conn.execute(
+        """
+        INSERT INTO financial_facts (report_id, revenue, net_profit_attr,
+            eps_basic, eps_diluted, shares_issued_end, shares_float_end,
+            share_count_type, updated_at)
+        VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?)
+        """,
+        (report_id, facts["revenue"], facts["net_profit_attr"],
+         facts["eps_basic"], facts["eps_diluted"], now),
+    )
+    record_revision(conn, table_name="financial_reports", record_key={
+        "symbol": symbol, "period_end": period_end, "period_type": period_type,
+        "is_cumulative": is_cumulative, "revision": revision},
+        old_value=None, new_value=None, source=SOURCE,
+        reason=f"tdx 财报入库 revision={revision}",
+        run_id=Path(path).parent.name)  # 采集批次目录名（与 yahoo_finance 约定一致）
     result.inserted += 1
     return result

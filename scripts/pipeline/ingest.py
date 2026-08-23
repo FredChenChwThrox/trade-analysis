@@ -29,6 +29,7 @@ _ROUTES = {
     ("tdx", "index"): tdx.parse_index_csv,
     ("tdx", "announcement"): tdx.parse_announcement_csv,
     ("tdx", "quotes"): tdx.parse_quotes_csv,
+    ("tdx", "financials"): tdx.parse_financials_csv,        # 2026-08-23 起弥补 kimi 鉴权失效
     # kimi-datasource（fallback；access_token 失效需 /login）
     ("stock_finance_data", "price"): sfd.parse_price_csv,
     ("stock_finance_data", "financials"): sfd.parse_financials_csv,

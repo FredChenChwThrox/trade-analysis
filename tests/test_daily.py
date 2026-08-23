@@ -332,8 +332,51 @@ def test_signal_stage_failure_rolls_back_and_breaks(conn, tmp_path, monkeypatch)
         (RUN_DATE,)).fetchone()[0] == pytest.approx(104.0)
 
 
-# ---------------------------------------------------------------- 日历缺失市场
+# ---------------------------------------------------------------- raw 文件分类：tdx forward 与 source 过滤
 
+def test_classify_tdx_tq_forward_files(tmp_path):
+    """tdx 前/后复权文件（{symbol}_tq1/_tq2.csv，kline 目录）识别为 forward，
+    留给因子变化检查，不进 by_symbol（§3.3）。"""
+    from scripts.pipeline.daily import _classify_raw_files
+
+    base = tmp_path / "data" / "raw" / "tdx" / "kline" / "2026-08-07" / "run_collect"
+    base.mkdir(parents=True)
+    (base / "TEST.SH_tq1.csv").write_text("code,data,close\n603605,20260807,105.03\n")
+    (base / "TEST.SH_tq2.csv").write_text("code,data,close\n603605,20260807,105.03\n")
+    (base / "TEST.SH.csv").write_text("code,data,close\n603605,20260807,102.8\n")
+
+    by, fwd, other, unrouted, filtered = _classify_raw_files(
+        str(tmp_path / "data" / "raw"), {"TEST.SH"})
+
+    assert [p.name for p in fwd["TEST.SH"]] == ["TEST.SH_tq1.csv", "TEST.SH_tq2.csv"]
+    assert [p.name for p in by["TEST.SH"]] == ["TEST.SH.csv"]
+    assert unrouted == [] and filtered == []
+
+
+def test_classify_source_filter(tmp_path):
+    """sources={'tdx'} 时只处理 tdx 目录文件，其他数据源文件进 filtered 跳过。"""
+    from scripts.pipeline.daily import _classify_raw_files
+
+    tdx_dir = tmp_path / "data" / "raw" / "tdx" / "kline" / "2026-08-07" / "run_a"
+    sfd_dir = tmp_path / "data" / "raw" / "stock_finance_data" / "price" / "2026-08-07" / "run_b"
+    tdx_dir.mkdir(parents=True)
+    sfd_dir.mkdir(parents=True)
+    (tdx_dir / "TEST.SH.csv").write_text("code,data,close\n603605,20260807,102.8\n")
+    (sfd_dir / "TEST.SH.csv").write_text("time,close\n2026-08-07,102.8\n")
+
+    raw = str(tmp_path / "data" / "raw")
+    by, fwd, other, unrouted, filtered = _classify_raw_files(
+        raw, {"TEST.SH"}, sources={"tdx"})
+    assert [p.name for p in by["TEST.SH"]] == ["TEST.SH.csv"]
+    assert "tdx" in str(by["TEST.SH"][0])
+    assert len(filtered) == 1 and "stock_finance_data" in str(filtered[0])
+
+    # 不过滤时两个文件都进 by_symbol
+    by2, _, _, _, filtered2 = _classify_raw_files(raw, {"TEST.SH"})
+    assert len(by2["TEST.SH"]) == 2 and filtered2 == []
+
+
+# ---------------------------------------------------------------- 日历缺失市场
 def test_missing_calendar_market_incomplete(conn, tmp_path):
     _add_watchlist(conn, "0700.HK", market="HK")  # 无 HK 日历种子
 

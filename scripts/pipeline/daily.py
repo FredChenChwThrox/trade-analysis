@@ -183,25 +183,41 @@ def market_day_status(conn: sqlite3.Connection, market: str, trade_date: str) ->
 def _classify_raw_files(
     raw_dir: str,
     watchlist: set[str],
-) -> tuple[dict[str, list[Path]], dict[str, list[Path]], list[Path], list[Path]]:
-    """把 raw-dir 下 CSV 分为：watchlist 个股文件 / 个股 forward 文件 / 其他可路由文件 / 无法路由。
+    sources: set[str] | None = None,
+) -> tuple[dict[str, list[Path]], dict[str, list[Path]], list[Path], list[Path], list[Path]]:
+    """把 raw-dir 下 CSV 分为：watchlist 个股文件 / 个股 forward 文件 / 其他可路由文件 /
+    无法路由 / source 过滤跳过。
 
-    forward 文件（price 目录下 *_forward*）不入 daily_bars，留给因子变化检查（§3.3）。
+    forward 文件不入 daily_bars，留给因子变化检查（§3.3）：kimi 约定 price 目录下
+    *_forward*；tdx 约定 kline 目录下 *_tq1/_tq2（前/后复权，tdx-collect skill 命名）。
+    sources 非空时只处理所列数据源目录（如 {"tdx"}），其余数据源文件跳过。
     """
     by_symbol: dict[str, list[Path]] = {}
     forward_by_symbol: dict[str, list[Path]] = {}
     other: list[Path] = []
     unrouted: list[Path] = []
+    filtered: list[Path] = []
     for path in ingest_mod.iter_csv_files([raw_dir]):
         route = ingest_mod._route(path)
         if route is None or route not in ingest_mod._ROUTES:
             unrouted.append(path)
             continue
         source, data_type = route
-        if data_type == "price" and "_forward" in path.stem:
-            symbol = path.stem.split("_forward")[0]
-            if symbol in watchlist:
-                forward_by_symbol.setdefault(symbol, []).append(path)
+        if sources and source not in sources:
+            filtered.append(path)
+            continue
+        stem = path.stem
+        fwd_symbol: str | None = None
+        if data_type == "price" and "_forward" in stem:
+            fwd_symbol = stem.split("_forward")[0]
+        elif data_type == "kline":  # tdx 前/后复权文件
+            for marker in ("_tq1", "_tq2", "_forward"):
+                if marker in stem:
+                    fwd_symbol = stem.split(marker)[0]
+                    break
+        if fwd_symbol is not None:
+            if fwd_symbol in watchlist:
+                forward_by_symbol.setdefault(fwd_symbol, []).append(path)
             else:
                 other.append(path)  # 非 watchlist 的 forward 文件本流程不处理
             continue
@@ -210,7 +226,7 @@ def _classify_raw_files(
             by_symbol.setdefault(symbol, []).append(path)
         else:
             other.append(path)
-    return by_symbol, forward_by_symbol, other, unrouted
+    return by_symbol, forward_by_symbol, other, unrouted, filtered
 
 
 # ---------------------------------------------------------------- 单股处理（原子事务）
@@ -349,10 +365,12 @@ def run_daily(
     trade_date: str,
     raw_dir: str | None = None,
     reports_root: str | None = None,
+    sources: set[str] | None = None,
 ) -> DailyResult:
     """每日盘后 pipeline（§8.1 步骤 1-5、7）。trade_date 为市场本地日期 YYYY-MM-DD。
 
     reports_root 为 None 时用 report.REPORTS_ROOT（reports/）；测试传临时目录。
+    sources 非空时 raw-dir 只处理所列数据源（如 {"tdx"}），其余跳过。
     """
     date_type.fromisoformat(trade_date)  # 格式校验
     run_id = f"daily_{trade_date}"
@@ -381,8 +399,8 @@ def run_daily(
     by_symbol: dict[str, list[Path]] = {s: [] for s in symbols}
     forward_by_symbol: dict[str, list[Path]] = {}
     if raw_dir:
-        by_symbol, forward_by_symbol, other, unrouted = _classify_raw_files(
-            raw_dir, set(symbols))
+        by_symbol, forward_by_symbol, other, unrouted, filtered = _classify_raw_files(
+            raw_dir, set(symbols), sources=sources)
         for s in symbols:
             by_symbol.setdefault(s, [])
         for path in other:  # 非 watchlist 文件（指数/fx 等）：单文件事务入库
@@ -393,6 +411,9 @@ def run_daily(
             result.notes.append(f"其他文件 {path.name}: {r.summary()}")
         for path in unrouted:
             result.notes.append(f"无法路由，跳过: {path}")
+        if filtered:
+            result.notes.append(
+                f"source 过滤（仅 {sorted(sources)}）：跳过 {len(filtered)} 个文件")
 
     # ---- 步骤 3-5：逐股门禁 + 原子计算
     for symbol in symbols:
@@ -534,6 +555,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scripts.pipeline.daily")
     parser.add_argument("--date", required=True, help="交易日期 YYYY-MM-DD（市场本地）")
     parser.add_argument("--raw-dir", default=None, help="本批新采 raw 文件目录（可选）")
+    parser.add_argument("--source", action="append", default=None,
+                        help="只处理指定数据源目录（如 tdx / stock_finance_data；可重复）")
     parser.add_argument("--reports-root", default=None,
                         help="报告根目录（默认 reports/；测试用临时目录）")
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH))
@@ -542,7 +565,8 @@ def main(argv: list[str] | None = None) -> int:
     conn = connect(args.db)
     try:
         result = run_daily(conn, args.date, raw_dir=args.raw_dir,
-                           reports_root=args.reports_root)
+                           reports_root=args.reports_root,
+                           sources=set(args.source) if args.source else None)
     finally:
         conn.close()
     print(result)

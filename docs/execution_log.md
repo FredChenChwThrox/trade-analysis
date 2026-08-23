@@ -700,3 +700,62 @@
 - **daily.py 事务拆分**（方案 D 简化版，用户拍板）：`_process_symbol` 基础阶段（入库→因子→周线→指标）保持单一事务整体回滚；信号阶段（weekly_signals→daily_watch→right_side→accumulation→corporate_action）拆出，每阶段独立 `with conn:` 子事务，单阶段异常只回滚该阶段（不残留部分写入）、记 notes degraded、`res.status=incomplete`、`reason={stage}_failed` 并 **break**（后续阶段不跑，避免用前序失败留下的旧派生数据判定）；已成功阶段提交保留（§2.2 第 3 类）。suspended 覆写改为仅在 ST_OK 时生效（不覆盖 incomplete）。已核实五个信号模块的 `with conn:` 均在各自 CLI main，重算函数本身不管事务，拆分安全。
 - **设计同步**：`docs/system_design.md` §8.1 末段改为「行情、指标发布原子化 + 信号阶段独立子事务」表述；daily.py 模块 docstring 契约同步。
 - **测试**：新增 `test_signal_stage_failure_rolls_back_and_breaks`（daily_watch 中途写 signal_facts 后抛错 → 标记行回滚不存在、right_side/accumulation/corporate_action 未执行、指标与新 bar 保留、status=incomplete）；全量 `uv run pytest -q` **359 全绿**（357+2）。
+
+## 2026-08-23（watchlist 入池：法拉电子 600563.SH + 万华化学 600309.SH）
+
+- **变更**：`config/watchlist.yaml` 在 601168.SH 后追加 2 行；watchlist 池 14 → 16 只（603605/603288/601318/002747/601899/600029/600531/600346/002709/002714/002299/002557/603697/601168/600563/600309.SH）。
+- **代码确认**：600563.SH 厦门法拉电子（主板，元件/福建） / 600309.SH 万华化学（主板，化学制品/山东）—— 均沪市主板，benchmark 沿用 000300.SH。
+- **未做（待下次会话采集）**：① tdx-connector 拉 3 年日线 + amount + HasLtgb（CFET 期间失败转 kimi fallback，或人工用 `mcp_client.py` 触发）；② `adjust --forward-csv` 建复权因子；③ `weekly` / `indicators.compute` / `weekly_signals` / `daily_watch` / `right_side` / `accumulation` 五件套；④ 排期卡 draft（card_inputs → skill → create-draft → 人工 activate）。
+- **预期降级**：无卡期间 `daily_watch`/`right_side` 输出 `incomplete(no_active_card)`，日报单股段落 `degraded(no_active_card)`，属 §2.5 设计的正常态；下游观察期 2–4 周后再排激活。
+- **测试**：未跑（仅 yaml 变更，不触发代码）。
+
+## 2026-08-23（watchlist 入池+全套管线：法拉电子 600563.SH + 万华化学 600309.SH）
+
+- **背景**：用户要求加入 watchlist 并跑全套管线。已于 22:04 改 yaml 入池（池 14→16），本条目记录管线环节。
+- **数据源归属澄清**：tdx-connector 绑定 WorkBuddy（mcp 工具集在本会话 deferred tools 中：tdx_kline / tdx_quotes / tdx_api_data / tdx_lookup_stock / tdx_screener / wenda_notice_query），kimi-datasource 绑定 KimiCode（plugin。今天 token 又失效 `access_token was rejected. Run /login again`，与 08-21 working memory「易失效」一致；init_collect.py 硬编码旧 5 只走 kimi 通道不可复用）。两条数据源**不要写死在脚本中**——本批直接由 LLM agent 调 tdx MCP 落 raw，不经 init_collect.py。
+- **采集路径**：派 general-purpose agent 直接调 mcp__tdx-connector__* → 落 raw CSV。K 线响应因 tokens 上限被截断到 tool-results 文件，agent 用 python json.loads 完整解析 → 按 SKILL `data,setcode,data,...` 13 列落 CSV。
+  - 落盘：`data/raw/tdx/kline/2026-08-23/run_init_newstocks_2/600563.SH_tq0.csv` 等 4 份（700 根/份，起始 2023-09-28）；`data/raw/tdx/quotes/2026-08-23/run_init_newstocks_2/600563.SH.csv`、`600309.SH.csv`（各 1 行 snapshot）；2 份 `_meta.json`。
+  - 字段异常：tdx_quotes hasCwInfo=1 不返回 pb 字段（CSV 留空，后续 valuation 模块补）；tdx_rows.Volume 是「手」含小数，未二次除 Unit（SKILL/文档要求）；ExtInfo.ZSZ 单位核对为「元」（22500 万股×133.07≈29,940,750,000）。
+- **代码修复**：`scripts/pipeline/adjust.py` `load_forward_closes` 加 `data` 列 fallback（兼容 SKILL §3.3 设计列名，kimi 历史 CSV 用 `time` 仍兼容）。错误根因：origin=2023-09-28 不在因子序列内 → time vs data 列名不匹配。原实现为 kimi 历史遗留，未对齐 tdx-collect 设计列名；修复 backward-compatible，向设计 §3.3 对齐。
+- **管线执行**：
+  1. `ingest`：4 份 K 线入 daily_bars（tq=0 共 1400 行 + tq=1 跳过；2 份 quotes 入 share_capital_events 各 1 行）。TOTAL inserted=1402。
+  2. `db seed`：`watchlist` 表从 yaml 导入 16 只（新增 600563 + 600309；首次不动 watchlist 时 compute 会 raise `不在 watchlist`）。
+  3. `adjust 600563.SH/600309.SH`：分别 201/87 平台段，最新段 f=1.0（无新除权）；同事务 rebuild 周线 149 周；NOTE：两只均无 corporate_actions 记录（cash action 历史未采），此点不阻断但意味平台切换日未做交叉印证（西部矿业入池当日的对应 gap 一致）。
+  4. `indicators.compute`：两只 indicators_daily 700 行 + indicators_weekly 149 行；**pe_ttm 非空 0/700**（首次入池无财务回填；§2.5 预期，无 forecast 数据）。
+  5. 信号五件套：weekly_signals ok（panic_low/decline_start 锚点；fallback=True 是 adjacent 平台的——西部矿业 2026-03-27 入池首段 fallback=False，本次更早段 fallback=True 因外部段不可比属正常）；daily_watch/right_side `incomplete(no_active_card)`（§6 预期无 active 卡）；accumulation 两只各 700 天 monitoring，状态机各跑过 2 次转换（600563: 2025-03-24 watching→2025-09-16 failed；600309: 2025-04-07 watching→2025-09-29 failed）→ 现 idle reason=condition_not_met；corporate_action 无待处理。
+  6. `daily --date 2026-08-21`：全池 16 只跑通；600563 / 600309 报告 degraded P5 revision=1 (no_active_card)；其他 14 只 complete + revision=2；汇总 ok=16。
+- **测试**：`uv run pytest -q` **359 全绿**（无新增用例，纯数据入池）。
+- **排期卡草案 ⛔ BLOCKED**：card_inputs raise `indicators_daily 无 pe_ttm，先重算指标`（§2.5 硬门槛）。PE 修复路径要 `pit_backfill`，回填依赖 ① tdx_api_data A 股利润表 fixedTag=00101/00102 → ② **新增 tdx 财务 CSV adapter parse_financials_csv（SKILL.md 「已知限制」明确二期补）**、③ tdx wenda_notice_query → events/event_symbols、④ pit_backfill → ⑤ 重算 indicators → ⑥ card_inputs → ⑦ skill → create-draft。其中第 ② 步需新增代码（超出"采集落盘"边界）；西部矿业入池当日也是同一卡点（draft 待人工激活）。
+- **新增双股 explore path**：不主动接财务数据（tdx adapter 未实现）；用户拍板范围 vs 新增 adapter 风险，建议下次单独工程批次处理，**不要**为本次入池扩 tdx 财务 adapter。
+- **下次会话动作**：① fix tdx 财务 parse_financials_csv → 拉 tdx_api_data 7+ 期 → ingest → ② 拉 wenda_notice_query 公告 → events → ③ pit_backfill → ④ 重算 indicators → ⑤ card_inputs → ⑥ skill → create-draft。观察期 2-4 周可早于排期卡出 draft。
+
+## 2026-08-23（选股研究：万华化学 600309.SH 三轨路由 × 排期卡可行性评估）
+
+- **任务**：点名个股三轨路由评估（earnings-surge-screener「指定对象路由层」），判断能否构建估值排期卡。报告落盘 `reports/screening/2026-08-23-万华化学600309-路由建卡评估.md`。
+- **查询**：stock_finance_data（get_price 3年日线/HS300、get_financial_statements 20260331/20250630/20251231、get_forecast、get_stock_announcement 2026-06~08）；gildata fin_query 一次成功（估值 5 年日频序列，落 `data/raw/gildata/fin_query/2026-08-23/wh_pe_percentile.csv`）；WebSearch 补公告原话与 MDI 行业景气。gildata 今日可用（与早间鉴权失效预期不符）。
+- **路由结果**：Track A 命中（H1 预告归母 98~104 亿 +60~70%，公告含涨价表述；闸门一营收待验证、分型=周期型）；Track B 副轨命中（B1 单季拐点+B2 提价函）；Track C 不命中，卡背离锚（YTD -1.9% vs HS300 -0.2%，回撤 20.3%<30%）。
+- **阶段二**：兑现度优 / 持续性良（FY2027E +15%）/ 前瞻估值优（2027E PE 10.9x）→ 第一梯队候选（附机构拥挤度待验证条件）。
+- **建卡结论：是**。PB 5 年分位 16%（2.08x）为主锚、前瞻 PE 辅锚；现价 73.98 元约落在 T1 附近。
+- **衔接现状**：600309 已入 watchlist 且 3 年 K 线已入库；排期卡 draft 仍 BLOCKED 于 pe_ttm 缺失 → 后续走 tdx 财务 adapter → pit_backfill → card_inputs → create-draft 链路（见前一日志条目）。
+
+## 2026-08-23（三轨路由评估：法拉电子 600563.SH 建卡可行性）
+
+- **任务**：点名个股三轨路由 + 估值排期卡建卡可行性（earnings-surge-screener 指定对象路由层）。
+- **查询**：stock_finance_data（利润表/现金流 5 期、3 年日线、forecast）；gildata fin_query ×3（估值快照+3 年 PE 日频、区间行情、扣非净利，CSV 落 `data/raw/gildata/fin_query/2026-08-23/`）；web 检索（半年报披露、行业景气、券商观点）。stock_finance_data 公告接口 EMPTY_DATA（接口异常，web 兜底）；2026H1 报表在其库未入库（H1 数据用媒体披露口径）。
+- **路由结果**：三轨零命中——Track A 卡增速（H1 归母 +2.23%）与景气表述；Track B 五类痕迹皆不命中（B2/B3 标待补查）；Track C 卡 C锚1（增速 <20%）与 C锚3（PE 25.04 近 3 年 80.7% 分位），背离锚条件 3 命中（回撤 -33.1%）但属"涨多了的回调"。零命中兜底亦不满足（净利增速 <20%）。
+- **结论**：建卡 **暂缓**——估值高位区（3 年 80.7% 分位）、盈利历史峰值区缓增非底部、年内 +84.6% 后 -33% 筹码形态未出清；现价档高于 T1。阶段二条件外直评：第二梯队（部分兑现），2027E PE 18.7x。
+- **落盘**：`reports/screening/2026-08-23-法拉电子建卡评估.md`。管线侧维持既有 BLOCK（pe_ttm 回填）不急着解除，观察期跟踪。
+- **测试**：未跑（纯研究产出，无代码变更）。
+
+## 2026-08-23（tdx/daily 审计建议修复批次：6 项）
+
+- **背景**：外部审计对 tdx adapter / daily.py 的 6 条建议（P1×2 + P2×4），逐条核实全部属实并修复。注意：本批基于工作区未提交的 tdx 财报接入在途改动（parse_financials_csv、ingest 路由、adjust.load_forward_closes 兼容 tdx `data` 列名、test_tdx_adapter 财报用例，为当日另一线程工作），提交时与其同文件交错，一并入库。
+- **tdx.py**：
+  1. `_UNIT_TO_YUAN` 换算系数 float（1e4/1e6/1e8）→ int（10_000 等），`_yuan` 改 `Decimal(v) * Decimal(factor)`，金额换算全程定点（§9.5）。
+  2. 财报 `record_revision` 的 run_id 从 raw_object_id 改为采集批次目录名 `Path(path).parent.name`（与 yahoo_finance 约定一致）。
+  3. 删除死代码 `_HK_CURRENCY_HINT`（定义后从未使用，注释保留实测结论）。
+  4. 财报文件名无 `_is_YYYYMMDD` 时回退 CSV `period_end` 列（YYYY-MM-DD 校验），两者皆无才 conflict；原 `test_financials_bad_filename` 语义更新为 fallback 成功用例。
+- **daily.py**：
+  5. `_classify_raw_files` 识别 tdx 前/后复权文件（kline 目录 `{symbol}_tq1/_tq2.csv`，tdx-collect skill 命名约定）路由到 forward 因子变化检查（§3.3），不再误入 by_symbol；`adjust.load_forward_closes` 本已兼容 tdx `data` 列名。
+  6. 新增 `--source` 参数（可重复）：raw-dir 只处理所列数据源目录，其余跳过并记 notes；`run_daily` 加 `sources` 参数。
+- **测试**：test_tdx_adapter 新增 period_end fallback / fallback 仍 conflict / revision run_id 3 用例（替换 1 旧用例）；test_daily 新增 tq 文件分类 / source 过滤 2 用例。全量 `uv run pytest -q` **370 全绿**。

@@ -110,11 +110,15 @@ class AdjustResult:
 # ---------------------------------------------------------------- 纯函数：因子与平台段
 
 def load_forward_closes(path: str | Path) -> dict[str, float]:
-    """读取前复权 CSV 的收盘价 {trade_date: close}（stock_finance_data 行情格式）。"""
+    """读取前复权 CSV 的收盘价 {trade_date: close}。
+
+    兼容两种列名：``time``（kimi/stock_finance_data 历史约定）和 ``data``
+    （tdx-collect SKILL §3.3 的设计列名，2026-08-23 起新入池股票统一用此）。
+    """
     closes: dict[str, float] = {}
     with open(path, newline="", encoding="utf-8") as f:
         for rec in csv.DictReader(f):
-            raw_time = (rec.get("time") or "").strip()
+            raw_time = (rec.get("time") or rec.get("data") or "").strip()
             raw_close = (rec.get("close") or "").strip()
             if not raw_time or not raw_close:
                 continue
