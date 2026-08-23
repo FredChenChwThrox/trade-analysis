@@ -134,14 +134,22 @@ def recompute_indicators(
     symbol: str,
     *,
     run_id: str | None = None,
-    assume_visible_reports: bool = True,
+    assume_visible_reports: bool | None = None,
 ) -> ComputeResult:
     """全量重算该股日线/周线指标（调用方负责事务/提交）。
 
-    assume_visible_reports：当前财报 available_at 为入库时间降级（D1.3 记录，
-    严格点时将导致全序列财报不可见），照常使用并在 pe_status 标注
-    ";degraded_available_at"（§2.1 降级场景）。
+    assume_visible_reports：None（默认）= 自动判定——该股任一财报
+    published_at 为 NULL（available_at 仍是入库时间降级，D1.3）时回退
+    assume_visible 并在 pe_status 标注 ";degraded_available_at"；全部财报
+    回填真实披露日后（pit_backfill）严格按 available_at <= as_of 点时过滤，
+    标注消失（§2.1）。
     """
+    if assume_visible_reports is None:
+        assume_visible_reports = bool(conn.execute(
+            "SELECT 1 FROM financial_reports "
+            "WHERE symbol = ? AND published_at IS NULL LIMIT 1",
+            (symbol,),
+        ).fetchone())
     started_at = utc_now()
     now_compact = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_id = run_id or f"indicators_{symbol}_{now_compact}"
@@ -168,8 +176,9 @@ def recompute_indicators(
     )
     if assume_visible_reports:
         res.notes.append(
-            "财报 available_at 为入库时间降级（D1.3），TTM 照常使用全部报告，"
-            "pe_status 标注 degraded_available_at")
+            "该股存在 published_at 为 NULL 的财报（available_at 为入库时间降级，"
+            "D1.3），TTM 照常使用全部报告，pe_status 标注 degraded_available_at；"
+            "回填披露日（pit_backfill）后重算即可转为严格点时")
 
     now = utc_now()
     conn.execute("DELETE FROM indicators_daily WHERE symbol = ?", (symbol,))
