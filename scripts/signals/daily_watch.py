@@ -320,11 +320,6 @@ def run_daily_watch(
     frozen_from = min((s["ex_date"] for s in suspensions), default=None)
 
     now = utc_now()
-    conn.execute(
-        f"DELETE FROM signal_facts WHERE symbol = ? AND signal IN "
-        f"({', '.join('?' * len(DAILY_WATCH_SIGNALS))})",
-        (symbol, *DAILY_WATCH_SIGNALS),
-    )
 
     def write(day: str, signal: str, state: str, triggered: int,
               details: dict, card_id: str | None) -> None:
@@ -343,6 +338,21 @@ def run_daily_watch(
         )
         res.facts_written += 1
 
+    # as_of 早于最早 bar：无数据可算，不删旧 facts，直接记 incomplete 返回
+    #（§2.5 不猜；与 no_daily_bars 一样不写 pipeline_runs）
+    if not bars:
+        reason = "no_bars_on_or_before_as_of"
+        write(as_of, "daily_watch", "incomplete", 0, {"reason": reason}, None)
+        res.status, res.reason = "incomplete", reason
+        res.latest = {"trade_date": as_of, "close_raw": None}
+        return res
+
+    conn.execute(
+        f"DELETE FROM signal_facts WHERE symbol = ? AND signal IN "
+        f"({', '.join('?' * len(DAILY_WATCH_SIGNALS))})",
+        (symbol, *DAILY_WATCH_SIGNALS),
+    )
+
     rows_for_latest: dict = {}
     breach_run = 0
     breach_card_id: str | None = None
@@ -350,7 +360,6 @@ def run_daily_watch(
 
     for bar in bars:
         day = bar["trade_date"]
-        close = Decimal(str(bar["close_raw"]))
         card = card_mod.card_for_day(versions, day)
         if card is None:
             continue  # 无卡片生效日不产出卡片信号（§5.1）
@@ -358,6 +367,16 @@ def run_daily_watch(
         day_rows: dict = {"trade_date": day, "close_raw": bar["close_raw"],
                           "card": {"card_version_id": card.card_version_id,
                                    "effective_from": card.effective_from}}
+
+        # ---- close_raw 缺失：不猜不进 Decimal，该日记 incomplete 后跳过（§2.5）
+        if bar["close_raw"] is None:
+            write(day, "daily_watch", "incomplete", 0,
+                  {"reason": "missing_close_raw"}, card.card_version_id)
+            day_rows["daily_watch"] = {"state": "incomplete", "triggered": 0,
+                                       "reason": "missing_close_raw"}
+            rows_for_latest = day_rows
+            continue
+        close = Decimal(str(bar["close_raw"]))
 
         # ---- 公司行为冻结（§5.4b 第一步）：除权日起挂起卡片触发
         if frozen_from is not None and day >= frozen_from:

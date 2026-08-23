@@ -200,9 +200,14 @@ def run_right_side(
     days_all: list[dict] = []
     vols: list[float] = []
     n = int(p["vol_ma_days"])
+    skipped_missing = 0
     for r in rows:
+        # OHLCV 关键字段缺失：不当 0、不进 Decimal，跳过且不进均量窗口（§2.5）
+        if r["close_raw"] is None or r["low_raw"] is None or r["volume_raw"] is None:
+            skipped_missing += 1
+            continue
         sf = r["share_factor"] or 1.0
-        vol_adj = (r["volume_raw"] or 0.0) / sf
+        vol_adj = r["volume_raw"] / sf
         base = (sum(vols[-n:]) / n) if len(vols) >= n else None
         days_all.append({
             "trade_date": r["trade_date"],
@@ -278,6 +283,12 @@ def run_right_side(
     if frozen_from is not None and active_card is not None:
         res.notes.append(
             f"公司行为冻结中（ex_date={frozen_from} 起），状态机挂起不推进窗口（§5.4b）")
+    if skipped_missing:
+        # 缺失 bar 已跳过：结果降级为 incomplete（§2.5），run 记录落 degraded
+        res.notes.append(
+            f"{skipped_missing} 个交易日 OHLCV 关键字段缺失，跳过不判定（§2.5）")
+        if res.status == "ok":
+            res.status, res.reason = "incomplete", "missing_ohlcv_bars"
 
     conn.execute(
         """

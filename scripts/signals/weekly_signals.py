@@ -3,8 +3,9 @@
 对该股全部完成周逐周重算锚点（weekly_anchors）与五项衰竭信号（signal_facts）：
 - 输入 weekly_bars（复权完成周）、daily_bars（复权/不复权日线，锚点周内定位
   与 raw 价）、indicators_weekly（RSI12/MACD 柱，底背离用）；
-- 派生表 DELETE + 重插，同事务（§2.2 第 3 类、§4.3）；锚点身份变化追加新
-  anchor_id，不覆盖旧行（§5.2）；
+- signal_facts 本轮 DELETE + 重插，同事务（§2.2 第 3 类、§4.3）；weekly_anchors
+  按身份（anchor_type, trade_date, is_fallback）复用旧 anchor_id，身份变化才
+  追加新 anchor_id，不覆盖旧行（§5.2）；
 - run 记录：pipeline_runs 阶段 weekly_signals，记 config_hash（signals.yaml
   内容哈希）/rule_version（§2.3、§4.2）。
 
@@ -108,9 +109,11 @@ def _load_daily(conn: sqlite3.Connection, symbol: str) -> tuple[dict, str]:
     daily = {}
     for r in rows:
         f = r["price_adj_factor"] or 1.0
+        low_raw = r["low_raw"]
         daily[r["trade_date"]] = {
-            "low_adj": (r["low_raw"] or 0.0) * f,
-            "low_raw": r["low_raw"],
+            # low_raw 缺失保持 None（不当 0 猜，§2.5），锚点定位跳过该日
+            "low_adj": low_raw * f if low_raw is not None else None,
+            "low_raw": low_raw,
             "close_raw": r["close_raw"],
         }
     return daily, rows[0]["market"]
@@ -182,36 +185,39 @@ def recompute_weekly_signals(
     steps = anchors.compute_anchor_timeline(weeks, daily, params)
 
     now = utc_now()
-    conn.execute("DELETE FROM weekly_anchors WHERE symbol = ?", (symbol,))
+    # 现有锚点建 identity→行 映射：identity = (anchor_type, trade_date, is_fallback)。
+    # 跨重算复用旧 anchor_id，不再全删全插（§5.2：身份变化才追加新 anchor_id）。
+    existing: dict[tuple, sqlite3.Row] = {}
+    for r in conn.execute(
+            """
+            SELECT anchor_id, as_of, anchor_type, trade_date, adjusted_price,
+                   raw_price, is_fallback, run_id
+            FROM weekly_anchors WHERE symbol = ?
+            """,
+            (symbol,)):
+        existing[(r["anchor_type"], r["trade_date"], bool(r["is_fallback"]))] = r
+
     conn.execute(
         f"DELETE FROM signal_facts WHERE symbol = ? AND signal IN "
         f"({', '.join('?' * len(WEEKLY_SIGNALS))})",
         (symbol, *WEEKLY_SIGNALS),
     )
 
-    # 锚点身份变化 → 追加新 anchor_id（不覆盖旧行，§5.2）；
-    # 相同身份在时间线上必然连续，最近插入 id 直接回填到后续 step。
+    # 锚点身份已存在 → 复用旧 anchor_id（as_of/价格/run_id 变化则 UPDATE）；
+    # 不存在才 INSERT 新 anchor_id；本轮不再产生的旧身份行删除。
+    # 相同身份在时间线上必然连续，最近身份直接回填到后续 step。
+    round_ids: dict[tuple, int] = {}  # 本轮 identity → anchor_id
     last_keys: dict[str, tuple | None] = {anchors.PANIC_LOW: None,
                                           anchors.DECLINE_START: None}
-    last_ids: dict[str, int | None] = {anchors.PANIC_LOW: None,
-                                       anchors.DECLINE_START: None}
     for step in steps:
         for anchor, id_attr in (
                 (step.panic, "panic_anchor_id"),
                 (step.decline, "decline_anchor_id")):
             if anchor is None:
                 continue
-            if anchor.key != last_keys[anchor.anchor_type]:
-                cur = conn.execute(
-                    """
-                    INSERT INTO weekly_anchors (symbol, as_of, anchor_type, trade_date,
-                        adjusted_price, raw_price, is_fallback, run_id, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (symbol, step.as_of, anchor.anchor_type, anchor.trade_date,
-                     anchor.adjusted_price, anchor.raw_price,
-                     int(anchor.is_fallback), run_id, now),
-                )
+            key = anchor.key
+            if key != last_keys[anchor.anchor_type]:
+                last_keys[anchor.anchor_type] = key
                 res.anchor_history.append({
                     "as_of": step.as_of, "anchor_type": anchor.anchor_type,
                     "trade_date": anchor.trade_date,
@@ -219,10 +225,47 @@ def recompute_weekly_signals(
                     "raw_price": anchor.raw_price,
                     "is_fallback": anchor.is_fallback,
                 })
-                last_keys[anchor.anchor_type] = anchor.key
-                last_ids[anchor.anchor_type] = cur.lastrowid
-                res.anchors_written += 1
-            setattr(step, id_attr, last_ids[anchor.anchor_type])
+            if key not in round_ids:
+                old = existing.get(key)
+                if old is not None:
+                    anchor_id = old["anchor_id"]
+                    if (old["as_of"] != step.as_of
+                            or old["adjusted_price"] != anchor.adjusted_price
+                            or old["raw_price"] != anchor.raw_price
+                            or old["run_id"] != run_id):
+                        conn.execute(
+                            """
+                            UPDATE weekly_anchors SET as_of = ?, adjusted_price = ?,
+                                raw_price = ?, run_id = ?, created_at = ?
+                            WHERE anchor_id = ?
+                            """,
+                            (step.as_of, anchor.adjusted_price, anchor.raw_price,
+                             run_id, now, anchor_id),
+                        )
+                        res.anchors_written += 1
+                else:
+                    cur = conn.execute(
+                        """
+                        INSERT INTO weekly_anchors (symbol, as_of, anchor_type, trade_date,
+                            adjusted_price, raw_price, is_fallback, run_id, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (symbol, step.as_of, anchor.anchor_type, anchor.trade_date,
+                         anchor.adjusted_price, anchor.raw_price,
+                         int(anchor.is_fallback), run_id, now),
+                    )
+                    anchor_id = cur.lastrowid
+                    res.anchors_written += 1
+                round_ids[key] = anchor_id
+            setattr(step, id_attr, round_ids[key])
+
+    stale_ids = [r["anchor_id"] for k, r in existing.items() if k not in round_ids]
+    if stale_ids:
+        conn.execute(
+            f"DELETE FROM weekly_anchors WHERE symbol = ? AND anchor_id IN "
+            f"({', '.join('?' * len(stale_ids))})",
+            (symbol, *stale_ids),
+        )
 
     project = _week_end_projector(conn, market, weeks)
     rows = exhaustion.compute_signal_rows(

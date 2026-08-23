@@ -34,7 +34,7 @@
 | index_bars | [事实] | (index_code, trade_date) | 基准指数日线（日历交叉校验） | adapters/stock_finance_data.py |
 | events | [事实] | event_id | 公告/新闻事件事实（不含评价） | adapters/stock_finance_data.py, adapters/tianyancha.py |
 | event_symbols | [事实] | (event_id, symbol) | 事件-股票关联 | adapters/stock_finance_data.py |
-| event_assessments | [决策] | (event_id, assessment_version) | LLM 消息评价版本（未接入） | —（D3 预留） |
+| event_assessments | [决策] | (event_id, symbol, assessment_version) | LLM 消息评价版本（未接入） | —（D3 预留） |
 | financial_reports | [事实] | report_id；UNIQUE(symbol, period_end, period_type, is_cumulative, revision) | 财报头（修订新增 revision） | adapters/stock_finance_data.py |
 | financial_facts | [事实] | report_id（引用） | 财务事实（营收/归母净利/EPS/股本） | adapters/stock_finance_data.py |
 | share_capital_events | [事实] | sce_id | 股本变动事件/快照 | indicators/valuation.py |
@@ -157,7 +157,7 @@ UNIQUE(symbol, ex_date, action_type)。字段：ex_date（除权除息生效日�
 
 ### event_assessments — LLM 消息评价 [决策]
 
-(event_id, assessment_version) 版本化，不覆盖（§5.5）。字段：model、prompt_version、assessed_at、direction（positive/negative/neutral）、materiality、confidence、rationale、status（ok/needs_review/degraded）、event_study_json（T+1/T+5 事件研究）。**LLM 评价（D3）仍未接入**；2026-08-14 起由 `scripts/signals/event_study.py` 写入确定性事件研究行（assessment_version='event_study_v1'、model='deterministic'，direction/materiality/confidence/rationale 置 NULL 不冒充评价，status 取值 ok/suspended/degraded，event_study_json 含 base/t1/t5 明细与 pending/suspended 标记）。
+(event_id, symbol, assessment_version) 版本化，不覆盖（§5.5；0002 迁移起主键含 symbol，多 symbol 事件逐股独立落库）。字段：symbol（该股事件研究结果归属）、model、prompt_version、assessed_at、direction（positive/negative/neutral）、materiality、confidence、rationale、status（ok/needs_review/degraded）、event_study_json（T+1/T+5 事件研究）。**LLM 评价（D3）仍未接入**；2026-08-14 起由 `scripts/signals/event_study.py` 写入确定性事件研究行（assessment_version='event_study_v1'、model='deterministic'，direction/materiality/confidence/rationale 置 NULL 不冒充评价，status 取值 ok/suspended/degraded，event_study_json 含 base/t1/t5 明细与 pending/suspended 标记）。注意：assessment_version 列声明 INTEGER 亲和而 event_study 写入 TEXT 'event_study_v1'（SQLite 亲和容忍，已知不严谨，未修）。
 
 ## 7. 财务、股本、预测与汇率
 
@@ -171,7 +171,7 @@ report_id 引用 financial_reports。金额/股数为关键决策值存 TEXT 定
 
 ### share_capital_events — 股本变动 [事实]
 
-字段：effective_at（生效日）、available_at、event_type（issuance / buyback_cancel / bonus_share / conversion / snapshot_issued（yahoo 快照）/ snapshot_group_total（stock_finance_data 快照）——当前数据均为单点快照）、share_change、shares_issued_after、share_count_type（issued=已发行股数（A/H 双上市公司的 yahoo 快照实际只含 A 股）/ float=流通股 / group_total=A+H 集团总股本，vendor 通用 PE 股本口径）、details_json（§3.7 三来源优先级标注 + 单点快照假设）、source。PE 股本口径取 effective_at ≤ 计算日最新记录，同一 effective_at 多口径并存时优先 group_total、回退 issued（2026-08-17 起 13 只均有 group_total 快照，详见执行日志当日条目）。
+字段：effective_at（生效日）、available_at、event_type（issuance / buyback_cancel / bonus_share / conversion / snapshot_issued（yahoo 快照）/ snapshot_group_total（stock_finance_data 快照）——当前数据均为单点快照）、share_change、shares_issued_after、share_count_type（issued=已发行股数（A/H 双上市公司的 yahoo 快照实际只含 A 股）/ float=流通股 / group_total=A+H 集团总股本，vendor 通用 PE 股本口径）、details_json（§3.7 三来源优先级标注 + 单点快照假设）、source。PE 股本口径取 effective_at ≤ 计算日最新记录，同一 effective_at 多口径并存时优先 group_total、回退 issued（2026-08-17 起 13 只均有 group_total 快照，详见执行日志当日条目）。2026-08-23 起 `shares_at` 点时过滤：snapshot_* 行豁免 available_at（§3.7 单点假设，pe_status 标注 `snapshot_share_basis`），其余真实事件行要求 available_at ≤ as_of 才参与（消除前视）。
 
 ### fx_rates — 汇率 [事实]
 
@@ -212,7 +212,7 @@ report_id 引用 financial_reports。金额/股数为关键决策值存 TEXT 定
 
 | 字段 | 说明 |
 |---|---|
-| anchor_id | 自增 PK；锚点身份变化追加新 id，不覆盖旧行（§5.2） |
+| anchor_id | 自增 PK；身份 (symbol, anchor_type, trade_date, is_fallback) 唯一（0002 起 uq_weekly_anchors_identity），重算复用旧 id，身份变化才追加新 id，不覆盖旧行（§5.2） |
 | as_of | 识别时点（该完成周周末日） |
 | anchor_type | panic_low（恐慌低点）/ decline_start（下跌起点） |
 | trade_date | 锚点交易日（周内定位） |

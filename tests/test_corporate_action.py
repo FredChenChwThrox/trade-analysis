@@ -57,7 +57,8 @@ CARD_JSONS = {
 }
 
 
-def add_card(conn, symbol=SYM, card_id="cv1", eff_from="2026-01-05"):
+def add_card(conn, symbol=SYM, card_id="cv1", eff_from="2026-01-05", jsons=None):
+    j = jsons or CARD_JSONS
     conn.execute(
         """
         INSERT INTO strategy_card_versions (card_version_id, symbol, status,
@@ -70,12 +71,12 @@ def add_card(conn, symbol=SYM, card_id="cv1", eff_from="2026-01-05"):
                 ?, ?, ?, ?, ?, ?, '2026-09-01', NULL, 'test')
         """,
         (card_id, symbol, db.utc_now(), eff_from,
-         json.dumps(CARD_JSONS["earnings"], sort_keys=True),
-         json.dumps(CARD_JSONS["valuation"], sort_keys=True),
-         json.dumps(CARD_JSONS["tiers"], sort_keys=True),
-         json.dumps(CARD_JSONS["invalidation"], sort_keys=True),
-         json.dumps(CARD_JSONS["box"], sort_keys=True),
-         json.dumps(CARD_JSONS["trigger"], sort_keys=True)),
+         json.dumps(j["earnings"], sort_keys=True),
+         json.dumps(j["valuation"], sort_keys=True),
+         json.dumps(j["tiers"], sort_keys=True),
+         json.dumps(j["invalidation"], sort_keys=True),
+         json.dumps(j["box"], sort_keys=True),
+         json.dumps(j["trigger"], sort_keys=True)),
     )
 
 
@@ -271,6 +272,50 @@ def test_rescind_suspension_restores_monitoring(tmp_path):
         "AND signal = 'tier_triggered' ORDER BY observed_on", (SYM,)).fetchall()
     assert [(r["observed_on"], r["state"]) for r in rows] == [
         ("2026-02-27", "triggered"), ("2026-03-02", "triggered")]
+    conn.close()
+
+
+# ---------------------------------------------------------------- 换算护栏拒绝（§5.4b 无下限保护的兜底）
+
+def test_dividend_exceeding_stop_level_rejected(tmp_path):
+    """分红额 > stop_level：换算会产生 ≤0 价格 → 拒绝，冻结待人工，不写新版本。"""
+    conn = make_conn(tmp_path)
+    add_card(conn)
+    add_bar(conn, "2026-02-27", 57.72)
+    add_ca(conn, "2026-03-02", "cash_dividend", cash="60.00")  # > stop_level 56
+    with conn:
+        res = ca_mod.process_pending(conn, SYM, as_of="2026-03-02")
+    assert res.fastlane_activated == [] and res.frozen_drafts == []
+    assert any("换算被拒" in n for n in res.notes)
+    # 不写库：无新卡片版本，旧卡仍 active
+    rows = conn.execute(
+        "SELECT card_version_id, status FROM strategy_card_versions").fetchall()
+    assert [(r["card_version_id"], r["status"]) for r in rows] == [("cv1", "active")]
+    # 已冻结待人工处理
+    assert len(ca_mod.unresolved_suspensions(conn, SYM)) == 1
+    conn.close()
+
+
+def test_fastlane_rejected_conversion_keeps_old_card_active(tmp_path):
+    """快速通道换算被护栏拒绝：旧卡不得提前关闭（先换算后关旧版），冻结待人工。"""
+    conn = make_conn(tmp_path)
+    low = {k: v for k, v in CARD_JSONS.items()}
+    low["tiers"] = {"tiers": [{"tier": 1, "zone_low": "1.20", "zone_high": "1.80"}]}
+    low["invalidation"] = {"line": "0.90"}
+    low["box"] = {"box_low": "1.20", "box_high": "1.80"}
+    low["trigger"] = {"trigger_level": "1.50", "stop_level": "1.00"}
+    add_card(conn, jsons=low)
+    add_bar(conn, "2026-02-27", 57.72)  # 分红 1.00 → 影响 1.73% < 2% 走快速通道
+    add_ca(conn, "2026-03-02", "cash_dividend", cash="1.00")  # 1.00 ≥ stop → 换算为 0
+    with conn:
+        res = ca_mod.process_pending(conn, SYM, as_of="2026-03-02")
+    assert res.fastlane_activated == [] and res.frozen_drafts == []
+    assert any("换算被拒" in n for n in res.notes)
+    old = get_card(conn, "cv1")
+    assert old["status"] == "active" and old["effective_to"] is None  # 旧卡未被关闭
+    assert conn.execute(
+        "SELECT COUNT(*) FROM strategy_card_versions").fetchone()[0] == 1
+    assert len(ca_mod.unresolved_suspensions(conn, SYM)) == 1
     conn.close()
 
 

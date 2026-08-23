@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 
 import pytest
 
@@ -282,3 +283,114 @@ def test_list_and_show(conn, tmp_path, capsys):
     assert f"排期卡 {SYM}" in out and c1 in out
     with pytest.raises(card_cli.CardCLIError, match="不存在"):
         card_cli.cmd_show(conn, "nope")
+
+
+# ---------------------------------------------------------------- parse_card 拒绝非法卡片
+
+def _insert_active_card(conn, card_id="cvbad", **jsons):
+    """直接写库（绕过 create-draft 校验），构造 JSON 非法的 active 卡片。"""
+    cols = {
+        "price_tiers_json": json.dumps(
+            {"tiers": [{"tier": 1, "zone_low": "55.00", "zone_high": "58.00"}]}),
+        "invalidation_json": json.dumps({"line": "47.00"}),
+        "swing_box_json": None,
+        "right_side_trigger_json": None,
+    }
+    cols.update(jsons)
+    conn.execute(
+        """
+        INSERT INTO strategy_card_versions (card_version_id, symbol, status,
+            schema_version, created_at, effective_from, effective_to, supersedes_id,
+            currency, price_basis, earnings_scenarios_json,
+            valuation_scenarios_json, price_tiers_json, invalidation_json,
+            swing_box_json, right_side_trigger_json, next_review_at,
+            input_snapshot_json, run_id)
+        VALUES (?, ?, 'active', 'card_v1', ?, '2026-01-05', NULL, NULL, 'CNY', 'raw',
+                NULL, NULL, ?, ?, ?, ?, '2026-09-01', NULL, 'test')
+        """,
+        (card_id, SYM, db.utc_now(), cols["price_tiers_json"],
+         cols["invalidation_json"], cols["swing_box_json"],
+         cols["right_side_trigger_json"]),
+    )
+    conn.commit()
+
+
+def test_parse_card_valid_row_parses(conn):
+    _insert_active_card(conn)
+    card = card_mod.load_active_card(conn, SYM, "2026-06-01")
+    assert card is not None and card.invalidation_line == Decimal("47.00")
+
+
+def test_parse_card_rejects_malformed_json(conn):
+    _insert_active_card(conn, price_tiers_json="{not valid json")
+    assert card_mod.load_active_card(conn, SYM, "2026-06-01") is None
+    assert card_mod.load_card_versions(conn, SYM) == []  # 不参与信号计算，不崩溃
+
+
+def test_parse_card_rejects_missing_required_field(conn):
+    _insert_active_card(conn, invalidation_json=json.dumps({"note": "没有 line"}))
+    assert card_mod.load_active_card(conn, SYM, "2026-06-01") is None
+    # 缺 tier 必填字段同样被拒（先废止上一张，uq_card_active 至多一个 active）
+    conn.execute("UPDATE strategy_card_versions SET status = 'rejected'")
+    conn.commit()
+    _insert_active_card(conn, card_id="cvbad2", price_tiers_json=json.dumps(
+        {"tiers": [{"zone_low": "55.00", "zone_high": "58.00"}]}))
+    assert card_mod.load_active_card(conn, SYM, "2026-06-01") is None
+
+
+def test_parse_card_rejects_non_numeric_price(conn):
+    _insert_active_card(conn, price_tiers_json=json.dumps(
+        {"tiers": [{"tier": 1, "zone_low": "55元", "zone_high": "58.00"}]}))
+    assert card_mod.load_active_card(conn, SYM, "2026-06-01") is None
+
+
+def test_parse_card_rejects_negative_price(conn):
+    _insert_active_card(conn, right_side_trigger_json=json.dumps(
+        {"trigger_level": "60.00", "stop_level": "-56.00"}))
+    assert card_mod.load_active_card(conn, SYM, "2026-06-01") is None
+
+
+# ---------------------------------------------------------------- convert_card_fields 护栏
+
+def _row_dict(**jsons):
+    """模拟库行（convert_card_fields 只按键取值）。"""
+    row = dict.fromkeys(("price_tiers_json", "invalidation_json", "swing_box_json",
+                         "right_side_trigger_json", "earnings_scenarios_json"))
+    row.update(jsons)
+    return row
+
+
+def test_convert_rejects_nonpositive_price():
+    row = _row_dict(right_side_trigger_json=json.dumps(
+        {"trigger_level": "60.00", "stop_level": "56.00"}))
+    with pytest.raises(card_mod.CardConversionError, match="≤ 0"):
+        card_mod.convert_card_fields(row, "subtract", Decimal("56.00"))  # stop → 0
+
+
+def test_convert_rejects_reversed_zone_after_subtract():
+    row = _row_dict(price_tiers_json=json.dumps(
+        {"tiers": [{"tier": 1, "zone_low": "1.00", "zone_high": "1.00"}]}))
+    with pytest.raises(card_mod.CardConversionError, match="zone_low >= zone_high"):
+        card_mod.convert_card_fields(row, "subtract", Decimal("0.50"))
+
+
+def test_convert_rejects_disordered_tiers():
+    row = _row_dict(price_tiers_json=json.dumps({"tiers": [
+        {"tier": 1, "zone_low": "55.00", "zone_high": "58.00"},
+        {"tier": 2, "zone_low": "60.00", "zone_high": "62.00"}]}))  # 失序源数据
+    with pytest.raises(card_mod.CardConversionError, match="失序"):
+        card_mod.convert_card_fields(row, "subtract", Decimal("1.00"))
+
+
+def test_convert_valid_subtract_unchanged():
+    row = _row_dict(
+        price_tiers_json=json.dumps({"tiers": [
+            {"tier": 1, "zone_low": "55.00", "zone_high": "58.00"},
+            {"tier": 2, "zone_low": "48.00", "zone_high": "52.00"}]}),
+        right_side_trigger_json=json.dumps(
+            {"trigger_level": "60.00", "stop_level": "56.00"}))
+    out = card_mod.convert_card_fields(row, "subtract", Decimal("1.00"))
+    tiers = json.loads(out["price_tiers_json"])["tiers"]
+    assert [(t["zone_low"], t["zone_high"]) for t in tiers] == [
+        ("54.0000", "57.0000"), ("47.0000", "51.0000")]
+    assert json.loads(out["right_side_trigger_json"])["stop_level"] == "55.0000"

@@ -51,6 +51,19 @@ def add_bar(conn, day, close, *, low=None, volume=100.0, factor=1.0,
     )
 
 
+def add_null_bar(conn, day, *, close=None, low=None, volume=None, symbol=SYM):
+    """允许 OHLCV 关键字段为 NULL 的 bar（缺失数据用例，schema 可空）。"""
+    conn.execute(
+        """
+        INSERT INTO daily_bars (symbol, trade_date, market, open_raw, high_raw,
+            low_raw, close_raw, volume_raw, price_adj_factor, share_factor,
+            source, updated_at)
+        VALUES (?, ?, 'CN', NULL, NULL, ?, ?, ?, 1.0, 1.0, 'test', ?)
+        """,
+        (symbol, day, low, close, volume, db.utc_now()),
+    )
+
+
 def add_card(conn, symbol=SYM, eff_from="2026-01-05", *, card_id="cv1",
              tiers=((1, "90.00", "95.00"), (2, "50.00", "60.00")),
              line="45.00", box=None, trigger=None, status="active"):
@@ -381,4 +394,63 @@ def test_right_side_no_card_incomplete(tmp_path):
     rows = facts(conn, "right_side")
     assert len(rows) == 1 and rows[0][1] == "idle"
     assert rows[0][3]["reason"] == "no_active_card"
+    conn.close()
+
+
+# ---------------------------------------------------------------- 缺失数据（§2.5）
+
+def test_daily_watch_as_of_before_earliest_bar(tmp_path):
+    """as_of 早于最早 bar：不删旧 facts，直接写 incomplete 行返回（§2.5 不猜）。"""
+    conn = make_conn(tmp_path)
+    add_card(conn)
+    add_bar(conn, "2026-01-09", 55.00)
+    with conn:
+        res = dw.run_daily_watch(conn, SYM)
+    assert res.status == "ok"
+    assert len(facts(conn, "falsification_breach")) == 1  # 旧 facts 已存在
+    with conn:
+        res = dw.run_daily_watch(conn, SYM, as_of="2026-01-01")
+    assert (res.status, res.reason) == ("incomplete", "no_bars_on_or_before_as_of")
+    # 旧 facts 未被 DELETE 清掉
+    assert len(facts(conn, "falsification_breach")) == 1
+    # 只新增 as_of 当日的 incomplete 行
+    rows = facts(conn, "daily_watch")
+    assert [(r[0], r[1]) for r in rows] == [("2026-01-01", "incomplete")]
+    assert rows[0][3]["reason"] == "no_bars_on_or_before_as_of"
+    conn.close()
+
+
+def test_daily_watch_null_close_bar_skipped(tmp_path):
+    """close_raw 为 NULL 的 bar：记 incomplete 跳过，不崩溃不猜（§2.5）。"""
+    conn = make_conn(tmp_path)
+    add_card(conn)
+    add_bar(conn, "2026-01-08", 55.00)
+    add_null_bar(conn, "2026-01-09", low=54.0, volume=100.0)  # close_raw NULL
+    add_bar(conn, "2026-01-12", 55.00)
+    with conn:
+        res = dw.run_daily_watch(conn, SYM)
+    assert res.status == "ok"
+    inc = [r for r in facts(conn, "daily_watch") if r[1] == "incomplete"]
+    assert [(r[0], r[3]["reason"]) for r in inc] == [
+        ("2026-01-09", "missing_close_raw")]
+    # 正常日仍产出卡片信号，NULL 日不产出
+    assert [r[0] for r in facts(conn, "tier_triggered")] == [
+        "2026-01-08", "2026-01-12"]
+    conn.close()
+
+
+def test_right_side_null_ohlcv_bars_skipped(tmp_path):
+    """NULL close/volume 的 bar：不当 0、不进 Decimal，记 incomplete 跳过（§2.5）。"""
+    conn = make_conn(tmp_path)
+    add_card(conn, trigger=("100.00", "95.00"))
+    add_bar(conn, "2026-01-05", 95.0, volume=100.0)
+    add_null_bar(conn, "2026-01-06", close=95.0, low=94.0)      # volume_raw NULL
+    add_null_bar(conn, "2026-01-07", low=94.0, volume=100.0)    # close_raw NULL
+    add_bar(conn, "2026-01-08", 95.0, volume=100.0)
+    with conn:
+        res = rs.run_right_side(conn, SYM)
+    assert (res.status, res.reason) == ("incomplete", "missing_ohlcv_bars")
+    assert res.current_state == "idle"
+    assert any("缺失" in n for n in res.notes)
+    assert facts(conn, "right_side") == []  # 缺失 bar 不参与判定，无转换
     conn.close()

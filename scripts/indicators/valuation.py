@@ -9,6 +9,10 @@
 - pe_ttm = close_raw × 当日已生效股本 ÷ TTM 归母净利（不复权市值口径，§4.1）。
   股本取 share_capital_events 中 effective_at <= as_of 的最新事件；同一 effective_at
   有多口径记录时优先 group_total（A+H 集团总股本，vendor 通用口径），无则回退 issued。
+  股本可见性为快照豁免混合口径：event_type 以 snapshot_ 开头的单点快照行豁免
+  available_at 过滤（§3.7 单点假设，details_json 已标注），其余真实事件行要求
+  available_at <= as_of（点时过滤，消除前视）；所选股本来自快照豁免路径时
+  pe_status 追加 ";snapshot_share_basis" 标注。
 - TTM<=0、股本缺失、币种不一致且缺汇率 → PE 为空并保存原因码（pe_status）。
 - 财务金额为关键决策值（TEXT 定点），内部用 Decimal 运算，写库展示值转 float。
 
@@ -45,6 +49,7 @@ S_MISSING_NET_PROFIT = "ttm_missing_net_profit"            # 报告无归母净�
 S_FX_MISSING = "fx_missing"                # 币种不一致且缺汇率
 
 DEGRADED_AVAILABLE_AT = "degraded_available_at"  # 财报 available_at 为入库时间降级
+SNAPSHOT_SHARE_BASIS = "snapshot_share_basis"    # 股本取自单点快照豁免路径（§3.7 假设）
 
 
 @dataclass
@@ -67,6 +72,7 @@ class ShareEventView:
     available_at: str        # UTC
     shares: Decimal
     share_count_type: str    # issued / float / group_total（A+H 集团总股本）
+    event_type: str = ""     # snapshot_* 为单点快照，豁免 available_at 点时过滤（§3.7）
 
 
 # ---------------------------------------------------------------- TTM（纯函数，golden tests 锁定）
@@ -145,18 +151,42 @@ def pe_ttm(close_raw: float, shares: Decimal | None, ttm: Decimal | None,
 _SHARE_TYPE_PRIORITY = {"group_total": 1}
 
 
-def shares_at(events: list[ShareEventView], as_of_date: str) -> Decimal | None:
-    """as_of 当日已生效（effective_at <= as_of）的最新股本。
+def _is_snapshot_event(e: ShareEventView) -> bool:
+    """event_type 以 snapshot_ 开头的单点快照行，豁免 available_at 点时过滤（§3.7 单点假设）。"""
+    return e.event_type.startswith("snapshot_")
 
-    同一 effective_at 存在多口径记录时优先 group_total（A/H 双上市公司
-    PE 分母用集团总股本，vendor 通用口径），无则回退 issued 等其余口径
-    （纯 A 股股票行为不变）。
+
+def _select_share_event(events: list[ShareEventView], as_of_date: str,
+                        as_of_ts: datetime) -> ShareEventView | None:
+    """点时选择 as_of 当日股本事件（快照豁免混合口径）。
+
+    候选条件：effective_at <= as_of_date，且（snapshot_* 快照行豁免，或
+    available_at <= as_of_ts）。同一 effective_at 存在多口径记录时优先
+    group_total（A/H 双上市公司 PE 分母用集团总股本，vendor 通用口径），
+    无则回退 issued 等其余口径（纯 A 股股票行为不变）。
     """
-    valid = [e for e in events if e.effective_at <= as_of_date]
+    valid = [
+        e for e in events
+        if e.effective_at <= as_of_date
+        and (_is_snapshot_event(e) or _parse_ts(e.available_at) <= as_of_ts)
+    ]
     if not valid:
         return None
     return max(valid, key=lambda e: (
-        e.effective_at, _SHARE_TYPE_PRIORITY.get(e.share_count_type, 0))).shares
+        e.effective_at, _SHARE_TYPE_PRIORITY.get(e.share_count_type, 0)))
+
+
+def shares_at(events: list[ShareEventView], as_of_date: str,
+              as_of_ts: datetime | None = None) -> Decimal | None:
+    """as_of 当日已生效的最新股本（口径见 _select_share_event）。
+
+    as_of_ts 为点时过滤用的 as_of 时刻（UTC）；缺省取 as_of_date 当日 UTC 末。
+    """
+    if as_of_ts is None:
+        as_of_ts = datetime.combine(
+            date.fromisoformat(as_of_date), datetime.max.time(), tzinfo=timezone.utc)
+    ev = _select_share_event(events, as_of_date, as_of_ts)
+    return ev.shares if ev is not None else None
 
 
 # ---------------------------------------------------------------- DB 读取
@@ -187,7 +217,7 @@ def load_reports(conn: sqlite3.Connection, symbol: str) -> list[ReportView]:
 def load_share_events(conn: sqlite3.Connection, symbol: str) -> list[ShareEventView]:
     rows = conn.execute(
         """
-        SELECT effective_at, available_at, shares_issued_after, share_count_type
+        SELECT effective_at, available_at, shares_issued_after, share_count_type, event_type
         FROM share_capital_events WHERE symbol = ? ORDER BY effective_at
         """,
         (symbol,),
@@ -197,6 +227,7 @@ def load_share_events(conn: sqlite3.Connection, symbol: str) -> list[ShareEventV
             effective_at=r["effective_at"], available_at=r["available_at"],
             shares=Decimal(r["shares_issued_after"]),
             share_count_type=r["share_count_type"] or "issued",
+            event_type=r["event_type"] or "",
         )
         for r in rows
         if r["shares_issued_after"]
@@ -223,6 +254,8 @@ def compute_pe_series(
     as_of = 该市场当地日期 23:59:59（转 UTC）。
     assume_visible：财报 available_at 为入库时间降级时照常使用全部报告
     （D1.3 记录的已知降级），pe_status 追加 ";degraded_available_at" 标注。
+    股本按快照豁免混合口径选择（_select_share_event）：所选股本来自
+    snapshot_* 单点快照时 pe_status 追加 ";snapshot_share_basis" 标注。
     """
     reports = load_reports(conn, symbol)
     share_events = load_share_events(conn, symbol)
@@ -234,12 +267,15 @@ def compute_pe_series(
         as_of_utc = as_of.astimezone(timezone.utc)
         vis = reports if assume_visible else visible_reports(reports, as_of_utc)
         ttm, reason = ttm_net_profit(vis)
-        shares = shares_at(share_events, d)
+        share_ev = _select_share_event(share_events, d, as_of_utc)
+        shares = share_ev.shares if share_ev is not None else None
         fin_ccy = next((r.currency for r in vis if r.currency), None)
         fx_needed = bool(fin_ccy and trade_currency and fin_ccy != trade_currency)
         # 第一版 fx_rates 取最近可用日汇率的兜底在 adapter 层；此处币种一致不需换算，
         # 不一致时按 fx_missing 返回空值（§3.7：缺汇率不计算 PE）
         pe, status = pe_ttm(close_raw[d], shares, ttm, reason, fx_needed=fx_needed)
+        if share_ev is not None and _is_snapshot_event(share_ev):
+            status = f"{status};{SNAPSHOT_SHARE_BASIS}"
         if degraded:
             status = f"{status};{DEGRADED_AVAILABLE_AT}"
         out[d] = (pe, status)

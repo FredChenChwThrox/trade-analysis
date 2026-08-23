@@ -8,6 +8,9 @@
 - episode 结束（收盘高于下跌起点收盘）与恐慌活跃期到期（4 周）；
 - 无未来函数：截断序列重算，前 N 周结果与全量算前 N 周一致。
 
+回归（BUG 修复）：anchor_id 跨重算稳定（identity 复用）；episode 结束周
+triggered 清零；count_active_signals 按 anchor_id 分组；low_raw 缺失日不选为锚点。
+
 纯函数边界测试用小窗口参数覆盖（窗口大小非阈值，阈值一律取 signals.yaml 默认）。
 """
 
@@ -222,49 +225,56 @@ def test_anchor_tie_rules():
 
 # ---------------------------------------------------------------- 集成夹具
 
+def insert_week(conn, symbol, friday: date, spec: dict, now: str | None = None):
+    """插入一周 weekly/daily/indicators。spec: dict(o,h,l,c,vol,rsi=,hist=)；
+    null_low_ks 列出的日内偏移 k（0=周一…4=周五）low_raw 写 NULL，模拟缺失。"""
+    now = now or db.utc_now()
+    we = friday.isoformat()
+    ws = (friday - timedelta(days=4)).isoformat()
+    conn.execute(
+        """
+        INSERT INTO weekly_bars (symbol, week_end_date, week_start_date,
+            open_adj, high_adj, low_adj, close_adj, volume_adj, amount_raw,
+            trading_days, run_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 5, 'test')
+        """,
+        (symbol, we, ws, spec["o"], spec["h"], spec["l"], spec["c"], spec["vol"]),
+    )
+    for k in range(5):
+        d = (friday - timedelta(days=4 - k)).isoformat()
+        low = None if k in spec.get("null_low_ks", ()) else (
+            spec["l"] if k == 2 else spec["l"] + 1.0)
+        conn.execute(
+            """
+            INSERT INTO daily_bars (symbol, trade_date, market,
+                open_raw, high_raw, low_raw, close_raw, volume_raw, amount_raw,
+                currency, price_adj_factor, share_factor, trading_status,
+                source, raw_object_id, updated_at)
+            VALUES (?, ?, 'CN', NULL, NULL, ?, ?, NULL, NULL, 'CNY', 1.0, 1.0,
+                    'normal', 'test', NULL, ?)
+            """,
+            (symbol, d, low,
+             spec["c"] if k == 4 else spec["c"] + 0.5,
+             now),
+        )
+    conn.execute(
+        """
+        INSERT INTO indicators_weekly (symbol, week_end_date, rsi12, macd_hist,
+                                       computed_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (symbol, we, spec.get("rsi"), spec.get("hist"), now),
+    )
+
+
 def build_db(tmp_path, specs, symbol=SYM) -> sqlite3.Connection:
     """specs: list[dict(o,h,l,c,vol,rsi=,hist=)]，逐周插入 weekly/daily/indicators。"""
     tmp_path.mkdir(parents=True, exist_ok=True)
     conn = db.connect(tmp_path / "market.db")
     db.migrate(conn)
-    now = db.utc_now()
     friday = date(2026, 1, 2)
     for spec in specs:
-        we = friday.isoformat()
-        ws = (friday - timedelta(days=4)).isoformat()
-        conn.execute(
-            """
-            INSERT INTO weekly_bars (symbol, week_end_date, week_start_date,
-                open_adj, high_adj, low_adj, close_adj, volume_adj, amount_raw,
-                trading_days, run_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 5, 'test')
-            """,
-            (symbol, we, ws, spec["o"], spec["h"], spec["l"], spec["c"], spec["vol"]),
-        )
-        for k in range(5):
-            d = (friday - timedelta(days=4 - k)).isoformat()
-            conn.execute(
-                """
-                INSERT INTO daily_bars (symbol, trade_date, market,
-                    open_raw, high_raw, low_raw, close_raw, volume_raw, amount_raw,
-                    currency, price_adj_factor, share_factor, trading_status,
-                    source, raw_object_id, updated_at)
-                VALUES (?, ?, 'CN', NULL, NULL, ?, ?, NULL, NULL, 'CNY', 1.0, 1.0,
-                        'normal', 'test', NULL, ?)
-                """,
-                (symbol, d,
-                 spec["l"] if k == 2 else spec["l"] + 1.0,
-                 spec["c"] if k == 4 else spec["c"] + 0.5,
-                 now),
-            )
-        conn.execute(
-            """
-            INSERT INTO indicators_weekly (symbol, week_end_date, rsi12, macd_hist,
-                                           computed_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (symbol, we, spec.get("rsi"), spec.get("hist"), now),
-        )
+        insert_week(conn, symbol, friday, spec)
         friday += timedelta(days=7)
     conn.commit()
     return conn
@@ -429,4 +439,116 @@ def test_rebuild_idempotent(tmp_path):
     anchors_n = conn.execute(
         "SELECT COUNT(*) FROM weekly_anchors WHERE symbol = ?", (SYM,)).fetchone()[0]
     assert anchors_n > 0
+    conn.close()
+
+
+# ---------------------------------------------------------------- BUG 修复回归
+
+def test_anchor_id_stable_across_recomputes(tmp_path):
+    """BUG A：重算复用旧 anchor_id——持久身份 id 不变，新身份拿新 id（§5.2）。"""
+    specs = _divergence_specs(30)
+    p = params_default()
+    conn = build_db(tmp_path, specs)
+    with conn:
+        recompute_weekly_signals(conn, SYM, run_id="run_a", params=p, config_hash="t")
+
+    def anchors_map() -> dict:
+        return {(r["anchor_type"], r["trade_date"], r["is_fallback"]): r["anchor_id"]
+                for r in conn.execute(
+                    "SELECT * FROM weekly_anchors WHERE symbol = ?", (SYM,))}
+
+    first = anchors_map()
+    # 追加第 31 周（收盘 18 创窗口新低）：as_of 推后一周，fallback 锚点换新身份
+    insert_week(conn, SYM, date(2026, 1, 2) + timedelta(days=7 * 30),
+                {"o": 18.0, "h": 20.0, "l": 17.0, "c": 18.0, "vol": 100.0,
+                 "rsi": 45.0, "hist": 0.2})
+    conn.commit()
+    with conn:
+        recompute_weekly_signals(conn, SYM, run_id="run_b", params=p, config_hash="t")
+    second = anchors_map()
+    # 持久身份 anchor_id 不变
+    assert first.keys() <= second.keys()
+    for key, aid in first.items():
+        assert second[key] == aid, key
+    # 新身份拿到此前未使用的新 anchor_id
+    new_ids = {aid for key, aid in second.items() if key not in first}
+    assert new_ids and new_ids.isdisjoint(first.values())
+    conn.close()
+
+
+def test_episode_end_clears_triggered(tmp_path):
+    """BUG C1：trigger 周与 episode 结束周重合时 triggered 一并清零。"""
+    closes = [50, 50, 50, 50, 46, 45, 44, 43, 42, 41, 40, 55, 55, 55]
+    specs = [{"o": c, "h": c + 2, "l": c - 2, "c": c, "vol": 100.0,
+              "rsi": 40.0, "hist": 0.1} for c in closes]
+    conn = build_db(tmp_path, specs)
+    with conn:
+        recompute_weekly_signals(conn, SYM, params=params_default(), config_hash="t")
+    f = facts(conn)
+    we = week_ends(conn)
+    # idx11：收盘 55 > 下跌起点收盘 50 → episode 结束；同时距下跌起点 idx3 恰好
+    # 8 个完成周，duration 本该本周触发 —— 触发必须随 episode_ended 清掉
+    d = f[("duration", we[11])]
+    assert d["state"] == "inactive" and d["triggered"] == 0
+    import json as _json
+    assert _json.loads(d["details_json"])["reason"] == "episode_ended"
+    assert d["active_until"] == we[11]  # 活跃截止不晚于结束周
+    conn.close()
+
+
+def test_count_active_signals_grouped_by_anchor(tmp_path):
+    """BUG C2：活跃计数按 anchor_id 分组——跨 anchor 各 1 个不满足 min_active=2，
+    同 anchor 2 个才满足（§5.3 "同一个 anchor_id 下"）。"""
+    conn = db.connect(tmp_path / "market.db")
+    db.migrate(conn)
+    now = db.utc_now()
+
+    def ins(observed_on, signal, state, anchor_id):
+        conn.execute(
+            """
+            INSERT INTO signal_facts (symbol, observed_on, signal, state, anchor_id,
+                triggered, active_until, details_json, run_id, rule_version,
+                config_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, 0, NULL, '{}', 't', 'v', 'h', ?)
+            """,
+            (SYM, observed_on, signal, state, anchor_id, now),
+        )
+
+    # 跨 anchor：两个 active 信号分属不同 anchor_id → 各组仅 1 项，不满足
+    ins("2026-01-09", "panic", "active", 1)
+    ins("2026-01-09", "dry_up", "active", 2)
+    cross = exhaustion.count_active_signals(conn, SYM, "2026-01-09", min_active=2)
+    assert cross["meets_min"] is False
+    assert {g["anchor_id"]: g["active_count"]
+            for g in cross["by_anchor"]} == {1: 1, 2: 1}
+
+    # 同 anchor：两个 active 信号同属一个 anchor_id → 满足
+    ins("2026-01-16", "panic", "active", 1)
+    ins("2026-01-16", "dry_up", "active", 1)
+    same = exhaustion.count_active_signals(conn, SYM, "2026-01-16", min_active=2)
+    assert same["meets_min"] is True and same["active_count"] == 2
+    assert same["anchor_id"] == 1
+    assert set(same["active_signals"]) == {"panic", "dry_up"}
+    conn.close()
+
+
+def test_missing_low_raw_not_selected_as_anchor(tmp_path):
+    """BUG B：low_raw 缺失日不参与周内定位——不选为锚点、不当 0 猜（§2.5）。"""
+    closes = [50, 49, 48, 47, 46, 45]
+    specs = [{"o": c, "h": c + 2, "l": c - 2, "c": c, "vol": 100.0,
+              "rsi": 40.0, "hist": 0.1} for c in closes]
+    specs[-1]["null_low_ks"] = {2}  # 末周周三（原周内最低日）low_raw 缺失
+    conn = build_db(tmp_path, specs)
+    with conn:
+        recompute_weekly_signals(conn, SYM, params=params_default(), config_hash="t")
+    # 末周（2026-02-02~06）fallback 锚点：周三缺失 → 其余日 low 平值取最早（周一）
+    row = conn.execute(
+        """
+        SELECT trade_date, adjusted_price, raw_price FROM weekly_anchors
+        WHERE symbol = ? AND anchor_type = 'panic_low' AND as_of = '2026-02-06'
+        """,
+        (SYM,)).fetchone()
+    assert row["trade_date"] == "2026-02-02"
+    assert row["adjusted_price"] == pytest.approx(44.0)  # 45-2+1，非 0.0
+    assert row["raw_price"] == pytest.approx(44.0)
     conn.close()

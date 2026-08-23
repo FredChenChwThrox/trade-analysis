@@ -14,6 +14,8 @@
    （排他端点），换算明细入 input_snapshot_json.conversion；写 signal_facts
    行 signal='card_conversion' state='auto_activated'（当日日报据此标注
    "分红自动换算"）。除权日前无行情可算影响比例时**不猜**，降级走三段式。
+   换算护栏（cards.convert_card_fields，价格 ≤0 或价区失序）拒绝时不写
+   换算版本，冻结待人工处理。
 3. **完整三段式**（送转/拆股/大额分红）：
    - 冻结 `freeze_card`：写 signal_facts signal='suspended_corporate_action'
      state='active'（observed_on=ex_date，details 含事件明细）；自 ex_date 起
@@ -150,10 +152,16 @@ def _new_card_id(symbol: str, ca_id: int) -> str:
 
 def _insert_version(conn: sqlite3.Connection, source: sqlite3.Row, ca: sqlite3.Row,
                     op: str, amount: Decimal, status: str, effective_from: str | None,
-                    run_id: str, extra_snapshot: dict | None = None) -> str:
-    """按换算结果插入新卡片版本（draft 或 active），返回 card_version_id。"""
+                    run_id: str, extra_snapshot: dict | None = None,
+                    converted: dict[str, str] | None = None) -> str:
+    """按换算结果插入新卡片版本（draft 或 active），返回 card_version_id。
+
+    converted 可传入已换算（且已过护栏）的结果；缺省现场换算——护栏拒绝时
+    抛 CardConversionError，本函数尚未写库。
+    """
     new_id = _new_card_id(source["symbol"], ca["ca_id"])
-    converted = card_mod.convert_card_fields(source, op, amount)
+    if converted is None:
+        converted = card_mod.convert_card_fields(source, op, amount)
     snapshot = card_mod.conversion_snapshot(
         source["card_version_id"], ca, op, amount, extra_snapshot)
     conn.execute(
@@ -199,6 +207,9 @@ def fastlane_activate(conn: sqlite3.Connection, source: sqlite3.Row, ca: sqlite3
     """快速通道：减法换算 + 自动激活（旧版 superseded，effective_to=ex_date）。"""
     cash = Decimal(str(ca["cash_per_share"]))
     impact = cash / prev_close
+    # 先换算过护栏（拒绝时抛 CardConversionError）：必须在关闭旧版之前完成，
+    # 避免出现旧版已 superseded 而新版未写入的中间态
+    converted = card_mod.convert_card_fields(source, "subtract", cash)
     # 先关闭旧版（uq_card_active 部分唯一索引要求任一时刻至多一个 active）
     conn.execute(
         "UPDATE strategy_card_versions SET status = 'superseded', effective_to = ? "
@@ -208,7 +219,7 @@ def fastlane_activate(conn: sqlite3.Connection, source: sqlite3.Row, ca: sqlite3
     new_id = _insert_version(
         conn, source, ca, "subtract", cash, "active", ca["ex_date"], run_id,
         {"channel": "dividend_fastlane", "prev_close_raw": str(prev_close),
-         "impact_pct": float(impact)})
+         "impact_pct": float(impact)}, converted=converted)
     conn.execute(
         """
         INSERT INTO signal_facts (symbol, observed_on, signal, state, anchor_id,
@@ -329,25 +340,32 @@ def process_pending(conn: sqlite3.Connection, symbol: str,
         if source is None:
             res.notes.append(f"ca_id={ca['ca_id']}: 无 active 卡片，跳过（§2.5）")
             continue
-        if ca["action_type"] == "cash_dividend" and ca["cash_per_share"] is not None:
-            prev_close = _prev_close(conn, symbol, ca["ex_date"])
-            if prev_close is None:
-                note = "除权日前无行情，无法计算影响比例，降级三段式（§2.5 不猜）"
-                res.notes.append(f"ca_id={ca['ca_id']}: {note}")
-                freeze_card(conn, source, ca, run_id, config_hash, note)
-                draft_id = generate_conversion_draft(conn, source, ca, run_id, note)
-            else:
-                impact = Decimal(str(ca["cash_per_share"])) / prev_close
-                if impact < Decimal(str(fastlane_pct)):
-                    res.fastlane_activated.append(fastlane_activate(
-                        conn, source, ca, prev_close, run_id, config_hash))
-                    continue
-                note = f"分红影响 {float(impact):.2%} ≥ 阈值 {fastlane_pct:.0%}，走三段式"
-                freeze_card(conn, source, ca, run_id, config_hash, note)
-                draft_id = generate_conversion_draft(conn, source, ca, run_id, note)
-        else:  # 送转/拆股一律三段式
-            freeze_card(conn, source, ca, run_id, config_hash)
-            draft_id = generate_conversion_draft(conn, source, ca, run_id)
+        try:
+            if ca["action_type"] == "cash_dividend" and ca["cash_per_share"] is not None:
+                prev_close = _prev_close(conn, symbol, ca["ex_date"])
+                if prev_close is None:
+                    note = "除权日前无行情，无法计算影响比例，降级三段式（§2.5 不猜）"
+                    res.notes.append(f"ca_id={ca['ca_id']}: {note}")
+                    freeze_card(conn, source, ca, run_id, config_hash, note)
+                    draft_id = generate_conversion_draft(conn, source, ca, run_id, note)
+                else:
+                    impact = Decimal(str(ca["cash_per_share"])) / prev_close
+                    if impact < Decimal(str(fastlane_pct)):
+                        res.fastlane_activated.append(fastlane_activate(
+                            conn, source, ca, prev_close, run_id, config_hash))
+                        continue
+                    note = f"分红影响 {float(impact):.2%} ≥ 阈值 {fastlane_pct:.0%}，走三段式"
+                    freeze_card(conn, source, ca, run_id, config_hash, note)
+                    draft_id = generate_conversion_draft(conn, source, ca, run_id, note)
+            else:  # 送转/拆股一律三段式
+                freeze_card(conn, source, ca, run_id, config_hash)
+                draft_id = generate_conversion_draft(conn, source, ca, run_id)
+        except card_mod.CardConversionError as exc:
+            # 换算护栏拒绝（价格 ≤0 或价区失序）：不写换算版本，冻结待人工处理
+            note = f"换算被拒（{exc}），已冻结待人工处理，未写换算版本"
+            freeze_card(conn, source, ca, run_id, config_hash, note)
+            res.notes.append(f"ca_id={ca['ca_id']}: {note}")
+            continue
         res.frozen_drafts.append({
             "ca_id": ca["ca_id"], "action_type": ca["action_type"],
             "ex_date": ca["ex_date"], "draft_card_version_id": draft_id,

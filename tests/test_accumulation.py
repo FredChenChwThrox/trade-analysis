@@ -6,6 +6,8 @@
 - 试盘判定边界（振幅 / 上影占比 / 放量）；
 - 状态机全路径：idle → watching → consolidating → confirmed（terminal 次日回 idle）；
 - 失效路径：跌破箱体下沿 box_broken；MA 缺失不确认，超期 expired_no_consolidation；
+- 数据缺失纪律：OHLCV 缺失行剔除并记 degraded；前收 ≤0 不除零、记 invalid_prev_close；
+- expired_consolidation 从进入 consolidating 起算（§5.4c），不从破位日起算；
 - 全量重算幂等（DELETE+重插，行数一致）。
 """
 
@@ -219,3 +221,75 @@ def test_recompute_idempotent(tmp_path):
         "SELECT stage, status FROM pipeline_runs WHERE run_id = ?",
         (r2.run_id,)).fetchone()
     assert run["stage"] == "accumulation" and run["status"] == "success"
+
+
+# ---------------------------------------------------------------- 数据缺失纪律
+
+def add_bar_null_close(conn, i, symbol=SYM):
+    conn.execute(
+        """
+        INSERT INTO daily_bars (symbol, trade_date, market, open_raw, high_raw,
+            low_raw, close_raw, volume_raw, price_adj_factor, share_factor,
+            source, updated_at)
+        VALUES (?, ?, 'CN', 100.0, 101.0, 99.0, NULL, 100.0, 1.0, 1.0, 'test', ?)
+        """,
+        (symbol, day(i), db.utc_now()),
+    )
+
+
+def test_missing_ohlcv_rows_skipped(tmp_path):
+    """OHLCV 缺失行拒绝参与计算（§2.5 不猜，不当 0）：不崩溃、该行无 facts、记 degraded。"""
+    conn = make_conn(tmp_path)
+    with conn:
+        flat_days(conn, 0, 5)
+        add_bar_null_close(conn, 5)
+        add_bar_null_close(conn, 6)
+        flat_days(conn, 7, 23)
+        res = acc.run_accumulation(conn, SYM)
+    rows = facts(conn)
+    days_in_facts = {r[0] for r in rows}
+    assert day(5) not in days_in_facts and day(6) not in days_in_facts
+    assert len(rows) == 28
+    assert res.status == "degraded" and res.reason == "missing_ohlcv_rows"
+
+
+def test_zero_prev_close_no_division(tmp_path):
+    """前收 =0 → 涨跌幅不判定（invalid_prev_close），不除零，记 degraded。"""
+    # 纯函数边界：prev close = 0 直接返回，不抛 ZeroDivisionError
+    bars = [{"trade_date": day(i), "open": 100.0, "high": 101.0, "low": 99.0,
+             "close": 100.0, "volume": 100.0} for i in range(70)]
+    bars[69]["close"] = 0.0
+    bars.append({"trade_date": day(70), "open": 100.0, "high": 100.5,
+                 "low": 93.5, "close": 94.0, "volume": 300.0})
+    cond, det = acc.is_breakdown(bars, 70, 100.0, P["accumulation"])
+    assert cond is False and det["reason"] == "invalid_prev_close"
+
+    # 端到端：close_raw=0.0 的脏数据行（非 NULL，不剔除），次日不除零
+    conn = make_conn(tmp_path)
+    with conn:
+        flat_days(conn, 0, 70)
+        add_bar(conn, 70, open_=100.0, high=100.5, low=0.0, close=0.0, volume=50.0)
+        add_bar(conn, 71, open_=100.0, high=100.5, low=93.5, close=94.0,
+                volume=300.0)
+        res = acc.run_accumulation(conn, SYM)
+    by_day = {r[0]: r for r in facts(conn)}
+    assert by_day[day(71)][3]["reason"] == "invalid_prev_close"
+    assert res.status == "degraded" and res.reason == "invalid_prev_close"
+
+
+def test_expired_consolidation_counts_from_consolidation_start(tmp_path):
+    """expired_consolidation 从进入 consolidating 起算（§5.4c），不从破位日起算。"""
+    conn = make_conn(tmp_path)
+    with conn:
+        _, consol_idx = build_consolidating(conn)      # 破位索引 70，横盘确认索引 80
+        flat_days(conn, 81, 121, close=94.0, volume=50.0)  # 索引 81..201 箱体内平盘
+        acc.run_accumulation(conn, SYM)
+    by_day = {r[0]: r for r in facts(conn)}
+    # 旧起算点（破位 +121 日 = 索引 191）不得 expired，证明不从破位日起算
+    assert by_day[day(191)][1] == "consolidating"
+    # 横盘第 120 天（索引 consol_idx+120）仍持有；第 121 天 expired
+    assert by_day[day(consol_idx + 120)][1] == "consolidating"
+    assert by_day[day(consol_idx + 120)][3]["days_consolidating"] == 120
+    f = by_day[day(consol_idx + 121)]
+    assert f[1] == "failed" and f[2] == 1
+    assert f[3]["reason"] == "expired_consolidation"

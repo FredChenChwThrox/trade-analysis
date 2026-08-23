@@ -31,11 +31,13 @@ T+1/T+5 事件研究，结果写 event_assessments
 - 本模块不冒充 LLM 评价：prompt_version/direction/materiality/confidence/
   rationale 一律 NULL。
 
-幂等：同 (event_id, 'event_study_v1') 行已存在时，仅当 status in ('ok',
-'suspended') 且 event_study_json 无 pending 才跳过（suspended 是事实结果，
-停牌历史不会改变）；status='degraded'（数据空洞可能在回补后转正）或含
-pending → DELETE 该版本行后重算重插（确定性同输入同输出）；绝不动其他
-assessment_version 的行。run 记录写 pipeline_runs 阶段
+幂等：同 (event_id, symbol, 'event_study_v1') 行已存在时，仅当 status in
+('ok', 'suspended') 且 event_study_json 无 pending 才跳过（suspended 是事实
+结果，停牌历史不会改变）；status='degraded'（数据空洞可能在回补后转正）或
+含 pending → DELETE 该 (event_id, symbol) 的本版本行后重算重插（确定性同
+输入同输出）；绝不动其他 symbol、其他 assessment_version 的行。多 symbol
+事件（event_symbols 一对多）按 (event_id, symbol) 各自独立计算与落库。
+run 记录写 pipeline_runs 阶段
 event_study（INSERT OR REPLACE，adapter_version=NULL）。调用方负责事务。
 
 CLI：
@@ -123,19 +125,22 @@ def _empty_endpoint() -> dict:
 
 def study_event(calendar: list[str], stock_close: dict[str, float],
                 bench_close: dict[str, float], a_date: str,
-                data_cutoff: str | None) -> dict:
-    """给定日历序列与收盘价映射，算单事件 T+1/T+5 明细（纯函数，可单测）。
+                data_cutoff: str | None, symbol: str) -> dict:
+    """给定日历序列与收盘价映射，算单事件单 symbol 的 T+1/T+5 明细
+    （纯函数，可单测）。
 
     calendar：trading_calendar 开市日升序；stock_close / bench_close：
     trade_date → 复权收盘 / 指数收盘；data_cutoff：数据截止（该股
-    daily_bars 与基准 index_bars 最大 trade_date 的较小者，缺失为 None）。
+    daily_bars 与基准 index_bars 最大 trade_date 的较小者，缺失为 None）；
+    symbol：本行所属股票（同一 event_id 多 symbol 各自独立计算）。
     终点判定顺序：终点日 > data_cutoff → pending（尚未到来，而非停牌）；
     否则个股无 bar → suspended；指数无 bar → degraded。
-    返回 dict：base_date、base_close、calendar、benchmark、t1/t5（mark 取值
-    None=完整 / 'pending' / 'suspended'）、reason（degraded 原因，无则 None）。
+    返回 dict：symbol、base_date、base_close、calendar、benchmark、t1/t5
+    （mark 取值 None=完整 / 'pending' / 'suspended'）、reason（degraded
+    原因，无则 None）。
     """
-    out: dict = {"base_date": None, "base_close": None, "calendar": CALENDAR_SOURCE,
-                 "benchmark": BENCHMARK_INDEX,
+    out: dict = {"symbol": symbol, "base_date": None, "base_close": None,
+                 "calendar": CALENDAR_SOURCE, "benchmark": BENCHMARK_INDEX,
                  "t1": _empty_endpoint(), "t5": _empty_endpoint(), "reason": None}
     if not calendar:
         out["reason"] = "calendar_missing"  # 权威日历缺失/为空（§2.5 不猜）
@@ -263,10 +268,11 @@ def run_event_study(
 
     for ev in events:
         res.events_seen += 1
+        sym = ev["symbol"]
         existing = conn.execute(
             "SELECT status, event_study_json FROM event_assessments "
-            "WHERE event_id = ? AND assessment_version = ?",
-            (ev["event_id"], ASSESSMENT_VERSION),
+            "WHERE event_id = ? AND symbol = ? AND assessment_version = ?",
+            (ev["event_id"], sym, ASSESSMENT_VERSION),
         ).fetchone()
         if existing is not None:
             try:
@@ -274,22 +280,22 @@ def run_event_study(
             except json.JSONDecodeError:
                 old = {}
             # 仅完整行跳过（ok/suspended 且无 pending）；degraded（数据空洞
-            # 可能回补转正）或含 pending → DELETE 本版本行后重算重插
+            # 可能回补转正）或含 pending → DELETE 本 (event_id, symbol)
+            # 的本版本行后重算重插
             if existing["status"] in ("ok", "suspended") and not _has_pending(old):
                 res.skipped += 1
                 continue
             conn.execute(
                 "DELETE FROM event_assessments "
-                "WHERE event_id = ? AND assessment_version = ?",
-                (ev["event_id"], ASSESSMENT_VERSION),
+                "WHERE event_id = ? AND symbol = ? AND assessment_version = ?",
+                (ev["event_id"], sym, ASSESSMENT_VERSION),
             )
             res.recomputed += 1
 
-        sym = ev["symbol"]
         if sym not in stock_cache:
             stock_cache[sym] = _load_stock_close(conn, sym)
         if not ev["available_at"]:
-            study = {"base_date": None, "base_close": None,
+            study = {"symbol": sym, "base_date": None, "base_close": None,
                      "calendar": CALENDAR_SOURCE, "benchmark": BENCHMARK_INDEX,
                      "t1": _empty_endpoint(), "t5": _empty_endpoint(),
                      "reason": "missing_available_at"}
@@ -301,17 +307,18 @@ def run_event_study(
             cutoff = (min(stock_max, bench_max)
                       if stock_max and bench_max else None)
             study = study_event(calendar, closes, bench,
-                                local_date_of(ev["available_at"]), cutoff)
+                                local_date_of(ev["available_at"]), cutoff, sym)
         status = study_status(study)
         study["run_id"] = run_id
         conn.execute(
             """
-            INSERT INTO event_assessments (event_id, assessment_version, model,
-                prompt_version, assessed_at, event_type, direction, materiality,
-                confidence, rationale, status, event_study_json, run_id)
-            VALUES (?, ?, ?, NULL, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?)
+            INSERT INTO event_assessments (event_id, symbol, assessment_version,
+                model, prompt_version, assessed_at, event_type, direction,
+                materiality, confidence, rationale, status, event_study_json,
+                run_id)
+            VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?)
             """,
-            (ev["event_id"], ASSESSMENT_VERSION, MODEL, utc_now(),
+            (ev["event_id"], sym, ASSESSMENT_VERSION, MODEL, utc_now(),
              ev["event_type"], status,
              json.dumps(study, ensure_ascii=False, sort_keys=True), run_id),
         )

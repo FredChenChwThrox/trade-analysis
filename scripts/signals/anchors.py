@@ -54,7 +54,10 @@ class AnchorStep:
 
 def _locate_week_low(week: WeekBar, week_index: int, daily: dict,
                      is_fallback: bool) -> Anchor:
-    """周内定位最低复权价交易日；平值取最早交易日（锁定口径）。"""
+    """周内定位最低复权价交易日；平值取最早交易日（锁定口径）。
+
+    low_adj 为 None（low_raw 缺失）的交易日不参与定位——不拿 0 猜（§2.5）。
+    """
     days = [
         (d, v) for d, v in daily.items()
         if week.week_start_date <= d <= week.week_end_date
@@ -63,7 +66,12 @@ def _locate_week_low(week: WeekBar, week_index: int, daily: dict,
         raise ValueError(
             f"周 {week.week_start_date}~{week.week_end_date} 无 daily_bars，"
             f"无法定位周内最低复权价交易日（先入库行情）")
-    d, v = min(days, key=lambda kv: (kv[1]["low_adj"], kv[0]))
+    valid = [(d, v) for d, v in days if v["low_adj"] is not None]
+    if not valid:
+        raise ValueError(
+            f"周 {week.week_start_date}~{week.week_end_date} daily_bars 的 "
+            f"low_raw 全部缺失，无法定位周内最低复权价交易日（§2.5 不猜）")
+    d, v = min(valid, key=lambda kv: (kv[1]["low_adj"], kv[0]))
     return Anchor(PANIC_LOW, week_index, d, v["low_adj"], v["low_raw"], is_fallback)
 
 
@@ -101,6 +109,10 @@ def compute_anchor_timeline(
                 raise ValueError(
                     f"下跌起点周 {wk.week_end_date} 周末日无 daily_bars，"
                     f"无法取不复权收盘价")
+            if daily[wk.week_end_date]["close_raw"] is None:
+                raise ValueError(
+                    f"下跌起点周 {wk.week_end_date} 周末日 close_raw 缺失，"
+                    f"无法取不复权收盘价（§2.5 不猜）")
             decline = Anchor(
                 DECLINE_START, k, wk.week_end_date, wk.close,
                 daily[wk.week_end_date]["close_raw"], panic.is_fallback)

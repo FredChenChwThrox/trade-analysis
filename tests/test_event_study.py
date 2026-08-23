@@ -11,7 +11,9 @@
   status='ok'；补数据后重算更新；完整行重跑跳过；
 - degraded 行在数据回补后重跑被重算转正；suspended 完整行跳过，
   但 suspended 行含 pending 终点时仍按 pending 规则重算；
-- 只写 assessment_version='event_study_v1'，其他版本 LLM 评价行不受影响。
+- 只写 assessment_version='event_study_v1'，其他版本 LLM 评价行不受影响；
+- 多 symbol 事件（event_symbols 一对多）：同一 event_id 各 symbol 独立
+  计算、独立落库 (event_id, symbol) 两行，重算/跳过互不影响不串数据。
 """
 
 from __future__ import annotations
@@ -116,11 +118,11 @@ def seed_bars(conn, upto=T5, skip=(), start=None, symbol=SYM):
         add_bar(conn, d, raw.get(d, 50.0), factor=2.0, symbol=symbol)
 
 
-def assessment(conn, event_id="EV1", version=es.ASSESSMENT_VERSION):
+def assessment(conn, event_id="EV1", version=es.ASSESSMENT_VERSION, symbol=SYM):
     r = conn.execute(
         "SELECT * FROM event_assessments WHERE event_id = ? "
-        "AND assessment_version = ?",
-        (event_id, version),
+        "AND symbol = ? AND assessment_version = ?",
+        (event_id, symbol, version),
     ).fetchone()
     return r
 
@@ -448,11 +450,11 @@ def test_other_assessment_version_untouched(tmp_path):
         seed_bars(conn)
         add_event(conn)
         conn.execute(
-            "INSERT INTO event_assessments (event_id, assessment_version, model, "
-            "prompt_version, assessed_at, direction, materiality, confidence, "
-            "rationale, status) VALUES ('EV1', 7, 'llm-x', 'p3', ?, 'positive', "
-            "'high', 0.9, 'keep me', 'ok')",
-            (db.utc_now(),),
+            "INSERT INTO event_assessments (event_id, symbol, assessment_version, "
+            "model, prompt_version, assessed_at, direction, materiality, "
+            "confidence, rationale, status) VALUES ('EV1', ?, 7, 'llm-x', 'p3', "
+            "?, 'positive', 'high', 0.9, 'keep me', 'ok')",
+            (SYM, db.utc_now()),
         )
         es.run_event_study(conn)
     llm = assessment(conn, version=7)
@@ -475,4 +477,90 @@ def test_symbol_filter(tmp_path):
         res = es.run_event_study(conn, symbol=SYM)
     assert res.events_seen == 1 and res.written == 1
     assert assessment(conn, "EV1") is not None
-    assert assessment(conn, "EV2") is None
+    assert assessment(conn, "EV2", symbol="OTHER.SH") is None
+
+
+# ---------------------------------------------------------------- 多 symbol 事件
+
+def add_symbol_link(conn, event_id, symbol):
+    conn.execute(
+        "INSERT INTO event_symbols (event_id, symbol) VALUES (?, ?)",
+        (event_id, symbol),
+    )
+
+
+def seed_other_bars(conn, upto=T5, start=None):
+    """OTHER.SH 复权收盘（factor=1.0）：base=200、T+1=240、T+5=180。"""
+    closes = {BASE: 200.0, T1: 240.0, T5: 180.0}
+    for d in CAL:
+        if d > upto:
+            break
+        if start and d < start:
+            continue
+        add_bar(conn, d, closes.get(d, 200.0), factor=1.0, symbol="OTHER.SH")
+
+
+def test_multi_symbol_event_independent_rows(tmp_path):
+    """同一 event_id 关联 2 只股票：各自独立算 T+1/T+5、落库两行互不覆盖。"""
+    conn = make_conn(tmp_path)
+    with conn:
+        seed_calendar(conn)
+        seed_bars(conn)                        # SYM：base 100 / T+1 110 / T+5 120
+        seed_other_bars(conn)                  # OTHER.SH：base 200 / T+1 240 / T+5 180
+        add_event(conn, event_id="EVM")        # 关联 SYM
+        add_symbol_link(conn, "EVM", "OTHER.SH")
+        res = es.run_event_study(conn, run_id="run_m1")
+    assert res.events_seen == 2 and res.written == 2
+    assert res.status_counts == {"ok": 2}
+
+    row_a = assessment(conn, "EVM", symbol=SYM)
+    row_b = assessment(conn, "EVM", symbol="OTHER.SH")
+    assert row_a["symbol"] == SYM and row_b["symbol"] == "OTHER.SH"
+    sa = json.loads(row_a["event_study_json"])
+    sb = json.loads(row_b["event_study_json"])
+    assert sa["symbol"] == SYM and sb["symbol"] == "OTHER.SH"
+    assert sa["t1"]["ret"] == pytest.approx(0.10)    # 110/100 − 1
+    assert sa["t5"]["ret"] == pytest.approx(0.20)
+    assert sb["t1"]["ret"] == pytest.approx(0.20)    # 240/200 − 1
+    assert sb["t5"]["ret"] == pytest.approx(-0.10)   # 180/200 − 1
+    assert sb["t5"]["excess"] == pytest.approx(-0.12)  # −0.10 − 0.02
+
+    with conn:
+        r2 = es.run_event_study(conn, run_id="run_m2")  # 完整行重跑 → 双双跳过
+    assert r2.skipped == 2 and r2.written == 0 and r2.recomputed == 0
+    assert assessment(conn, "EVM", symbol=SYM)["assessed_at"] == row_a["assessed_at"]
+    assert (assessment(conn, "EVM", symbol="OTHER.SH")["assessed_at"]
+            == row_b["assessed_at"])
+
+
+def test_multi_symbol_recompute_isolated(tmp_path):
+    """多 symbol 事件：一只含 pending 重算、另一只完整行跳过，互不串数据。"""
+    conn = make_conn(tmp_path)
+    with conn:
+        seed_calendar(conn)
+        seed_bars(conn)                        # SYM 数据齐全
+        seed_other_bars(conn, upto=T1)         # OTHER.SH 只到 T+1 → t5 pending
+        add_event(conn, event_id="EVM")
+        add_symbol_link(conn, "EVM", "OTHER.SH")
+        r1 = es.run_event_study(conn, run_id="run_i1")
+    assert r1.written == 2 and r1.status_counts == {"ok": 2}
+    sb = json.loads(assessment(conn, "EVM", symbol="OTHER.SH")["event_study_json"])
+    assert sb["t1"]["ret"] == pytest.approx(0.20)
+    assert sb["t5"]["mark"] == "pending" and sb["t5"]["ret"] is None
+    assessed_a = assessment(conn, "EVM", symbol=SYM)["assessed_at"]
+
+    with conn:
+        r2 = es.run_event_study(conn, run_id="run_i2")
+    # SYM 完整行跳过；OTHER.SH 含 pending → 仅该行重算
+    assert r2.skipped == 1 and r2.recomputed == 1 and r2.written == 1
+    assert assessment(conn, "EVM", symbol=SYM)["assessed_at"] == assessed_a
+
+    with conn:
+        seed_other_bars(conn, start="2026-01-13")    # 回补 OTHER.SH 至 T+5
+        r3 = es.run_event_study(conn, run_id="run_i3")
+    assert r3.skipped == 1 and r3.recomputed == 1
+    sb = json.loads(assessment(conn, "EVM", symbol="OTHER.SH")["event_study_json"])
+    assert sb["t5"]["mark"] is None and sb["t5"]["ret"] == pytest.approx(-0.10)
+    sa = json.loads(assessment(conn, "EVM", symbol=SYM)["event_study_json"])
+    assert sa["t5"]["ret"] == pytest.approx(0.20)    # SYM 行未被串改
+    assert assessment(conn, "EVM", symbol=SYM)["assessed_at"] == assessed_a

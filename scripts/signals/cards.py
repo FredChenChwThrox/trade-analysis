@@ -25,6 +25,9 @@
 - 现金分红：全部价格类字段 − 每股分红额（除权价 = 原价 − D），EPS/PE 不动。
 换算结果统一量化为 4 位小数（ROUND_HALF_UP），精确因子/金额记入
 input_snapshot_json.conversion。
+换算护栏（§5.4b 只规定减法规则、无下限保护，本模块补上）：换算后所有价格
+字段必须 > 0 且价区有序（zone_low < zone_high、tier 间降序不重叠、箱体各
+低/高对有序），违反抛 CardConversionError——拒绝该换算结果，不写库，由人工处理。
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 Q4 = Decimal("0.0001")
 
@@ -40,12 +43,6 @@ Q4 = Decimal("0.0001")
 def dec_str(d: Decimal) -> str:
     """定点输出（4 位小数，禁用科学计数法）。"""
     return format(d.quantize(Q4, rounding=ROUND_HALF_UP), "f")
-
-
-def _dec(v) -> Decimal | None:
-    if v is None:
-        return None
-    return Decimal(str(v))
 
 
 # ---------------------------------------------------------------- 读取
@@ -77,7 +74,39 @@ SWING_BOX_KEYS = ("box_low", "box_high", "buy_zone_low", "buy_zone_high",
                   "sell_zone_low", "sell_zone_high", "box_invalidation")
 
 
-def parse_card(row: sqlite3.Row) -> Card:
+class CardConversionError(ValueError):
+    """换算结果被护栏拒绝（价格 ≤ 0 或价区失序）：不写库，由人工处理。"""
+
+
+def _price(v, ctx: str) -> Decimal:
+    """价格字段解析：必须可解析为 Decimal 且非负，否则抛错（由 parse_card 捕获）。"""
+    d = Decimal(str(v))  # 非数字 → InvalidOperation
+    if d < 0:
+        raise ValueError(f"{ctx}: 价格为负（{d}）")
+    return d
+
+
+def _req_price(doc, key: str, ctx: str) -> Decimal:
+    if not isinstance(doc, dict) or doc.get(key) is None:
+        raise ValueError(f"{ctx}: 缺必填字段 {key}")
+    return _price(doc[key], f"{ctx}.{key}")
+
+
+def _opt_price(doc, key: str, ctx: str) -> Decimal | None:
+    if not isinstance(doc, dict) or doc.get(key) is None:
+        return None
+    return _price(doc[key], f"{ctx}.{key}")
+
+
+def parse_card(row: sqlite3.Row) -> Card | None:
+    """解析库行为 Card，JSON 字段转 Decimal。
+
+    校验（对齐 create-draft schema 的必填口径）：JSON 必须合法且为对象；
+    price_tiers 每档必填 tier/zone_low/zone_high，invalidation 必填 line；
+    所有出现的价格字段必须可解析且非负。违反任一 → 返回 None：该版本不参与
+    信号计算（load_active_card 的 None 约定，调用方按 §2.5 记 incomplete），
+    不在运行时崩溃。
+    """
     card = Card(
         card_version_id=row["card_version_id"],
         symbol=row["symbol"],
@@ -86,27 +115,44 @@ def parse_card(row: sqlite3.Row) -> Card:
         effective_to=row["effective_to"],
         supersedes_id=row["supersedes_id"],
     )
-    if row["price_tiers_json"]:
-        for t in (json.loads(row["price_tiers_json"]).get("tiers") or []):
-            card.tiers.append({
-                "tier": t.get("tier"),
-                "zone_low": _dec(t.get("zone_low")),
-                "zone_high": _dec(t.get("zone_high")),
-            })
-    if row["invalidation_json"]:
-        card.invalidation_line = _dec(json.loads(row["invalidation_json"]).get("line"))
-    if row["swing_box_json"]:
-        box = json.loads(row["swing_box_json"])
-        card.swing_box = {k: _dec(box.get(k)) for k in SWING_BOX_KEYS if box.get(k) is not None}
-    if row["right_side_trigger_json"]:
-        rst = json.loads(row["right_side_trigger_json"])
-        card.trigger_level = _dec(rst.get("trigger_level"))
-        card.stop_level = _dec(rst.get("stop_level"))
+    try:
+        if row["price_tiers_json"]:
+            doc = json.loads(row["price_tiers_json"])
+            tiers = doc.get("tiers") if isinstance(doc, dict) else None
+            if not isinstance(tiers, list) or not tiers:
+                raise ValueError("price_tiers_json: 缺非空 tiers 列表")
+            for t in tiers:
+                if not isinstance(t, dict) or t.get("tier") is None:
+                    raise ValueError("price_tiers_json: tier 缺必填字段 tier")
+                card.tiers.append({
+                    "tier": t["tier"],
+                    "zone_low": _req_price(t, "zone_low", "price_tiers"),
+                    "zone_high": _req_price(t, "zone_high", "price_tiers"),
+                })
+        if row["invalidation_json"]:
+            card.invalidation_line = _req_price(
+                json.loads(row["invalidation_json"]), "line", "invalidation")
+        if row["swing_box_json"]:
+            box = json.loads(row["swing_box_json"])
+            card.swing_box = {
+                k: v for k in SWING_BOX_KEYS
+                if (v := _opt_price(box, k, "swing_box")) is not None
+            }
+        if row["right_side_trigger_json"]:
+            rst = json.loads(row["right_side_trigger_json"])
+            card.trigger_level = _opt_price(rst, "trigger_level", "right_side_trigger")
+            card.stop_level = _opt_price(rst, "stop_level", "right_side_trigger")
+    except (json.JSONDecodeError, InvalidOperation, ValueError, TypeError):
+        return None
     return card
 
 
 def load_card_versions(conn: sqlite3.Connection, symbol: str) -> list[Card]:
-    """该股全部曾/正生效版本（active + superseded），按 effective_from 排序。"""
+    """该股全部曾/正生效版本（active + superseded），按 effective_from 排序。
+
+    JSON 非法的版本被 parse_card 拒绝（返回 None）并剔除——视为从未生效，
+    不参与信号计算。
+    """
     rows = conn.execute(
         """
         SELECT * FROM strategy_card_versions
@@ -115,7 +161,7 @@ def load_card_versions(conn: sqlite3.Connection, symbol: str) -> list[Card]:
         """,
         (symbol,),
     ).fetchall()
-    return [parse_card(r) for r in rows]
+    return [c for c in (parse_card(r) for r in rows) if c is not None]
 
 
 def card_for_day(versions: list[Card], trade_date: str) -> Card | None:
@@ -128,7 +174,8 @@ def card_for_day(versions: list[Card], trade_date: str) -> Card | None:
 
 def load_active_card(conn: sqlite3.Connection, symbol: str,
                      trade_date: str) -> Card | None:
-    """trade_date 当日生效的 active 版本（无则 None——调用方按 §2.5 记 incomplete）。"""
+    """trade_date 当日生效的 active 版本（无则 None——调用方按 §2.5 记 incomplete；
+    JSON 非法被 parse_card 拒绝同样返回 None）。"""
     row = conn.execute(
         """
         SELECT * FROM strategy_card_versions
@@ -143,11 +190,56 @@ def load_active_card(conn: sqlite3.Connection, symbol: str,
 
 # ---------------------------------------------------------------- 机械换算（§5.4b 第二步）
 
+def _require_positive(d: Decimal, ctx: str) -> None:
+    if d <= 0:
+        raise CardConversionError(f"{ctx}: 换算后价格 {dec_str(d)} ≤ 0")
+
+
+def _validate_converted(out: dict[str, str]) -> None:
+    """换算护栏：所有价格字段 > 0 且价区有序（§5.4b 无下限保护，这里补上）。
+
+    违反抛 CardConversionError——拒绝该换算结果，由人工处理，不得静默写库。
+    """
+    if "price_tiers_json" in out:
+        tiers = json.loads(out["price_tiers_json"]).get("tiers") or []
+        prev_low: Decimal | None = None
+        for t in tiers:
+            ctx = f"price_tiers tier {t.get('tier')}"
+            lo, hi = Decimal(str(t["zone_low"])), Decimal(str(t["zone_high"]))
+            _require_positive(lo, f"{ctx} zone_low")
+            _require_positive(hi, f"{ctx} zone_high")
+            if lo >= hi:
+                raise CardConversionError(f"{ctx}: zone_low >= zone_high")
+            if prev_low is not None and hi >= prev_low:
+                raise CardConversionError(f"{ctx}: 与上一档价区失序/重叠")
+            prev_low = lo
+    if "invalidation_json" in out:
+        line = json.loads(out["invalidation_json"]).get("line")
+        if line is not None:
+            _require_positive(Decimal(str(line)), "invalidation.line")
+    if "swing_box_json" in out:
+        box = json.loads(out["swing_box_json"])
+        for k in SWING_BOX_KEYS:
+            if box.get(k) is not None:
+                _require_positive(Decimal(str(box[k])), f"swing_box.{k}")
+        for lo_k, hi_k in (("box_low", "box_high"), ("buy_zone_low", "buy_zone_high"),
+                           ("sell_zone_low", "sell_zone_high")):
+            if box.get(lo_k) is not None and box.get(hi_k) is not None:
+                if Decimal(str(box[lo_k])) >= Decimal(str(box[hi_k])):
+                    raise CardConversionError(f"swing_box: {lo_k} >= {hi_k}")
+    if "right_side_trigger_json" in out:
+        rst = json.loads(out["right_side_trigger_json"])
+        for k in ("trigger_level", "stop_level"):
+            if rst.get(k) is not None:
+                _require_positive(Decimal(str(rst[k])), f"right_side_trigger.{k}")
+
+
 def convert_card_fields(row: sqlite3.Row, op: str, amount: Decimal) -> dict[str, str]:
     """机械换算卡片价格类字段。op='multiply'（× 1/倍率）或 'subtract'（− 每股分红）。
 
     返回 {列名: 新 JSON 文本}；只改价格类字段（multiply 另改 EPS），
     valuation_scenarios_json（PE 刻度）原样保留（§5.4b：PE 情景不变）。
+    换算结果过 _validate_converted 护栏，非法抛 CardConversionError。
     """
     fn = (lambda x: x * amount) if op == "multiply" else (lambda x: x - amount)
     out: dict[str, str] = {}
@@ -189,6 +281,7 @@ def convert_card_fields(row: sqlite3.Row, op: str, amount: Decimal) -> dict[str,
                 eps[k] = dec_str(fn(Decimal(str(v))))
         out["earnings_scenarios_json"] = json.dumps(doc, ensure_ascii=False, sort_keys=True)
 
+    _validate_converted(out)
     return out
 
 

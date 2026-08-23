@@ -283,7 +283,11 @@ def compute_signal_rows(
             details["anchor"] = anchor_brief(step)
             if ended and state == "active":
                 state = "inactive"
+                triggered = False  # episode 结束周清触发残留（trigger 周与结束周可重合）
                 details["reason"] = "episode_ended"
+                end_week = weeks[end_idx].week_end_date
+                if active_until is None or active_until > end_week:
+                    active_until = end_week  # 活跃截止不晚于 episode 结束周
             details["episode_end_week"] = (
                 weeks[end_idx].week_end_date if end_idx is not None else None)
             rows.append({
@@ -367,7 +371,12 @@ def compute_signal_rows(
 def count_active_signals(conn: sqlite3.Connection, symbol: str,
                          week_end_date: str,
                          min_active: int | None = None) -> dict:
-    """同一 anchor_id 下当前完成周活跃衰竭信号数（§5.3 "≥2 项"口径）。"""
+    """同一 anchor_id 下当前完成周活跃衰竭信号数（§5.3 "≥2 项"口径）。
+
+    按 anchor_id 分组统计各组 distinct active 信号数，任一组 ≥ min_active 即
+    meets_min=True；by_anchor 携带各 anchor 明细。顶层 active_count/
+    active_signals/anchor_id 取活跃信号最多的一组（兼容旧调用方）。
+    """
     placeholders = ", ".join("?" * len(WEEKLY_SIGNALS))
     rows = conn.execute(
         f"""
@@ -376,13 +385,29 @@ def count_active_signals(conn: sqlite3.Connection, symbol: str,
         """,
         (symbol, week_end_date, *WEEKLY_SIGNALS),
     ).fetchall()
-    active = sorted({r["signal"] for r in rows if r["state"] == "active"})
-    anchor_ids = sorted({r["anchor_id"] for r in rows if r["anchor_id"] is not None})
+    anchor_ids = sorted({r["anchor_id"] for r in rows},
+                        key=lambda a: (a is None, a))
+    groups: dict[int | None, set] = {a: set() for a in anchor_ids}
+    for r in rows:
+        if r["state"] == "active":
+            groups[r["anchor_id"]].add(r["signal"])
+    by_anchor = [
+        {
+            "anchor_id": a,
+            "active_count": len(sigs),
+            "active_signals": sorted(sigs),
+            "meets_min": (len(sigs) >= min_active) if min_active is not None else None,
+        }
+        for a, sigs in groups.items()
+    ]
+    best = max(by_anchor, key=lambda g: g["active_count"], default=None)
     return {
         "symbol": symbol,
         "week_end_date": week_end_date,
-        "anchor_id": anchor_ids[0] if len(anchor_ids) == 1 else None,
-        "active_count": len(active),
-        "active_signals": active,
-        "meets_min": (len(active) >= min_active) if min_active is not None else None,
+        "anchor_id": best["anchor_id"] if best else None,
+        "active_count": best["active_count"] if best else 0,
+        "active_signals": best["active_signals"] if best else [],
+        "meets_min": (any(g["meets_min"] for g in by_anchor)
+                      if min_active is not None else None),
+        "by_anchor": by_anchor,
     }

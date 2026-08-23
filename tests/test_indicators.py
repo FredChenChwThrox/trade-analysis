@@ -204,7 +204,7 @@ def test_pe_reason_codes():
 
 def test_shares_at_effective_date():
     events = [valuation.ShareEventView("2023-08-09", "2026-08-09T00:00:00+00:00",
-                                       Decimal("100"), "issued")]
+                                       Decimal("100"), "issued", "snapshot_issued")]
     assert valuation.shares_at(events, "2023-08-08") is None
     assert valuation.shares_at(events, "2023-08-09") == Decimal("100")
 
@@ -212,15 +212,32 @@ def test_shares_at_effective_date():
 def test_shares_at_prefers_group_total():
     """同一 effective_at 下 group_total（A+H 集团总股本）优先，无则回退 issued。"""
     issued = valuation.ShareEventView("2023-08-10", "2026-08-10T00:00:00+00:00",
-                                      Decimal("100"), "issued")
+                                      Decimal("100"), "issued", "snapshot_issued")
     group = valuation.ShareEventView("2023-08-10", "2026-08-17T00:00:00+00:00",
-                                     Decimal("170"), "group_total")
+                                     Decimal("170"), "group_total", "snapshot_group_total")
     assert valuation.shares_at([issued, group], "2023-08-10") == Decimal("170")
     assert valuation.shares_at([issued], "2023-08-10") == Decimal("100")   # 纯 A 股回退
     later_issued = valuation.ShareEventView("2024-01-01", "2026-08-10T00:00:00+00:00",
-                                            Decimal("105"), "issued")
+                                            Decimal("105"), "issued", "snapshot_issued")
     # 更晚 effective_at 的 issued 仍按时间优先（group_total 只赢同日期）
     assert valuation.shares_at([group, later_issued], "2024-01-01") == Decimal("105")
+
+
+def test_shares_at_available_at_point_in_time():
+    """非快照事件按 available_at 点时过滤：as_of 之后才入库的事件不参与历史股本
+    （消除前视）；snapshot_* 快照行豁免 available_at 过滤（§3.7 单点假设）。"""
+    future = valuation.ShareEventView("2023-08-09", "2026-08-09T00:00:00+00:00",
+                                      Decimal("100"), "issued", "buyback_cancel")
+    # available_at 晚于 as_of → 排除，历史区间不得用未来事件
+    assert valuation.shares_at([future], "2023-08-09") is None
+    # as_of 推进到事件可见之后 → 生效
+    assert valuation.shares_at(
+        [future], "2023-08-09",
+        datetime(2026, 8, 9, 1, tzinfo=timezone.utc)) == Decimal("100")
+    # 同 effective_at / available_at 的 snapshot_* 行豁免过滤
+    snap = valuation.ShareEventView("2023-08-09", "2026-08-09T00:00:00+00:00",
+                                    Decimal("170"), "issued", "snapshot_issued")
+    assert valuation.shares_at([snap], "2023-08-09") == Decimal("170")
 
 
 # ---------------------------------------------------------------- 股本快照 loader
@@ -383,7 +400,8 @@ def test_recompute_full_sample(conn):
     assert last["ma60"] is None                            # 窗口不足 → NULL
     # pe_ttm = close × 4e8 ÷ 1e9 = 114.5 × 0.4；年报直取
     assert last["pe_ttm"] == pytest.approx(114.5 * 0.4)
-    assert last["pe_status"] == f"ok;{valuation.DEGRADED_AVAILABLE_AT}"
+    assert last["pe_status"] == (
+        f"ok;{valuation.SNAPSHOT_SHARE_BASIS};{valuation.DEGRADED_AVAILABLE_AT}")
     assert last["dif"] is not None and last["dea"] is not None
     assert last["macd_hist"] == pytest.approx(2 * (last["dif"] - last["dea"]))
     assert last["run_id"] == "run_ind1"
@@ -437,3 +455,40 @@ def test_recompute_ttm_missing_marks_pe_null(conn):
         "AND trade_date = '2026-08-14'").fetchone()
     assert row["pe_ttm"] is None
     assert row["pe_status"].startswith(valuation.S_MISSING_PREV_ANNUAL)
+
+
+def test_recompute_share_basis_flag(conn):
+    """股本来自 snapshot_* 豁免路径 → pe_status 标注 snapshot_share_basis；
+    有 as_of 前可见的真实事件生效后股本切换，标注随之消失。"""
+    with conn:
+        recompute_indicators(conn, "TEST.SH", run_id="run_sb1")
+    row = conn.execute(
+        "SELECT pe_status FROM indicators_daily WHERE symbol = 'TEST.SH' "
+        "AND trade_date = '2026-08-14'").fetchone()
+    assert row["pe_status"] == (
+        f"ok;{valuation.SNAPSHOT_SHARE_BASIS};{valuation.DEGRADED_AVAILABLE_AT}")
+
+    # 真实回购注销事件：2026-08-01 生效且当时已可见 → 8/3 起股本切换到 5e8
+    conn.execute(
+        """
+        INSERT INTO share_capital_events (symbol, effective_at, available_at, event_type,
+            share_change, shares_issued_after, share_count_type, details_json, source,
+            raw_object_id, created_at)
+        VALUES ('TEST.SH', '2026-08-01', '2026-08-01T08:00:00+00:00', 'buyback_cancel',
+                NULL, '500000000', 'issued', '{}', 'test', NULL, ?)
+        """,
+        (db.utc_now(),),
+    )
+    conn.commit()
+    with conn:
+        recompute_indicators(conn, "TEST.SH", run_id="run_sb2")
+    rows = {r["trade_date"]: r for r in conn.execute(
+        "SELECT trade_date, pe_ttm, pe_status FROM indicators_daily "
+        "WHERE symbol = 'TEST.SH' AND trade_date >= '2026-07-31'")}
+    # 7/31 事件尚未生效，仍走快照豁免路径（标注保留）
+    assert rows["2026-07-31"]["pe_status"] == (
+        f"ok;{valuation.SNAPSHOT_SHARE_BASIS};{valuation.DEGRADED_AVAILABLE_AT}")
+    # 8/3（i=20，close=110.0）起用真实事件：pe = 110 × 5e8 ÷ 1e9，标注消失
+    aug3 = rows["2026-08-03"]
+    assert aug3["pe_ttm"] == pytest.approx(110.0 * 0.5)
+    assert aug3["pe_status"] == f"ok;{valuation.DEGRADED_AVAILABLE_AT}"

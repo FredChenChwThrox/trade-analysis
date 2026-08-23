@@ -651,3 +651,44 @@
 - **三轨路由**：西矿 Track A 命中（H1 归母 41.69 亿 +123% ≥50%，中报景气表述齐全，7-29 披露）；湖金 Track A 未命中（+46.01% 差 4pct 且锑价上半年 -25.8% 与景气表述相反）→ Track B 弱命中（万古金矿注入事件锚）+ 现金流闸门亮红灯（-1.06 亿）。
 - **阶段二结论**（报告 `reports/screening/2026-08-23-矿业扩充.md`）：**西矿 = 第二梯队观察池候选不入池**（兑现度强 Q2 +143%、玉龙三期 2026 年末投产、PE ~11 未透支；但与紫金铜敞口同质，组合不需要第二个铜）；**湖金 = 排除**（产量全线下滑 + 现金流转负 + 存货翻倍 + 锑逆风；本质是金股且 89% 收入为 0.09% 毛利外购金贸易；停牌中）。对原问题的回答：紫金板块内综合最优不换、豫光按线兑现，无需替换。
 - **紫金中报要点（顺带记录）**：H1 归母 391.7 亿 +68%、毛利率 27.7%→37.0%、金 47 吨 +13%、锂 +496%、铜 -5.7%（卡莫阿扰动）；2026E 机构预测 800-860 亿；8-31 卡片复核时 EPS 情景应上修，止盈线 31.7-31.9 维持线位但减仓幅度可从"减半"降为"减 1/4"（中报 +68% 后原线显保守）。
+
+## 2026-08-23（西部矿业 601168.SH 入池 + 排期卡 draft）
+
+- **背景**：同日矿业筛选结论把西矿列为"第二梯队观察池候选不入池"，用户随后指令直接入池跟踪并制作排期卡。
+- **入池**：`config/watchlist.yaml` 末尾新增 601168.SH（market CN，aliases [西部矿业, 西矿, Western Mining]，benchmark 000300.SH）→ `uv run python -m scripts.pipeline.db seed` 导入 14 只全成功。
+- **数据源偏差决定**：tdx-connector 为 workbuddy 远程 HTTP MCP（txmcp.tdx.com.cn:3001），本会话直连 401 无凭据不可用；按 tdx-collect skill 优先级约定走 kimi-datasource 兜底（kimi token 已恢复可用）。run_id=run_init_601168。
+- **采集清单**（`data/raw/.../2026-08-23/run_init_601168/`，各目录含 `_meta.json`）：
+  - kimi 不复权日线 725 行（2023-08-24~2026-08-21）+ 前复权 725 行（`price/.../601168.SH.csv` 与 `_forward_3y.csv`）；利润表 14 期（2023/2024/2025 四季报 + 2026Q1/H1，`financials/...`）；forecast；get_stock_info。
+  - yahoo：stock_info + stock_actions 19 条分红（窗口内 4 次现金分红无送转；文件名用内部代码 `601168.SH.csv`，`.SS` 后缀 market_of 不认）。
+  - 公告：kimi get_stock_announcement 164 条入库（`announcement/...`）。
+  - 天眼查"上市信息-上市公告"25 页 500 行（2023-01-19~2026-08-17，`tianyancha/announcement/2026-08-23/pit_backfill_601168/`，子代理抓取）。
+- **入库与管线**：ingest 全部 ok；股本快照双口径写入（`valuation.load_share_snapshot` + `load_group_total_snapshot`，均 2,383,000,000 股，effective_at=2023-08-24，sce_id 40/41）；`adjust --forward-csv` 建因子 5 平台段（切换日 2024-05-31/2025-06-20/2026-02-11/2026-06-10，与 yahoo 分红记录交叉印证一致）；周线 154 周。
+- **pit_backfill 回填 14 期披露日全匹配**（matched=14，回填前已备份）——解除 `degraded_available_at` 降级，PE 刻度从静态折算转为点时口径（§2.1），这是本次入池的关键质量动作。指标重算后 pe_ttm 非空 591/725（空值为 2024-03-18 前无点时 TTM，需 2022 财报才能再前推，未采，属预期）。weekly_signals/daily_watch/right_side/accumulation 全跑过（daily_watch/right_side 为 incomplete/no_active_card，激活卡后自愈）；报告 `reports/601168.SH/2026-08-21.md` revision=2 degraded(no_active_card)；底稿 `cards/601168.SH/inputs_2026-08-21.json`。
+- **排期卡**（fred-valuation-card-skill 全流程）：MD `cards/601168.SH/西部矿业估值排期卡.md` + JSON `cards/601168.SH/draft_2026-08-23.json`，`create-draft` 入库 → **card_version_id=`601168SH_cc4c2ac7`，状态 draft**。按 draft-only 纪律未激活，activate 必须人工（`uv run python -m scripts.pipeline.card activate 601168SH_cc4c2ac7 --effective-from <date>`）。
+  - 关键数字：现价 37.85（08-21）；TTM 归母 59.43 亿 / EPS 2.4938 / PE 15.18；EPS 情景 中性 2.85/悲观 2.55/极悲 2.20；PE 情景 乐观 17/中性 14/悲观 12；档位 T1 38.3–39.9(30%)/T2 33.9–35.7(35%)/T3 26.4–28.5(35%)；证伪线 26.40；右侧触发 43.30/止损 42.85；波段仓不适用；胜率 T1 55–75%/T2 65–85%/T3 70–90%；Kelly 上限 T1 0.0%/T2 10.9%/T3 17.1%；next_review_at 2026-10-31；锚=pe_scale（体系上移：底部刻度 10.4→12.5→14.2→16.8→18.7，双重计价问题已在卡内说明）；样本区间 2024-03-18~2026-08-21（§3.2 已标注）。
+- **信号状态**：当前活跃衰竭信号 0 项；现价已掠过 T1 下沿 1.2%，但 Kelly 对 T1 出 0（胜率下沿 55% + 赔率 0.74 非正期望），卡内建议 T1 预算并入 T2 等衰竭信号。
+- **测试**：`uv run pytest -q` **332 全绿**（无新增用例，纯数据入池）。
+- **NOTE**：① kimi 历史 amount 为 NULL（tdx 不可用所致，与全池其他股票一致）；② 2024-03-18 前无点时 PE（需采 2022 财报才能前推）；③ 卡激活后 daily_watch/right_side 的 no_active_card 降级自愈；④ 下周一（08-24）例行采集起 601168.SH 随全池一起跑 daily。
+
+## 2026-08-23（P0 审计修复批次：10 项已核实问题 + 3 项误报澄清）
+
+- **背景**：外部代码深度审计报告（含信号层 19 条）经逐条核实（对照代码 + 设计文档）后执行修复。用户拍板范围=全部已核实 P0，shares_at 口径=快照豁免混合方案。
+- **迁移 0002**（`migrations/0002_event_assessments_symbol_weekly_anchors_identity.sql`，已备份 `data/market.db.bak_20260823` 后应用于生产库）：
+  - `event_assessments` 重建，主键 → `(event_id, symbol, assessment_version)`，新增 symbol NOT NULL，2322 行从 event_symbols 回填（0 孤儿行，当前无多 symbol 事件，属潜伏 bug 修复）。
+  - `weekly_anchors` 加 `uq_weekly_anchors_identity`（symbol, anchor_type, trade_date, is_fallback）唯一索引（407 行 0 重复，安全建立）。
+- **修复清单**（均带新测试，全量 `uv run pytest -q` **357 全绿**，基线 332）：
+  1. `event_study.py`：查重/DELETE/INSERT 加 symbol 维度，study_event 输出带 symbol；新增多 symbol 独立落库 + 重算隔离 2 用例。
+  2. `valuation.py` `shares_at`：snapshot_* 行豁免 available_at（§3.7 单点假设维持，pe_status 追加 `snapshot_share_basis` 标注），真实事件行要求 available_at ≤ as_of（消前视）；新增点时过滤 + 标注切换 2 用例。⚠️ 既有历史 PE 行不会自动补标注，需重跑指标重算才生效。
+  3. `weekly_signals.py`：废弃全删全插，identity 匹配复用旧 anchor_id（字段变化 UPDATE、新 identity INSERT、失效 identity 删除）；缺失 OHLC 日不选为锚点（ValueError 不猜）。冒烟：002299.SZ 重算 28 锚点 anchor_id 全稳定、identity 集合一致。
+  4. `daily_watch.py`：as_of 早于最早 bar → 不删旧 facts、直接 incomplete（修 bars[-1] IndexError）；NULL close 跳过记 incomplete（修 Decimal('None') 崩溃）。
+  5. `right_side.py`：OHLCV 缺失 bar 跳过、status 降级 incomplete/missing_ohlcv_bars，不再 volume 当 0 / Decimal 崩溃。
+  6. `accumulation.py`：OHLCV 缺失行剔除记 degraded；prev close ≤ 0 不除零；`expired_consolidation` 起算点从破位日改为进入 consolidating 当日（对齐 §5.4c「横盘超 120 日」与 signals.yaml:62 注释；`consolidation.max_days` 从破位起算语义不变）。
+  7. `exhaustion.py`：episode 结束行同时 triggered=0、active_until 钳到结束周；`count_active_signals` 按 anchor_id 分组计数（§5.3「同一 anchor_id 下」口径落实，新增 by_anchor 明细，旧调用方键全保留）。
+  8. `cards.py`：parse_card 加 JSON/必填/数值/非负校验，非法卡片返回 None 按 incomplete 处理；convert_card_fields 换算后强制价格 > 0 且价区有序，违反抛 `CardConversionError`；corporate_action 适配：换算前置到关闭旧卡之前，被拒则冻结待人工、旧卡保持 active。
+- **审计误报澄清（核实为 FALSE，未改，防后续重复"修"）**：
+  1. 「历史重算用 load_active_card」——daily_watch:318 / right_side:216-236 实为 load_card_versions + card_for_day 按生效区间逐版本计算，load_active_card 仅 as_of 兜底，符合 §5.1。
+  2. 「right_side terminal 当日回 idle」——当日转换、次一交易日起才以 idle 评估，符合 §5.4c 与 right_side.py:19-20 锁定语义。
+  3. 「数据库无 FK/唯一约束」——FK（event_assessments→events 等多处）与 UNIQUE（signal_facts、corporate_actions 等）存在且 PRAGMA foreign_keys=ON（db.py:34）；仅 CHECK 约束全缺（未修，留待后续）。
+- **未核实未修（留待下批）**：wilder_rma NaN、新 bar 因子继承、周线截断 calendar、pit_backfill 全池执行、corporate_action 两点、event_study degraded 退出码、TDX 去重、UI 只读、CHECK 约束、config schema。
+- **文档**：database_schema.md 已同步（event_assessments/weekly_anchors/share_capital_events 三处）；system_design.md 无需改（修复均为代码向设计对齐）。
+- **遗留备注**：① `assessment_version` 列 INTEGER 亲和 vs 代码写 TEXT 'event_study_v1' 的不严谨未修（避免迁移面扩大）；② 0002 已应用于 data/market.db；③ 既有失败适配：test_db.py migrate 断言更新为 [0001, 0002]，test_report.py event_assessments 插入补 symbol。

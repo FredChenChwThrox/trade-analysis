@@ -73,7 +73,7 @@ class AccumulationResult:
     as_of: str = ""
     config_hash: str = ""
     rule_version: str = RULE_VERSION
-    status: str = "ok"           # ok / incomplete
+    status: str = "ok"           # ok / incomplete / degraded
     reason: str = ""
     days: int = 0
     facts_written: int = 0
@@ -108,8 +108,12 @@ class AccumulationResult:
 
 # ---------------------------------------------------------------- 数据加载
 
-def _load_bars(conn: sqlite3.Connection, symbol: str, as_of: str) -> list[dict]:
-    """复权价 + 调整量日线（§4.1 口径：价 ×price_adj_factor，量 ÷share_factor）。"""
+def _load_bars(conn: sqlite3.Connection, symbol: str, as_of: str) -> tuple[list[dict], list[str]]:
+    """复权价 + 调整量日线（§4.1 口径：价 ×price_adj_factor，量 ÷share_factor）。
+
+    OHLCV 关键字段缺失的行拒绝参与计算（§2.5 不猜，缺失不当 0），
+    返回 (bars, skipped_dates)。
+    """
     rows = conn.execute(
         """
         SELECT trade_date, open_raw, high_raw, low_raw, close_raw, volume_raw,
@@ -118,19 +122,23 @@ def _load_bars(conn: sqlite3.Connection, symbol: str, as_of: str) -> list[dict]:
         """,
         (symbol, as_of),
     ).fetchall()
-    bars = []
+    bars, skipped = [], []
     for r in rows:
+        if any(r[k] is None for k in
+               ("open_raw", "high_raw", "low_raw", "close_raw", "volume_raw")):
+            skipped.append(r["trade_date"])
+            continue
         f = r["price_adj_factor"] or 1.0
         sf = r["share_factor"] or 1.0
         bars.append({
             "trade_date": r["trade_date"],
-            "open": (r["open_raw"] or 0.0) * f,
-            "high": (r["high_raw"] or 0.0) * f,
-            "low": (r["low_raw"] or 0.0) * f,
-            "close": (r["close_raw"] or 0.0) * f,
-            "volume": (r["volume_raw"] or 0.0) / sf,
+            "open": r["open_raw"] * f,
+            "high": r["high_raw"] * f,
+            "low": r["low_raw"] * f,
+            "close": r["close_raw"] * f,
+            "volume": r["volume_raw"] / sf,
         })
-    return bars
+    return bars, skipped
 
 
 def _load_ma(conn: sqlite3.Connection, symbol: str) -> dict[str, dict]:
@@ -160,7 +168,12 @@ def is_breakdown(bars: list[dict], i: int, base: float, p: dict) -> tuple[bool, 
     if i < 1 or i < n - 1:
         det["reason"] = "insufficient_history"
         return False, det
-    chg = bars[i]["close"] / bars[i - 1]["close"] - 1.0
+    prev_close = bars[i - 1]["close"]
+    if prev_close <= 0:
+        # 前收 ≤0（脏数据）不猜，当日涨跌幅不判定（§2.5）
+        det["reason"] = "invalid_prev_close"
+        return False, det
+    chg = bars[i]["close"] / prev_close - 1.0
     is_new_low = bars[i]["close"] <= min(x["close"] for x in bars[i - n + 1:i + 1])
     vol_ok = base is not None and bars[i]["volume"] >= b["vol_multiple"] * base
     det.update({"pct_chg": chg, "is_new_low": is_new_low, "vol_base": base,
@@ -252,8 +265,18 @@ def run_accumulation(
         return res
 
     p = params["accumulation"]
-    bars = _load_bars(conn, symbol, as_of)
+    bars, skipped_rows = _load_bars(conn, symbol, as_of)
     ma_map = _load_ma(conn, symbol)
+
+    def mark_degraded(reason: str, note: str) -> None:
+        if res.status == "ok":
+            res.status, res.reason = "degraded", reason
+        res.notes.append(note)
+
+    if skipped_rows:  # OHLCV 缺失行被剔除，整体仍出结果但记 degraded（§2.5）
+        mark_degraded(
+            "missing_ohlcv_rows",
+            f"跳过 OHLCV 缺失行 {len(skipped_rows)} 天: {', '.join(skipped_rows[:10])}")
     now = utc_now()
     conn.execute("DELETE FROM signal_facts WHERE symbol = ? AND signal = ?",
                  (symbol, SIGNAL))
@@ -261,6 +284,7 @@ def run_accumulation(
     state = ST_IDLE
     breakdown_idx: int | None = None
     breakdown_vol_base: float | None = None
+    consolidation_start_idx: int | None = None  # 进入 consolidating 的索引（expired 起算点，§5.4c）
     box: dict = {}
     probe_count = 0
     terminal_pending_idle = False  # terminal 日后次日回 idle
@@ -295,6 +319,7 @@ def run_accumulation(
         if terminal_pending_idle:  # terminal 次日重新扫描
             state, terminal_pending_idle = ST_IDLE, False
             breakdown_idx, breakdown_vol_base, box, probe_count = None, None, {}, 0
+            consolidation_start_idx = None
             det = {"vol_base": base}
 
         if state == ST_IDLE:
@@ -309,6 +334,9 @@ def run_accumulation(
                 triggered = 1
             else:
                 det["reason"] = bd["reason"]
+                if bd["reason"] == "invalid_prev_close":  # 前收 ≤0 不猜（§2.5）
+                    mark_degraded("invalid_prev_close",
+                                  f"{day} 前收 ≤0，当日破位不判定")
 
         elif state == ST_WATCHING:
             assert breakdown_idx is not None
@@ -329,6 +357,7 @@ def run_accumulation(
                 det["consolidation_check"] = cd
                 if cond:
                     state = ST_CONSOLIDATING
+                    consolidation_start_idx = i  # expired_consolidation 从此起算
                     box = {"box_low": cd["box_low"], "box_high": cd["box_high"]}
                     det.update(box)
                     det["probe_count"] = 0
@@ -347,7 +376,10 @@ def run_accumulation(
                 probe_count += 1
                 det["probe_today"] = True
                 det["probe_count"] = probe_count
-            days_consol = i - breakdown_idx if breakdown_idx is not None else 0
+            # 横盘窗口从进入 consolidating 起算（§5.4c），不从破位日起算
+            days_consol = (i - consolidation_start_idx
+                           if consolidation_start_idx is not None else 0)
+            det["days_consolidating"] = days_consol
             if bar["close"] < box["box_low"]:
                 state = ST_FAILED
                 det["reason"] = "box_broken"

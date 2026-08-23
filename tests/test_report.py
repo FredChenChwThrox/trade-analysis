@@ -279,9 +279,9 @@ def test_message_section_event_study_counts(conn, tmp_path):
         "INSERT INTO event_symbols (event_id, symbol) VALUES ('evt_r1', 'TRIG.SH')")
     conn.execute(
         """
-        INSERT INTO event_assessments (event_id, assessment_version, model,
+        INSERT INTO event_assessments (event_id, symbol, assessment_version, model,
             assessed_at, event_type, status, event_study_json, run_id)
-        VALUES ('evt_r1', 'event_study_v1', 'deterministic', ?, 'announcement',
+        VALUES ('evt_r1', 'TRIG.SH', 'event_study_v1', 'deterministic', ?, 'announcement',
                 'ok', '{"t1": {"mark": null}, "t5": {"mark": "pending"}}', 'test')
         """, (now,))
     conn.commit()
