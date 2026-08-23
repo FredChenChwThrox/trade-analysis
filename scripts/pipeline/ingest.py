@@ -17,12 +17,19 @@ import sys
 from pathlib import Path
 
 from scripts.adapters import stock_finance_data as sfd
+from scripts.adapters import tdx
 from scripts.adapters import tianyancha as tyc
 from scripts.adapters import yahoo_finance as yf
 from scripts.adapters.common import IngestResult, ingest_file
 from scripts.pipeline.db import DEFAULT_DB_PATH, connect
 
 _ROUTES = {
+    # 通达信（默认第一优先源，§3.2 2026-08-21 起新增）
+    ("tdx", "kline"): tdx.parse_kline_csv,
+    ("tdx", "index"): tdx.parse_index_csv,
+    ("tdx", "announcement"): tdx.parse_announcement_csv,
+    ("tdx", "quotes"): tdx.parse_quotes_csv,
+    # kimi-datasource（fallback；access_token 失效需 /login）
     ("stock_finance_data", "price"): sfd.parse_price_csv,
     ("stock_finance_data", "financials"): sfd.parse_financials_csv,
     ("stock_finance_data", "announcement"): sfd.parse_announcement_csv,

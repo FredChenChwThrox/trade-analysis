@@ -115,10 +115,12 @@ Python Derivation（确定性）
 
 ### 3.2 行情数据
 
-**数据源**：
+**数据源**（2026-08-21 起通达信为第一优先源，kimi/yahoo 兜底）：
 
-- A 股：`kimi-datasource` 的 `stock_finance_data.get_price`，ticker 形如 `600223.SH`。
-- 港股：插件内 `yahoo_finance`，ticker 形如 `0700.HK`。首次接入必须用一只有除权历史的股票验证字段、时区和复权口径。
+- **第一优先：`tdx-connector` MCP**（`tdx_kline`，A 股 setcode=1/0/2、港股 setcode=31、指数 setcode=62，含 amount 弥补 kimi 缺陷；`wenda_notice_query` 公告；`tdx_quotes hasCwInfo=1` 估值/股本/股东人数快照）。adapter `scripts/adapters/tdx.py`，采集规范 `skills/tdx-collect/SKILL.md`。
+- A 股 fallback：`kimi-datasource` 的 `stock_finance_data.get_price`（ticker 形如 `600223.SH`，access_token 易失效需 `/login`，公告接口自 2026-08-13 持续 EMPTY_DATA）。
+- 港股 fallback：插件内 `yahoo_finance`（ticker 形如 `0700.HK`）。首次接入港股必须用一只有除权历史的股票验证字段、时区和复权口径。
+- tdx volume 单位为手（Unit=100），adapter 按 unit 列换算为股（与 kimi volume_raw 口径一致）；tdx amount 单位为元，直接入库（kimi 缺 amount，tdx 是优势字段）。
 
 **范围**：
 

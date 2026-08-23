@@ -9,7 +9,7 @@
 - 所有命令前缀 `uv run`；包下载失败时走系统代理。
 - 测试：`uv run pytest -q`（当前 161 项，全绿才算完成）。
 - 数据库：SQLite `data/market.db`（schema `scripts/pipeline/migrations/0001_init.sql`，`scripts/pipeline/db.py` 的 `migrate` 建库）。
-- 数据源：kimi-datasource 插件（`stock_finance_data`，A 股全量；`yahoo_finance`，备用/股本快照）。接口探测记录见 `docs/probe_20260809_stock_finance_data.md`。**同花顺无港股数据**，港股需另配源（尚未接入）。
+- 数据源（2026-08-21 起）：**通达信 tdx-connector 第一优先**（`scripts/adapters/tdx.py`，A 股+港股+指数行情+公告+估值/股本快照，采集规范 `skills/tdx-collect/SKILL.md`）；kimi-datasource 兜底（`stock_finance_data` A 股全量 + `yahoo_finance` 港股/股本/FX，access_token 易失效需 `/login`，公告接口自 8/13 持续 EMPTY_DATA）；tianyancha 公告补采兜底。接口探测记录见 `docs/probe_20260809_stock_finance_data.md`、`docs/probe_20260815_tianyancha.md`、`docs/probe_20260821_tdx.md`。**港股源已通过 tdx 接入**（setcode=31，0700.HK 在 watchlist 待采集）。
 
 ## 2. 目录结构
 
