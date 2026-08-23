@@ -1,0 +1,35 @@
+{
+  "run_id": "run_collect",
+  "source": "tdx",
+  "fetched_at": "2026-08-21T11:30:00+08:00",
+  "purpose": "全池数据采集：补齐 12 只 A 股 08-18~08-20 缺口 K 线 + 增量公告 + 估值/股本/股东人数快照（603605.SH 已于试采时采集，本次跳过）",
+  "data_types": {
+    "kline": {"files": 12, "rows_per_file": 9, "date_range": "2026-08-10..2026-08-20", "note": "剔除 08-21 盘中未收盘数据"},
+    "announcement": {"files": 12, "total_rows": 47, "empty": ["002557.SZ", "601899.SH"], "note": "601899 content_hash 撞库 skipped"},
+    "quotes": {"files": 12, "rows_per_file": 1, "fields": "pe/pb/mgsy/mgjzc/zsz/zgb/ltgb/gdrs/financials"}
+  },
+  "ingest_result": {
+    "inserted": 95,
+    "updated": 72,
+    "skipped": 2,
+    "conflicts": 0,
+    "errors": 0,
+    "breakdown": {
+      "kline": "inserted=36 (12只×3天新增) updated=72 (12只×6天 amount 补全 source_revision)",
+      "announcement": "inserted=47 skipped=2",
+      "quotes": "inserted=12 (group_total_tdx 估值快照)"
+    }
+  },
+  "coverage_after": {
+    "daily_bars": "13 只 A 股最新到 2026-08-20（603605.SH 到 08-21 盘中）",
+    "index_bars": "000300.SH 到 2026-08-21",
+    "amount_field": "最近 9 天非空（tdx 补），kimi 历史 9412 行仍 NULL（长期缺陷）",
+    "events": "13 只公告 145~254 条不等",
+    "share_capital_events_tdx": "13 只各 1 条 group_total_tdx 快照"
+  },
+  "known_gaps": [
+    "08-21 收盘后需重采（本次剔除盘中数据）",
+    "kimi 历史 amount 全 NULL，如需补全需 tdx 重采 3 年历史（wantNum=750）",
+    "0700.HK 港股未采集（watchlist 未含，且 HK 日历=0 未填充）"
+  ]
+}

@@ -570,3 +570,84 @@
   | 603288.SH 海天 | 55.60 亿 | 58.51 亿 | ×1.0524 | 27.36 → 28.79 |
 - **文档同步**：system_design §3.7/§4.1（share_count_type 增 group_total 取值与 PE 取数优先级）、database_schema share_capital_events 节。测试新增 2 项（group_total 优先级 + loader 幂等/冲突/跨口径并存），`uv run pytest -q` 303 全绿。
 - **NOTE**：① 排期卡 PE 刻度/分位数随口径平移，历史卡片估值段与卡内 1.7 倍口径标注需人工复核（卡片为 [决策] 不自动改，后续人工流程）；② 平安 2025-09 回购注销 1.03 亿股（gildata 明细）使 group_total 快照对 2025-09 前区间略低估，与单点假设同方向记录；③ 牧原/紫金/海天 H 股上市日前的历史 PE 实际应以当时 A 股本计，当前按新总股本平移，偏差方向为高估历史 PE。
+
+## 2026-08-18（财报披露日回填模块 pit_backfill，解除 D1.3 降级；补记于 08-23 提交时）
+
+- **背景**：financial_reports 历史入库时 published_at 全 NULL、available_at 填入库时间（D1.3 降级），pe_status 长期带 `;degraded_available_at` 标注，严格点时过滤（§2.1）形同虚设。本模块用天眼查"上市信息-上市公告"原始 CSV（`data/raw/tianyancha/announcement/2026-08-17/pit_backfill/`，13 只 × p1/p2/p3 三批共 125 个 CSV）回溯真实披露日。
+- **模块**（`scripts/pipeline/pit_backfill.py`，CLI `uv run python -m scripts.pipeline.pit_backfill --raw-dir ... [--symbol ...] [--dry-run] [--backup ...]`）：
+  - 回填口径：published_at = 公告日 00:00 本地（Asia/Shanghai）→ UTC；available_at = 下一开市交易日 00:00 本地（复用 `adapters/tianyancha._next_open_available_at` 保守规则，§2.1）；每次改写 data_revisions 记旧值/新值（含天眼查 uuid 与来源文件 sha256）。
+  - 匹配规则 `match_disclosure`（纯函数，§2.5 不猜）：按 (period_type, period_end) 生成标题关键词（年度/一季度或 Q1/半年度/三季度，含名称变体）；只取 stock_code 等于该股 6 位代码的行（A+H 混排的 H 股公告不算）；排除英文版/修订/更正/问询/回复/说明会等非首披文本；摘要与全文同步披露时全文优先、缺全文取摘要；同标题多条取最早披露日；匹配不上返回 None 保持降级不猜。
+  - 安全设计：`--dry-run` 只匹配不写库；`--backup` 先导出 financial_reports 备份 CSV 再回填。
+- **compute.py 联动**（`scripts/indicators/compute.py`）：`recompute_indicators` 的 `assume_visible_reports` 默认改 None 自动判定——该股任一财报 published_at IS NULL（仍是入库时间降级）时回退 assume_visible 并标注 `;degraded_available_at`；全部回填真实披露日后严格按 available_at <= as_of 点时过滤，标注消失（§2.1）。
+- **测试 +12**（`tests/test_pit_backfill.py`）：标题关键词映射、全文最早优先且排除修订版、英文版跳过不猜、摘要 fallback、全文优先于摘要、季度名称变体、H 股行按 stock_code 过滤、非披露标题排除、无匹配返回 None、CSV 加载去重过滤、回填写库（匹配更新+未匹配保持原值）、dry-run 零写入。`uv run pytest -q` 303→315 全绿。
+- **状态：模块就绪、尚未对生产库执行**——库内 98 期财报 published_at 仍全 NULL、data_revisions 无 pit_backfill 记录。执行流程（待排期）：`--backup` 导出备份 → `--dry-run` 核对各股匹配数 → 正式回填 → 全池重算指标 → 验证 pe_status 的 degraded_available_at 标注消失、PE 序列无异常跳变。
+
+## 2026-08-21（通达信 tdx-connector 接入为第一优先数据源）
+
+- **背景**：用户问"当前接口能否采集数据，是否有替代源"。实地探测发现 kimi-datasource 插件 access_token 失效（`access_token was rejected. Run /login again`），stock_finance_data 全套接口（行情/财报/预期/公告/股本）当前不可用；且公告接口自 8/13 持续 EMPTY_DATA、指数接口长期 EMPTY_DATA，单一源风险高。用户指令"将通达信接口也一起加入到数据源中，默认第一优先级"。
+- **探测确认 tdx-connector 能力**（已 connected，未接入管线）：A 股日 K 线（603605.SH 实测，含 amount 弥补 kimi 缺 amount、HasLtgb 流通股本）、沪深300 指数（setcode=62）、港股 00700 K 线（setcode=31）、公告 wenda_notice_query、估值/股本/股东人数 tdx_quotes hasCwInfo=1、港股财报 tdx_api_data（fixedTag=1/2/3）。详见 `docs/probe_20260821_tdx.md`。
+- **adapter 实现**（`scripts/adapters/tdx.py`，4 个 parse 函数）：
+  - `parse_kline_csv`：A 股/港股日 K → daily_bars，按 setcode 推 symbol 后缀（1→SH 0→SZ 2→BJ 31→HK），复用 `_validate_bar_row`/`upsert_daily_bars`；**volume 按 unit 列换算**（tdx Rows.Volume 单位手，×100 转股与 kimi volume_raw 口径一致；指数 unit=1 不换算）；tqflag=1/2 前/后复权文件不入 daily_bars 留给复权模块。
+  - `parse_index_csv`：指数 → index_bars（setcode=62/32），code 经 SETCODE_SUFFIX 归一（000300 → 000300.SH）。
+  - `parse_announcement_csv`：公告 → events/event_symbols，无 uuid 按 `title|pub_date` 哈希去重（§3.6），available_at 取下一开市交易日 00:00 本地（§2.1）。
+  - `parse_quotes_csv`：估值/股本快照 → share_capital_events（event_type=snapshot_group_total_tdx，share_count_type=group_total_tdx），**不参与 valuation.py PE 取数**（仅认 issued/group_total），details_json 含 pe/pb/mgsy/mgjzc/zsz/ltgb/gdrs/financials；GDRS 股东人数是系统长期缺的筹码集中度指标（§5.7）。
+- **ingest 路由**（`scripts/pipeline/ingest.py` `_ROUTES`）：加 4 条 tdx 路径路由（tdx/kline、tdx/index、tdx/announcement、tdx/quotes），列在字典首位标示第一优先。
+- **采集规范**（`skills/tdx-collect/SKILL.md`）：CSV 列格式与 adapter 严格对齐；tdx 第一优先、kimi fallback、tianyancha 公告兜底的优先级约定；全量初始化与增量模式；港股财报/资金筹码/港股日历三项已知限制。
+- **BOM 修复**：Write 工具落盘 CSV 带 UTF-8 BOM，csv.DictReader 把首列读成 `\ufeffcode` 致 adapter "缺 code 列"。修复：tdx.py 4 处 `open(...)` 改 `encoding="utf-8-sig"`（自动剥 BOM）。
+- **测试 +17**（`tests/test_tdx_adapter.py`）：K 线 OHLC 校验 + amount 非空 + volume ×100 换算 + 复权因子继承；港股 setcode=31 + HK 日历缺失 incomplete 降级；tqflag=1/2 跳过；指数 setcode=62 + unit=1 不换算 + 非 index setcode 拒绝；公告 title|date 去重 + symbol 关联 + 幂等 + 缺 ticker 拒绝；估值快照 group_total_tdx + 不污染 PE 取数 + 幂等；ingest CLI 4 类路由。`uv run pytest -q` **332 全绿**（原 315 + 新 17）。
+- **实地试采 603605.SH**（`data/raw/tdx/{kline,index,announcement,quotes}/2026-08-21/run_probe_tdx/`）：K 线 5 根（08-17..08-21）inserted=4 updated=1（08-17 与 kimi 历史一致但 amount 从 None→284190240 补全，触发 data_revisions source_revision）、指数 3 根（08-19..08-21）inserted=3、公告 2 条 inserted=2、估值快照 1 条 inserted=1。**交叉校验通过**：08-17 tdx close=56.87 = kimi 56.87；volume 5037218（50372.18×100）≈ kimi 5037200；amount 284190240 补全；price_adj_factor 1.058587 继承正确（未因 tdx 入库重置）；000300.SH 08-19/20/21 新增（之前 yahoo 仅到 08-17）；603605.SH 公告 180（tianyancha）+2（tdx）并存；估值快照 shares=395976100 pe=15.38 pb=3.57 gdrs=73274。
+- **文档同步**：system_design §3.2 数据源节（tdx 第一优先 + kimi/yahoo 兜底 + volume 单位换算说明）；handoff.md 数据源节；本日志；`docs/probe_20260821_tdx.md` 实测记录。
+- **已知限制（二期）**：① 港股财报 tdx_api_data adapter 未实现 parse_financials_csv；② 资金/筹码分布（盘口夹板/托单）数据源不可得（§3.6）；③ 港股日历仍需 `config/calendar_HK_{year}.yaml` 种子；④ 跨源公告去重（tdx 与 tianyancha 同标题公告不去重，后续加 canonical_url）。
+
+## 2026-08-21（全池数据采集：tdx 补齐 12 只 A 股缺口）
+
+- **背景**：用户指令"进行一次数据采集，补齐当前跟踪股票的缺失数据"。库内 13 只 A 股中 12 只最新 bar 到 2026-08-17（缺 08-18/19/20 共 3 个交易日），公告多数到 8 月中旬，tdx 估值快照仅 603605.SH 有（试采时写的）。
+- **采集范围**：12 只 A 股（排除已采的 603605.SH）× 3 类数据（K 线 + 公告 + 估值快照）= 36 个 CSV，落盘 `data/raw/tdx/{kline,announcement,quotes}/2026-08-21/run_collect/`。tdx-connector 为 streamable-http 类型（企业托管鉴权），Python 无法 subprocess 直调，改用 3 个并行 Agent 子任务分别采集（K 线/公告/估值），避免 36 次 MCP 响应污染主上下文。
+- **采集执行**：
+  - K 线：`tdx_kline wantNum=10 tqFlag=0`，剔除 08-21 盘中未收盘数据，保留 08-10..08-20 共 9 根/只。12 只全成功。
+  - 公告：`wenda_notice_query bdate=各股最新公告日+1 edate=20260821`。12 只全成功，共 47 条（002557 洽洽、601899 紫金为空数据；601899 公告 CSV content_hash 撞库 skipped）。
+  - 估值快照：`tdx_quotes hasCwInfo=1`。12 只全成功，PE/PB/GDRS 齐全（002714 牧原 PE=-18.66 亏损；601318 平安 PB=0.92 破净）。
+- **ingest 入库**（`uv run python -m scripts.pipeline.ingest` 3 目录）：**inserted=95 updated=72 skipped=2 conflicts=0 errors=0 incomplete=0**。
+  - K 线：inserted=36（12 只 × 3 天新增 08-18/19/20）updated=72（12 只 × 6 天重叠 08-10..08-17，amount 从 None→有值，触发 72 条 data_revisions source_revision）。
+  - 公告：inserted=47 skipped=2。
+  - 估值快照：inserted=12（group_total_tdx，不参与 PE 取数）。
+- **采集后库内现状**：
+  - 12 只 A 股最新 bar 到 2026-08-20（缺口补齐）；603605.SH 到 08-21（试采时盘中数据）。
+  - amount 补全：最近 9 天非空（tdx 补，113/9525 行）；kimi 历史 9412 行 amount 仍 NULL（kimi 长期缺陷，如需补全需 tdx 重采 3 年历史 wantNum=750）。
+  - 公告：13 只 98~254 条不等（tdx + tianyancha 并存）。
+  - tdx 估值快照：13 只各 1 条 group_total_tdx（含 PE/PB/MGSY/MGJZC/ZSZ/ZGB/LTGB/GDRS/IPOPrice/财务三表摘要）。
+  - 000300.SH 指数到 08-21（试采时补）。
+- **_meta.json**：`data/raw/tdx/kline/2026-08-21/run_collect/_meta.json` 记录采集参数、入库统计、coverage_after、known_gaps。
+- **NOTE**：① 08-21 收盘后（15:00 后）需重采当日完整数据（本次剔除盘中）；② kimi 历史 amount 全 NULL，本次只补增量 9 天，历史补全需 tdx 重采 3 年；③ 0700.HK 港股未采集（watchlist 未含，HK 日历=0 未填充）；④ 601318 平安 PB=0.92 破净、002714 牧原 PE 负值，估值快照已如实记录不猜（§2.5）。
+- **NOTE**：① 08-21 K 线为 11:04 盘中部分数据（未收盘），仅验证 ingest 链路不跑 daily；② tdx 公告与 tianyancha 部分内容可能重复（跨源未去重），不影响事件研究（按 event_id 去重）；③ 0700.HK 在 watchlist 待采集（港股日历 + tdx 港股 K 线已具备接入条件）。
+
+## 2026-08-21（盘后例行 daily 2026-08-20 + 08-21 盘中污染清理）
+
+- **daily --date 2026-08-20**（13:36 执行，数据已入库不带 --raw-dir）：**全池 ok=13**，报告全 complete；event_study 写入 227 行（ok 35 / degraded 192，degraded 为 000300 07-20..08-07 指数空洞期）；全池日报 `reports/daily/2026-08-20.md` revision=1。
+- **发现并清理 08-21 盘中 bar 污染（603605.SH）**：上午试采（run_probe_tdx）入库的 08-21 盘中 bar 使 weekly 模块把本周（08-17..08-21 周五未收盘）误判为完成周，生成 `weekly_bars week_end=2026-08-21` 伪周线与 `duration observed_on=2026-08-21` 信号（其余 12 只无 08-21 bar 不受影响，最新周均 08-14）。**违反 §3.4"weekly_bars 只保存完成周"**。清理：data_revisions 记 `intraday_partial_removed`（run_id=manual_20260821_clean）→ DELETE daily_bars 08-21 行 → DELETE weekly_bars 伪周行 → 重跑 daily 全量重算。清理后 603605.SH 最新 bar=08-20、最新周=08-14 与全池一致，报告 revision=2。**教训：盘中 bar 不得入库——收盘前采集的 CSV 必须剔除当日行（run_collect 批已执行该剔除，run_probe_tdx 遗漏）；tdx-collect skill 采集模式已含此纪律。**
+- **全池观察状态（2026-08-20 收盘）**：
+  - **P3 已确认决策点 ×3**：600029.SH 南航 T1 档位触发（收盘 5.03 入第一档 [4.95, 5.20]）；603697.SH 有友 T1 档位触发（收盘 9.46 入第一档 [9.20, 9.70]）；600346.SH 恒力右侧确认成立（关键位 18.50，retest_within_band_and_held，突破 18.685 后回踩 18.87 带内企稳，hold 18.315）。
+  - **P4 临近观察点 ×2**：002709.SZ 天赐距 T1 上沿 36.50 差 1.6%；603288.SH 海天距 T1 下沿 36.40 差 1.8%。
+  - **活跃衰竭信号 8 项 / 5 只**（最近完成周 08-14）：600029（divergence+duration）、603697（divergence+duration）、002714 牧原（duration+no_new_low_3w）各 2 项；002557 洽洽、603605 珀莱雅各 1 项（duration）。
+  - **吸筹形态**：601318.SH 平安 watching（放量破位观察，未到缩量横盘判定）。
+  - **603605.SH 珀莱雅**：收盘已进入第二档价区但同锚点活跃衰竭信号 1 项 < 2，tier_triggered=pending_signals 不触发（§5.4 第二档附加条件）。
+  - 无 P1 数据异常、无 P2 证伪跌破/复核逾期/换算待确认。
+- **NOTE**：① 000300 指数 07-20..08-07 历史空洞仍未补（tdx 只补了 08-19..08-21 增量，历史需 tdx_kline wantNum 更大重采）；② 事件研究 degraded 192 行随指数回补自动转正；③ 08-21 收盘后（15:00 后）例行采集→daily 闭环。
+
+## 2026-08-22（08-21 收盘数据补采 + daily 闭环，周六例行）
+
+- **采集**（run_collect，`data/raw/tdx/{kline,index,announcement}/2026-08-22/run_collect/`）：周六采 08-21 完整收盘数据。K 线 13 只（wantNum=10，08-10..08-21 全保留无剔除）+ 000300 指数重采（wantNum=5，修正昨日 11:00 盘中值 4625.20 → 收盘 4618.9）+ 公告 13 只 50 条（南航空数据）。估值快照跳过（13 只 08-21 快照昨日已入库，重采幂等）。2 个并行 Agent 子任务执行。
+- **ingest**：inserted=38 updated=74 skipped=74 conflicts=0（K 线 13×1 新增 + 重叠日 amount 校验 update；公告新增 24 条：洽洽 2、天赐 1、牧原 2、埃斯顿 5、恒力 1、豫光 1、平安 2、紫金 5、有友 5）。
+- **daily --date 2026-08-21**：**全池 ok=13**，报告全 complete；本周（08-17..08-21）为完成周，周线信号首次更新到 08-21 周；event_study 写入 251 行（ok 77 / degraded 174）；全池日报 `reports/daily/2026-08-21.md`。
+- **本周完成周衰竭信号（10 项 / 6 只，较上周 8 项/5 只）**：600029 南航 **3 项**（divergence + **dry_up 新增** + duration）；603697 有友 2 项（divergence+duration）；002714 牧原 2 项（duration+no_new_low_3w）；002557 洽洽、603605 珀莱雅各 1 项（duration，珀莱雅仍差 1 项释放 T2）。
+- **P3 决策点 3 只**：① 002557 洽洽新晋——波段箱体 buy_zone（收盘 18.55 入买入区 [17.50, 18.60]）；② 600029 南航 T1 档位维持（4.99 在 [4.95, 5.20]）；③ 603697 有友 T1 + buy_zone **双触发**（9.26 同时在 T1 [9.20, 9.70] 与买入区 [8.90, 9.30]）。600346 恒力右侧 confirmed 次日回 idle 落 P5（§5.4c terminal 纪律预期）。P4：603288 海天距 T2 上沿 34.20 差 2.5%（-1.96% 后 T1 上方够不着转监测 T2）；002709 天赐 +2.37% 远离 T1 落 P5。
+- **08-21 全池涨跌**：豫光 +6.19%（13.90）、平安 +2.32%（53.35，距卡片卖出区下沿 53.50 仅 0.3%）、紫金 +1.43%（34.74）、埃斯顿 +2.44%、天赐 +2.37%；圣农 -2.91%、有友 -2.11%、海天 -1.96%。
+- **⚠️ 紫金 XD 除息未处理（数据缺口）**：子任务探测紫金 08-21 为 XD 除息日，但 ① corporate_actions 表无 08-21 记录（tdx K 线采集不含分红事件流）；② 复权因子未调整（08-20/08-21 均 1.0611）。若除息额 D>0，复权序列在 08-21 存在约 D/34.25 的虚假缺口，污染紫金均线/周线/信号口径。**待补**：yahoo get_stock_actions 或 tdx 后复权（tqFlag=2）对比推因子 → corporate_actions 入库 → adjust 全量重建。
+- **NOTE**：① 下周一（08-24）例行：采集增量 → daily --date 08-24；② 珀莱雅 T2 价区 + 1 项衰竭信号状态延续，若下周出现恐慌/干涸/不新低任一信号则 T2 释放；③ 事件研究 degraded 174 行仍为 000300 指数 07-20..08-07 历史空洞。
+
+## 2026-08-23（矿业扩充定向筛选：西矿/湖金两只候选）
+
+- **背景**：用户持豫光（铅锌冶炼+银）、紫金（金铜锂），问同业是否有更合适标的。tdx 快照拉 7 只同业估值（山东黄金 PE 29.5/赤峰 23.8/湖金 20.1/中金 13.8/洛钼 12.3/西矿 10.8/白银有色 75.2），圈定西矿、湖金两只候选走 earnings-surge-screener 定向评估。kimi-datasource 鉴权失效（gildata 不可用），数据源降级 tdx + WebSearch。
+- **三轨路由**：西矿 Track A 命中（H1 归母 41.69 亿 +123% ≥50%，中报景气表述齐全，7-29 披露）；湖金 Track A 未命中（+46.01% 差 4pct 且锑价上半年 -25.8% 与景气表述相反）→ Track B 弱命中（万古金矿注入事件锚）+ 现金流闸门亮红灯（-1.06 亿）。
+- **阶段二结论**（报告 `reports/screening/2026-08-23-矿业扩充.md`）：**西矿 = 第二梯队观察池候选不入池**（兑现度强 Q2 +143%、玉龙三期 2026 年末投产、PE ~11 未透支；但与紫金铜敞口同质，组合不需要第二个铜）；**湖金 = 排除**（产量全线下滑 + 现金流转负 + 存货翻倍 + 锑逆风；本质是金股且 89% 收入为 0.09% 毛利外购金贸易；停牌中）。对原问题的回答：紫金板块内综合最优不换、豫光按线兑现，无需替换。
+- **紫金中报要点（顺带记录）**：H1 归母 391.7 亿 +68%、毛利率 27.7%→37.0%、金 47 吨 +13%、锂 +496%、铜 -5.7%（卡莫阿扰动）；2026E 机构预测 800-860 亿；8-31 卡片复核时 EPS 情景应上修，止盈线 31.7-31.9 维持线位但减仓幅度可从"减半"降为"减 1/4"（中报 +68% 后原线显保守）。
