@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}{{ meta.name }}（{{ symbol }}）- 股票监测系统{% endblock %}
+{% block content %}
+<div id="stock-page" class="space-y-5" data-symbol="{{ symbol }}"
+     data-meta='{{ meta | tojson }}'>
+
+  <!-- 头部 + 关键数字卡片行（stock.js 经 /api/stocks/{symbol}/overview 填充，缺失显示 —） -->
+  <section>
+    <div class="flex items-baseline gap-3 mb-2">
+      <h1 class="text-xl font-bold">{{ meta.name }}
+        <span class="text-sm font-normal text-gray-500">{{ symbol }}</span></h1>
+      <span class="text-xs text-gray-400">数据截止 {{ meta.latest.trade_date if meta.latest else '—' }}</span>
+      {% if meta.active_card %}
+      <span class="text-xs">卡片 <a class="text-blue-600" href="/cards?q={{ meta.active_card.card_version_id }}">{{ meta.active_card.card_version_id }}</a></span>
+      {% else %}
+      <span class="text-xs text-yellow-600">无 active 卡片</span>
+      {% endif %}
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2" id="num-cards">
+      <div class="num-card"><div class="label">现价（不复权）</div><div class="value" id="nc-close">—</div><div class="sub" id="nc-close-sub"></div></div>
+      <div class="num-card"><div class="label">涨跌幅</div><div class="value" id="nc-pct">—</div><div class="sub" id="nc-pct-sub"></div></div>
+      <div class="num-card"><div class="label">PE(TTM)</div><div class="value" id="nc-pe">—</div><div class="sub" id="nc-pe-sub"></div></div>
+      <div class="num-card"><div class="label">档位</div><div class="value" id="nc-tier">—</div><div class="sub" id="nc-tier-sub"></div></div>
+      <div class="num-card"><div class="label">箱体</div><div class="value" id="nc-box">—</div><div class="sub" id="nc-box-sub"></div></div>
+      <div class="num-card"><div class="label">右侧</div><div class="value" id="nc-right">—</div><div class="sub" id="nc-right-sub"></div></div>
+      <div class="num-card"><div class="label">吸筹形态</div><div class="value" id="nc-accum">—</div><div class="sub" id="nc-accum-sub"></div></div>
+      <div class="num-card"><div class="label">衰竭信号</div><div class="value" id="nc-exhaust">—</div><div class="sub" id="nc-exhaust-sub"></div></div>
+    </div>
+  </section>
+
+  <!-- 基本面：年报/季报、PB/PS 快照、一致预期（stock.js 经 overview.fundamentals 填充，缺失显示 —） -->
+  <section class="bg-white rounded-lg border border-gray-200 p-3">
+    <div class="flex items-baseline gap-2 mb-2">
+      <h3 class="text-sm font-medium text-gray-700">基本面</h3>
+      <span class="text-[11px] text-gray-400" id="fund-note"></span>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2" id="fund-grid">
+      <div class="num-card"><div class="label">年报营收</div><div class="value" id="fd-rev">—</div><div class="sub" id="fd-rev-sub"></div></div>
+      <div class="num-card"><div class="label">年报归母净利</div><div class="value" id="fd-np">—</div><div class="sub" id="fd-np-sub"></div></div>
+      <div class="num-card"><div class="label" id="fd-interim-label">最新季报净利</div><div class="value" id="fd-interim">—</div><div class="sub" id="fd-interim-sub"></div></div>
+      <div class="num-card"><div class="label">PB(MRQ)</div><div class="value" id="fd-pb">—</div><div class="sub" id="fd-pb-sub"></div></div>
+      <div class="num-card"><div class="label">PS(LYR)</div><div class="value" id="fd-ps">—</div><div class="sub" id="fd-ps-sub"></div></div>
+      <div class="num-card"><div class="label">券商一致预期</div><div class="value text-sm" id="fd-fc">—</div><div class="sub" id="fd-fc-sub"></div></div>
+    </div>
+  </section>
+
+  <!-- 主图区：价格/成交量/MACD 同一时间轴三联图（单 ECharts 实例） -->
+  <section class="bg-white rounded-lg border border-gray-200 p-3">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-1 text-xs text-gray-500">
+      <span class="font-medium text-gray-700" id="chart-note"></span>
+      <label>口径:
+        <select id="ctl-price" class="px-1.5 py-0.5 rounded border border-gray-300 text-gray-700">
+          <option value="unadjusted">不复权</option>
+          <option value="fully_adjusted">完全复权</option>
+        </select>
+      </label>
+      <label>周期:
+        <select id="ctl-granularity" class="px-1.5 py-0.5 rounded border border-gray-300 text-gray-700">
+          <option value="daily">日线</option>
+          <option value="weekly">周线</option>
+        </select>
+      </label>
+      <span>图例可点击开关各均线/标记</span>
+    </div>
+    <div id="chart-all" style="height:600px"></div>
+  </section>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+    <!-- 信号现状（保持现状：overview 摘要 + 详情弹窗） -->
+    <section class="card">
+      <h3 class="card-title">信号现状</h3>
+      <div id="signal-summary" class="divide-y divide-gray-100 text-sm"></div>
+    </section>
+    <!-- 资讯流：二期接入真实资讯源，当前空态占位 -->
+    <section class="card">
+      <h3 class="card-title">资讯流
+        <span class="ml-1 text-[11px] font-normal text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">二期接入真实资讯源</span>
+      </h3>
+      <div id="news">
+        <p class="py-8 text-center text-gray-400 text-sm">资讯源二期接入，标签由 LLM 打标后存档</p>
+      </div>
+    </section>
+  </div>
+
+  <section class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+    <div class="card">
+      <h3 class="card-title">当前排期卡</h3>
+      <div id="card-detail"><p class="text-gray-400 text-sm">加载中…</p></div>
+    </div>
+    <div class="card">
+      <h3 class="card-title">执行记录</h3>
+      <div class="overflow-x-auto">
+        <table class="data-table">
+          <thead><tr><th>时间</th><th>动作</th><th>档位</th><th>价格</th><th>数量</th></tr></thead>
+          <tbody id="exec-tbody"></tbody>
+        </table>
+        <div id="exec-empty" class="py-6 text-center text-gray-400 hidden">暂无执行记录</div>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/stock.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,84 @@
+/* 全局样式（task-02） */
+
+/* 状态颜色 */
+.status-success, .status-complete, .status-ok { background: #dcfce7; color: #166534; }
+.status-degraded, .status-incomplete, .status-draft { background: #fef9c3; color: #854d0e; }
+.status-failed, .status-rejected, .status-suspended { background: #fee2e2; color: #991b1b; }
+.status-active, .status-running, .status-triggered, .status-watching { background: #dbeafe; color: #1e40af; }
+.status-superseded, .status-inactive, .status-idle { background: #e5e7eb; color: #374151; }
+
+.status-badge {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  white-space: nowrap;
+}
+
+/* 表格 */
+table.data-table { width: 100%; border-collapse: collapse; background: #fff; }
+table.data-table th, table.data-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 0.875rem;
+  text-align: left;
+}
+table.data-table th { background: #f9fafb; font-weight: 600; color: #374151; }
+table.data-table tr:hover td { background: #f3f4f6; }
+table.data-table th.sortable { cursor: pointer; user-select: none; }
+table.data-table th.sortable:hover { background: #e5e7eb; }
+tr.row-suspended td { color: #9ca3af; background: #f9fafb; }
+
+/* 卡片容器 */
+.card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  padding: 1rem;
+}
+.card-title { font-size: 0.875rem; font-weight: 600; color: #374151; margin-bottom: 0.5rem; }
+
+/* 图表最小高度 */
+.chart-box { width: 100%; height: 340px; }
+.chart-box-sm { width: 100%; height: 220px; }
+
+/* 响应式断点（Tailwind CDN 之外的小调整） */
+@media (max-width: 640px) {
+  .chart-box { height: 260px; }
+}
+
+/* Toast */
+#toast-container { position: fixed; top: 1rem; right: 1rem; z-index: 50; display: flex; flex-direction: column; gap: 0.5rem; }
+.toast {
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  color: #fff;
+  font-size: 0.875rem;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+}
+.toast-success { background: #16a34a; }
+.toast-error { background: #dc2626; }
+.toast-info { background: #2563eb; }
+
+pre.json-view {
+  background: #111827;
+  color: #d1d5db;
+  padding: 0.75rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 单股页数字卡片（2026-08-10 原型定稿） */
+.num-card { background:#fff; border:1px solid #e5e7eb; border-radius:.5rem; padding:.6rem .8rem; min-width:0; }
+.num-card .label { font-size:11px; color:#6b7280; margin-bottom:2px; }
+.num-card .value { font-size:15px; font-weight:600; white-space:nowrap; }
+.num-card .sub { font-size:11px; color:#9ca3af; }
+
+/* 红涨绿跌 */
+.up { color:#dc2626; }
+.down { color:#16a34a; }

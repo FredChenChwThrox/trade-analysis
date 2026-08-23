@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}多股对比 - 股票监测系统{% endblock %}
+{% block content %}
+<div class="card mb-4">
+  <div class="flex flex-wrap items-center gap-3 text-sm">
+    <div class="min-w-[240px]">
+      <label class="block text-xs text-gray-500 mb-1">股票（2~6 只）</label>
+      <div id="cmp-search-box" class="mb-1"></div>
+      <div id="cmp-tags" class="flex flex-wrap gap-1"></div>
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">指标</label>
+      <select id="cmp-metric" class="px-2 py-1 rounded border border-gray-300">
+        {% set metrics = [
+          ('价格', ['close','volume','pct_chg','pe_ttm']),
+          ('均线', ['ma5','ma10','ma20','ma60','ma120','ma250']),
+          ('MACD', ['dif','dea','macd_hist']),
+          ('RSI', ['rsi6','rsi12','rsi24']),
+          ('BOLL', ['boll_mid','boll_upper','boll_lower']),
+          ('KDJ', ['kdj_k','kdj_d','kdj_j']),
+          ('量能', ['vol_ma5','vol_ma10','vol_mean20','vol_mean60']),
+        ] %}
+        {% for g, fields in metrics %}
+        <optgroup label="{{ g }}">
+          {% for f in fields %}<option value="{{ f }}" {% if f == 'pe_ttm' %}selected{% endif %}>{{ f }}</option>{% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">粒度</label>
+      <select id="cmp-granularity" class="px-2 py-1 rounded border border-gray-300">
+        <option value="daily">日线</option>
+        <option value="weekly">周线</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">价格口径</label>
+      <select id="cmp-price" class="px-2 py-1 rounded border border-gray-300">
+        <option value="unadjusted">不复权</option>
+        <option value="fully_adjusted">完全复权</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">开始</label>
+      <input id="cmp-start" type="date" class="px-2 py-1 rounded border border-gray-300">
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">结束</label>
+      <input id="cmp-end" type="date" class="px-2 py-1 rounded border border-gray-300">
+    </div>
+    <div class="flex items-end gap-2">
+      <button id="cmp-load" class="px-4 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700">对比</button>
+      <label class="inline-flex items-center gap-1 text-xs"><input type="checkbox" id="cmp-normalize"> 标准化（同起点）</label>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div id="cmp-chart" class="chart-box"></div>
+  <div id="cmp-empty" class="text-center text-gray-400 py-8 hidden">请选择至少 2 只股票</div>
+</div>
+
+<div class="card">
+  <h3 class="card-title">区间统计</h3>
+  <div class="overflow-x-auto">
+    <table class="data-table" id="cmp-stats">
+      <thead><tr><th>股票</th><th>最新值</th><th>起始值</th><th>区间涨跌幅</th><th>最大值</th><th>最小值</th><th>平均值</th><th>标准差</th></tr></thead>
+      <tbody id="cmp-stats-tbody"></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/compare.js') }}"></script>
+{% endblock %}

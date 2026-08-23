@@ -1,0 +1,64 @@
+# 信号参数（设计文档 §5.2-5.4b）
+# ⚠️ 锚点与衰竭信号参数为第一版默认值，需人工核对数周后才可调整（§5.2 待观察调整）。
+
+defaults:
+  anchors:
+    lookback_weeks: 26        # 恐慌低点 fallback / 下跌起点回溯窗
+  exhaustion:
+    panic:
+      vol_ma_weeks: 20        # 均量基数窗口
+      vol_multiple: 2.0       # 放量阈值：≥ 均量 2 倍
+      lower_shadow_body_ratio: 2.0   # 长下影：下影 ≥ 实体 2 倍
+      lower_shadow_range_pct: 0.35   # 且 ≥ 全周振幅 35%
+      big_yang_body_pct: 0.60        # 大阳线：实体 ≥ 全周振幅 60%
+      big_yang_gain_pct: 0.05        # 且周涨幅 ≥ 5%
+    dryup:
+      base_weeks: 4           # 下跌起点后前 4 周均量为基数
+      vol_ratio: 0.50         # 缩量阈值（允许 0.40–0.60 版本化调整）
+    no_new_low_weeks: 3       # 三周不创新低
+    divergence:
+      pivot_side_weeks: 2     # 左右各 2 周确认 pivot low
+      lookback_weeks: 26
+      rsi_window: 12
+    duration_weeks: 8         # 下跌持续 ≥8 周
+    active_weeks:
+      panic: 4                # 恐慌型确认后活跃 4 周
+      divergence: 4           # 底背离确认后活跃 4 周
+    min_active_signals: 2     # 释放第二、三档所需活跃信号数
+  daily_watch:
+    falsification:
+      breach_pct: 0.01        # 收盘低于证伪线 1% 以上
+      confirm_days: 2         # 连续 2 个交易日
+    tier_proximity_pct: 0.03  # 档位临近：距边界 ≤3%
+  right_side:
+    breakout_pct: 0.01        # 收盘突破关键位 1%
+    vol_ma_days: 20
+    vol_multiple: 2.0         # 成交量 ≥ 前 20 日均量 2 倍
+    retest_window_days: 10    # 10 个交易日内回踩
+    retest_band_pct: 0.02     # 回踩关键位上下 2%
+    retest_hold_pct: 0.01     # 收盘不低于关键位 1%
+    invalidate_pct: 0.01      # 等待期间收盘低于关键位 1% → invalidated
+  corporate_action:
+    dividend_fastlane_pct: 0.02  # 除权价变动 <2% 的现金分红走快速通道自动换算
+  accumulation:               # ⚠️ 吸筹形态参数为第一版默认值，需人工核对数周后才可调整（同 §5.2 纪律）
+    vol_ma_days: 20           # 均量基数窗口（shift(1) 纪律，不含当日）
+    breakdown:                # 阶段一：放量破位
+      drop_pct: 0.05          # 单日跌幅 ≥5%
+      vol_multiple: 2.0       # 成交量 ≥ 前 20 日均量 2 倍
+      new_low_days: 60        # 收盘创 60 日新低
+    consolidation:            # 阶段二：缩量横盘确认
+      min_days: 10            # 破位后至少 10 个交易日才判定横盘
+      max_days: 120           # 破位后 120 个交易日内未确认横盘 → 形态作废
+      range_pct: 0.15         # 窗口振幅 (最高-最低)/最低 ≤ 15%
+      vol_ratio: 0.8          # 窗口均量 ≤ 破位日前 20 日均量 × 0.8
+      ma_convergence_pct: 0.05  # MA5/10/20 粘合：(max-min)/MA20 ≤ 5%
+    probe:                    # 阶段三：试盘（长上影放量）计数
+      upper_shadow_range_pct: 0.5  # 上影 ≥ 全日振幅 50%
+      min_amplitude_pct: 0.03      # 当日振幅 ≥ 3%（排除平盘假影）
+      vol_multiple: 1.5            # 放量 ≥ 前 20 日均量 1.5 倍
+    confirm:                  # 放量阳线收盘突破横盘区间上沿 → confirmed
+      vol_multiple: 1.5
+    continue_drop_pct: 0.03   # 横盘确认前收盘低于破位日收盘 3% → 仍在下跌，继续等待
+    max_consolidation_days: 120  # 横盘超过 120 个交易日未确认 → expired
+
+overrides: {}

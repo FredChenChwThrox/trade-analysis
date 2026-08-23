@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>单股页原型 — 珀莱雅 603605.SH</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    .num-card { background:#fff; border:1px solid #e5e7eb; border-radius:.5rem; padding:.6rem .8rem; min-width:0; }
+    .num-card .label { font-size:11px; color:#6b7280; margin-bottom:2px; }
+    .num-card .value { font-size:15px; font-weight:600; white-space:nowrap; }
+    .num-card .sub { font-size:11px; color:#9ca3af; }
+    .tab { padding:.45rem .9rem; border-radius:.375rem; font-size:13px; color:#4b5563; white-space:nowrap; cursor:default; }
+    .tab.active { background:#1f2937; color:#fff; }
+    .sig-row { display:flex; gap:.5rem; align-items:baseline; padding:.45rem 0; border-bottom:1px dashed #e5e7eb; font-size:13px; }
+    .sig-name { width:6.5rem; flex:none; color:#374151; font-weight:500; }
+    .sig-state { flex:none; font-size:11px; padding:0 .4rem; border-radius:.25rem; }
+    .st-on { background:#dcfce7; color:#15803d; } .st-off { background:#f3f4f6; color:#6b7280; }
+    .st-warn { background:#fef9c3; color:#a16207; } .st-bad { background:#fee2e2; color:#b91c1c; }
+    .sig-detail { color:#6b7280; font-size:12px; }
+    .evt { padding:.4rem 0; border-bottom:1px dashed #e5e7eb; font-size:13px; display:flex; gap:.6rem; }
+    .evt .d { color:#9ca3af; font-family:ui-monospace,monospace; font-size:12px; flex:none; width:5rem; }
+    .news { padding:.45rem 0; border-bottom:1px dashed #e5e7eb; font-size:13px; display:flex; gap:.5rem; align-items:baseline; }
+    .news .d { color:#9ca3af; font-family:ui-monospace,monospace; font-size:12px; flex:none; width:4.5rem; }
+    .news .src { color:#9ca3af; font-size:11px; flex:none; }
+    .ntag { flex:none; font-size:11px; padding:0 .45rem; border-radius:.25rem; }
+    .ntag-pos { background:#fee2e2; color:#b91c1c; }   /* 正面=红（A股习惯红涨） */
+    .ntag-neg { background:#dcfce7; color:#15803d; }   /* 负面=绿 */
+    .ntag-neu { background:#f3f4f6; color:#6b7280; }   /* 无影响=灰 */
+    .up { color:#dc2626; } .down { color:#16a34a; }
+    .proto-tag { position:fixed; right:12px; bottom:12px; background:#1f2937; color:#fff; font-size:11px; padding:4px 10px; border-radius:999px; opacity:.85; z-index:50; }
+  </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+  <nav class="bg-gray-900 text-white shadow">
+    <div class="container mx-auto px-4 flex items-center h-14 gap-1 overflow-x-auto">
+      <span class="text-lg font-semibold tracking-wide mr-4 flex-none">股票监测</span>
+      <select id="stock-select" onchange="if(this.value) location.href='stock_'+this.value.split('.')[0]+'.html'"
+              class="bg-gray-800 text-sm rounded-md px-3 py-1.5 border border-gray-600 text-gray-100 focus:outline-none focus:border-gray-400">
+        <option value="002747.SZ">埃斯顿 002747.SZ</option>
+        <option value="600029.SH">南方航空 600029.SH</option>
+        <option value="601318.SH">中国平安 601318.SH</option>
+        <option value="601899.SH">紫金矿业 601899.SH</option>
+        <option value="603288.SH">海天味业 603288.SH</option>
+        <option value="603605.SH" selected>珀莱雅 603605.SH</option>
+      </select>
+      <span class="flex-1"></span>
+      <span class="tab flex-none text-gray-300">数据</span>
+    </div>
+  </nav>
+
+  <main class="container mx-auto px-4 py-5 space-y-5">
+    <section>
+      <div class="flex items-baseline gap-3 mb-2">
+        <h1 class="text-xl font-bold">珀莱雅 <span class="text-sm font-normal text-gray-500">603605.SH</span></h1>
+        <span class="text-xs text-gray-400">数据截止 2026-08-10</span>
+      </div>
+      <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2" id="num-cards"><div class="num-card"><div class="label">现价（不复权）</div><div class="value ">59.03</div><div class="sub">2026-08-10</div></div>
+<div class="num-card"><div class="label">涨跌幅</div><div class="value up">+2.27%</div><div class="sub"></div></div>
+<div class="num-card"><div class="label">PE(TTM)</div><div class="value ">15.9</div><div class="sub">正常·披露日降级</div></div>
+<div class="num-card"><div class="label">档位</div><div class="value ">档外</div><div class="sub">距 T2 上沿 2.5%</div></div>
+<div class="num-card"><div class="label">箱体</div><div class="value ">箱体内</div><div class="sub">54.7–61</div></div>
+<div class="num-card"><div class="label">右侧</div><div class="value ">—</div><div class="sub">触发 61</div></div>
+<div class="num-card"><div class="label">吸筹形态</div><div class="value ">无形态</div><div class="sub"></div></div>
+<div class="num-card"><div class="label">衰竭信号</div><div class="value ">1/5 活跃</div><div class="sub">完成周 2026-08-07</div></div></div>
+    </section>
+
+    <!-- 主图区：价格/成交量/MACD 同一时间轴三联图 -->
+    <section class="bg-white rounded-lg border border-gray-200 p-3">
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-1 text-xs text-gray-500">
+        <span class="font-medium text-gray-700">不复权口径 · 价区底色为卡片三档 · 标线为证伪/箱体/右侧</span>
+        <span>口径: <b>不复权</b> / 完全复权</span>
+        <span>周期: <b>日线</b> / 周线</span>
+        <span>图例可点击开关各均线/标记</span>
+      </div>
+      <div id="chart-all" style="height:600px"></div>
+    </section>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <section class="bg-white rounded-lg border border-gray-200 p-4">
+        <h2 class="font-semibold text-sm mb-2">信号现状</h2>
+        <div id="sig-summary"><div class="sig-row"><span class="sig-name">档位临近</span><span class="sig-state st-on">活跃</span><span class="sig-detail">距 T2 边界 2.5%</span></div>
+<div class="sig-row"><span class="sig-name">档位触发</span><span class="sig-state st-off">未激活</span><span class="sig-detail"></span></div>
+<div class="sig-row"><span class="sig-name">证伪线</span><span class="sig-state st-off">未激活</span><span class="sig-detail">连续跌破 0/2 日</span></div>
+<div class="sig-row"><span class="sig-name">箱体位置</span><span class="sig-state st-off">箱体内</span><span class="sig-detail">收盘 59.03 位于箱体内</span></div>
+<div class="sig-row"><span class="sig-name">右侧确认</span><span class="sig-state st-off">—</span><span class="sig-detail"></span></div>
+<div class="sig-row"><span class="sig-name">吸筹形态</span><span class="sig-state st-off">无形态</span><span class="sig-detail"></span></div>
+<div class="sig-row"><span class="sig-name">恐慌型</span><span class="sig-state st-off">未激活</span><span class="sig-detail">恐慌低点锚点 2026-06-01</span></div>
+<div class="sig-row"><span class="sig-name">干涸型</span><span class="sig-state st-off">未激活</span><span class="sig-detail">当前周量 25,251,300 vs 阈值 8,076,438</span></div>
+<div class="sig-row"><span class="sig-name">三周不创新低</span><span class="sig-state st-off">未激活</span><span class="sig-detail">连续 3 周未创新低</span></div>
+<div class="sig-row"><span class="sig-name">周线底背离</span><span class="sig-state st-off">未激活</span><span class="sig-detail">候选枢轴周 2026-07-24</span></div>
+<div class="sig-row"><span class="sig-name">持续时间</span><span class="sig-state st-on">活跃</span><span class="sig-detail">已持续 25 周</span></div></div>
+      </section>
+      <section class="bg-white rounded-lg border border-gray-200 p-4">
+        <h2 class="font-semibold text-sm mb-2">资讯流
+          <span class="ml-1 text-[11px] font-normal text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">示例数据 · 二期接入真实资讯源</span>
+        </h2>
+        <div id="news"><div class="news"><span class="d">08-08</span><span class="ntag ntag-pos">正面</span><span class="flex-1">2026 中报业绩快报：营收同比 +12.3%，归母净利同比 +9.8%</span><span class="src">公司公告</span></div>
+<div class="news"><span class="d">08-05</span><span class="ntag ntag-neu">无影响</span><span class="flex-1">董事减持计划预披露：拟减持不超过 0.5% 股份</span><span class="src">公司公告</span></div>
+<div class="news"><span class="d">07-30</span><span class="ntag ntag-pos">正面</span><span class="flex-1">618 大促复盘：主品牌线上 GMV 同比 +18%，市占率提升</span><span class="src">行业资讯</span></div>
+<div class="news"><span class="d">07-22</span><span class="ntag ntag-neg">负面</span><span class="flex-1">化妆品新规征求意见：功效宣称备案趋严，或增加合规成本</span><span class="src">政策</span></div>
+<div class="news"><span class="d">07-15</span><span class="ntag ntag-neu">无影响</span><span class="flex-1">券商研报：维持「买入」评级，目标价 68 元</span><span class="src">研报</span></div></div>
+      </section>
+    </div>
+
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div class="bg-white rounded-lg border border-gray-200 p-4">
+        <h2 class="font-semibold text-sm mb-2">当前排期卡</h2>
+        
+<div class="text-xs text-gray-500 mb-2">603605SH_120ca661 · active ·
+  2026-08-10 生效 · 下次复核 2026-08-31 · 口径不复权</div>
+
+<div class="text-xs font-medium text-gray-600 mt-2 mb-1">三档价区（估值锚定）</div>
+<table class="text-sm w-full"><thead><tr class="text-left text-gray-500 text-xs">
+<th>档位</th><th>价区</th><th>反推口径</th></tr></thead><tbody><tr class="border-t border-gray-100"><td class="py-1">T1</td><td class="font-mono">61.50–64.10</td><td class="text-xs text-gray-500">≈ 中性EPS 3.56 × PE 17.3–18.0</td></tr><tr class="border-t border-gray-100"><td class="py-1">T2</td><td class="font-mono">54.70–57.60</td><td class="text-xs text-gray-500">≈ 中性EPS 3.56 × PE 15.4–16.2</td></tr><tr class="border-t border-gray-100"><td class="py-1">T3</td><td class="font-mono">42.80–46.20</td><td class="text-xs text-gray-500">≈ 悲观EPS 2.85 × PE 15.0–16.2</td></tr></tbody></table>
+
+<div class="text-xs font-medium text-gray-600 mt-3 mb-1">情景假设</div>
+<div class="flex gap-2 py-0.5"><span class="flex-none w-20 text-gray-400 text-xs leading-5">EPS 三情景</span><span class="text-xs leading-5">悲观 2.85 / 中性 3.56 / 乐观 3.90</span></div>
+<div class="flex gap-2 py-0.5"><span class="flex-none w-20 text-gray-400 text-xs leading-5">PE 三情景</span><span class="text-xs leading-5">悲观 15 / 中性 18 / 乐观 25</span></div>
+<div class="flex gap-2 py-0.5"><span class="flex-none w-20 text-gray-400 text-xs leading-5">恐慌底刻度</span><span class="text-xs leading-5">2024-09-24 PE 22.69 → 2025-04-28 PE 25.03 → 2026-06-01 PE 18.03</span></div>
+<div class="flex gap-2 py-0.5"><span class="flex-none w-20 text-gray-400 text-xs leading-5">样本窗口</span><span class="text-xs leading-5">2023-08-09 ~ 2026-08-07（PE 刻度为 3 年样本（设计 §3.2 强制标注），引用更早历史视为样本外）</span></div>
+<div class="flex gap-2 py-0.5"><span class="flex-none w-20 text-gray-400 text-xs leading-5">体系判断</span><span class="text-xs leading-5">体系切换风险：刻度序列不稳且最新一轮显著下移（22.69→25.03→18.03），悲观 PE 取最近刻度下移约 15%</span></div>
+
+<div class="text-xs font-medium text-gray-600 mt-3 mb-1">交易框架</div>
+<div class="flex gap-2 py-0.5"><span class="flex-none w-20 text-gray-400 text-xs leading-5">证伪线</span><span class="text-xs leading-5">42.80 —— 收盘有效跌破=极悲情景被击穿（连续 2 日收盘低于线 1%），冻结仓位重做基本面判断，禁止继续摊低成本</span></div>
+<div class="flex gap-2 py-0.5"><span class="flex-none w-20 text-gray-400 text-xs leading-5">波段箱体</span><span class="text-xs leading-5">54.70–61.00：买区 54.00–56.50，卖区 59.50–61.00，跌破 54.70 箱体失效</span></div>
+<div class="flex gap-2 py-0.5"><span class="flex-none w-20 text-gray-400 text-xs leading-5">右侧确认</span><span class="text-xs leading-5">收盘站上 61.00 触发，止损 59.50</span></div>
+
+      </div>
+      <div class="bg-white rounded-lg border border-gray-200 p-4">
+        <h2 class="font-semibold text-sm mb-2">执行记录</h2>
+        <table class="text-sm w-full"><thead><tr class="text-left text-gray-500 text-xs"><th>日期</th><th>方向</th><th>价格</th><th>数量</th></tr></thead><tbody><tr><td class="font-mono text-xs">2026-07-15</td><td class="down">卖出</td><td class="font-mono">59.500</td><td class="font-mono">1800</td></tr><tr><td class="font-mono text-xs">2026-07-13</td><td class="up">买入</td><td class="font-mono">55.930</td><td class="font-mono">800</td></tr><tr><td class="font-mono text-xs">2026-07-09</td><td class="up">买入</td><td class="font-mono">57.000</td><td class="font-mono">900</td></tr><tr><td class="font-mono text-xs">2026-07-03</td><td class="down">卖出</td><td class="font-mono">60.200</td><td class="font-mono">1700</td></tr></tbody></table>
+      </div>
+    </section>
+  </main>
+
+  <div class="proto-tag">交互原型 · 静态数据 · 供评审</div>
+
+<script>
+const DATA = {"bars":[{"trade_date":"2026-02-09","open":75.5,"high":76.67,"low":75.1,"close":76.36,"volume":707.1},{"trade_date":"2026-02-10","open":76.35,"high":76.52,"low":74.92,"close":75.51,"volume":474.1},{"trade_date":"2026-02-11","open":75.55,"high":76.99,"low":74.5,"close":74.94,"volume":361.9},{"trade_date":"2026-02-12","open":74.95,"high":75.0,"low":73.13,"close":73.3,"volume":489.1},{"trade_date":"2026-02-13","open":73.3,"high":73.77,"low":72.88,"close":72.9,"volume":363.7},{"trade_date":"2026-02-24","open":73.0,"high":73.35,"low":71.59,"close":71.66,"volume":399.7},{"trade_date":"2026-02-25","open":71.49,"high":72.05,"low":71.47,"close":71.72,"volume":294.2},{"trade_date":"2026-02-26","open":71.7,"high":71.89,"low":70.71,"close":70.75,"volume":371.1},{"trade_date":"2026-02-27","open":70.95,"high":71.33,"low":70.5,"close":70.95,"volume":218.8},{"trade_date":"2026-03-02","open":70.01,"high":70.46,"low":69.28,"close":69.32,"volume":405.3},{"trade_date":"2026-03-03","open":69.31,"high":69.7,"low":67.9,"close":67.93,"volume":436.8},{"trade_date":"2026-03-04","open":67.6,"high":68.4,"low":67.11,"close":67.11,"volume":306.4},{"trade_date":"2026-03-05","open":67.85,"high":68.0,"low":67.01,"close":67.07,"volume":251.8},{"trade_date":"2026-03-06","open":67.0,"high":68.35,"low":66.82,"close":68.17,"volume":290.9},{"trade_date":"2026-03-09","open":68.0,"high":68.0,"low":66.2,"close":66.9,"volume":328.8},{"trade_date":"2026-03-10","open":67.57,"high":68.49,"low":67.31,"close":68.4,"volume":237.1},{"trade_date":"2026-03-11","open":68.35,"high":68.65,"low":67.87,"close":68.6,"volume":201.5},{"trade_date":"2026-03-12","open":68.5,"high":68.5,"low":67.81,"close":68.04,"volume":158.3},{"trade_date":"2026-03-13","open":67.86,"high":68.3,"low":67.6,"close":67.74,"volume":164.3},{"trade_date":"2026-03-16","open":67.73,"high":68.35,"low":67.45,"close":68.2,"volume":148.1},{"trade_date":"2026-03-17","open":68.2,"high":69.2,"low":67.87,"close":68.07,"volume":268.6},{"trade_date":"2026-03-18","open":68.07,"high":68.39,"low":67.52,"close":67.66,"volume":176.0},{"trade_date":"2026-03-19","open":67.3,"high":67.39,"low":66.5,"close":66.56,"volume":256.4},{"trade_date":"2026-03-20","open":66.68,"high":67.1,"low":65.02,"close":65.02,"volume":391.3},{"trade_date":"2026-03-23","open":64.37,"high":64.37,"low":61.77,"close":62.0,"volume":478.7},{"trade_date":"2026-03-24","open":62.88,"high":62.98,"low":61.5,"close":62.36,"volume":287.4},{"trade_date":"2026-03-25","open":62.38,"high":62.9,"low":61.9,"close":62.09,"volume":334.6},{"trade_date":"2026-03-26","open":62.09,"high":62.19,"low":60.76,"close":60.89,"volume":301.3},{"trade_date":"2026-03-27","open":60.29,"high":62.02,"low":60.27,"close":61.7,"volume":253.9},{"trade_date":"2026-03-30","open":61.34,"high":61.75,"low":60.5,"close":61.51,"volume":178.4},{"trade_date":"2026-03-31","open":61.6,"high":62.6,"low":60.72,"close":60.82,"volume":234.6},{"trade_date":"2026-04-01","open":61.2,"high":61.88,"low":60.87,"close":61.6,"volume":226.8},{"trade_date":"2026-04-02","open":61.61,"high":61.65,"low":60.6,"close":61.05,"volume":215.2},{"trade_date":"2026-04-03","open":61.1,"high":61.3,"low":59.65,"close":59.83,"volume":239.5},{"trade_date":"2026-04-07","open":59.87,"high":60.28,"low":59.6,"close":59.73,"volume":120.7},{"trade_date":"2026-04-08","open":60.15,"high":61.33,"low":60.15,"close":61.31,"volume":288.2},{"trade_date":"2026-04-09","open":60.81,"high":61.18,"low":59.8,"close":59.8,"volume":304.3},{"trade_date":"2026-04-10","open":59.82,"high":61.84,"low":59.82,"close":61.1,"volume":356.8},{"trade_date":"2026-04-13","open":60.86,"high":60.99,"low":60.2,"close":60.33,"volume":235.7},{"trade_date":"2026-04-14","open":60.51,"high":60.73,"low":59.62,"close":60.08,"volume":334.1},{"trade_date":"2026-04-15","open":60.01,"high":60.4,"low":59.66,"close":59.77,"volume":376.8},{"trade_date":"2026-04-16","open":59.84,"high":60.1,"low":59.08,"close":59.98,"volume":321.4},{"trade_date":"2026-04-17","open":59.8,"high":59.8,"low":59.02,"close":59.24,"volume":258.4},{"trade_date":"2026-04-20","open":59.2,"high":60.88,"low":58.91,"close":60.15,"volume":333.2},{"trade_date":"2026-04-21","open":60.01,"high":60.7,"low":59.56,"close":60.35,"volume":255.3},{"trade_date":"2026-04-22","open":60.0,"high":61.55,"low":59.08,"close":61.17,"volume":537.8},{"trade_date":"2026-04-23","open":61.0,"high":61.77,"low":60.57,"close":60.76,"volume":470.7},{"trade_date":"2026-04-24","open":60.7,"high":61.87,"low":60.48,"close":60.84,"volume":434.6},{"trade_date":"2026-04-27","open":60.85,"high":62.44,"low":60.7,"close":62.2,"volume":542.8},{"trade_date":"2026-04-28","open":61.95,"high":62.18,"low":61.2,"close":61.45,"volume":368.0},{"trade_date":"2026-04-29","open":61.3,"high":62.55,"low":61.28,"close":62.27,"volume":368.5},{"trade_date":"2026-04-30","open":62.09,"high":62.48,"low":61.61,"close":61.88,"volume":275.4},{"trade_date":"2026-05-06","open":61.01,"high":62.0,"low":61.0,"close":61.53,"volume":317.1},{"trade_date":"2026-05-07","open":61.7,"high":62.09,"low":61.45,"close":61.6,"volume":255.1},{"trade_date":"2026-05-08","open":61.55,"high":62.26,"low":60.99,"close":61.42,"volume":326.9},{"trade_date":"2026-05-11","open":61.43,"high":61.43,"low":60.15,"close":60.64,"volume":476.8},{"trade_date":"2026-05-12","open":60.56,"high":60.62,"low":58.84,"close":58.84,"volume":650.8},{"trade_date":"2026-05-13","open":58.78,"high":59.16,"low":57.15,"close":57.71,"volume":737.4},{"trade_date":"2026-05-14","open":57.7,"high":57.8,"low":56.11,"close":56.45,"volume":558.0},{"trade_date":"2026-05-15","open":56.32,"high":56.83,"low":55.77,"close":56.12,"volume":332.6},{"trade_date":"2026-05-18","open":56.5,"high":56.75,"low":55.22,"close":56.17,"volume":398.9},{"trade_date":"2026-05-19","open":56.0,"high":56.53,"low":55.53,"close":55.95,"volume":242.4},{"trade_date":"2026-05-20","open":55.8,"high":56.33,"low":55.02,"close":56.04,"volume":313.3},{"trade_date":"2026-05-21","open":56.04,"high":57.12,"low":55.37,"close":55.37,"volume":389.2},{"trade_date":"2026-05-22","open":57.0,"high":59.59,"low":56.99,"close":58.19,"volume":999.2},{"trade_date":"2026-05-25","open":57.91,"high":58.86,"low":57.08,"close":58.03,"volume":493.1},{"trade_date":"2026-05-26","open":57.5,"high":58.58,"low":57.3,"close":57.78,"volume":301.2},{"trade_date":"2026-05-27","open":57.45,"high":59.83,"low":57.21,"close":59.07,"volume":690.9},{"trade_date":"2026-05-28","open":59.07,"high":59.1,"low":57.12,"close":57.75,"volume":436.9},{"trade_date":"2026-05-29","open":57.3,"high":62.5,"low":57.3,"close":61.81,"volume":1260.9},{"trade_date":"2026-06-01","open":61.3,"high":67.52,"low":61.25,"close":67.13,"volume":1873.8},{"trade_date":"2026-06-02","open":65.99,"high":66.65,"low":64.51,"close":64.88,"volume":811.4},{"trade_date":"2026-06-03","open":64.6,"high":64.98,"low":62.56,"close":64.3,"volume":748.5},{"trade_date":"2026-06-04","open":63.88,"high":67.1,"low":63.88,"close":66.48,"volume":1004.3},{"trade_date":"2026-06-05","open":67.73,"high":67.95,"low":65.15,"close":65.78,"volume":713.1},{"trade_date":"2026-06-08","open":66.64,"high":66.89,"low":64.45,"close":66.53,"volume":842.2},{"trade_date":"2026-06-09","open":65.47,"high":67.0,"low":64.3,"close":64.9,"volume":636.5},{"trade_date":"2026-06-10","open":64.6,"high":65.58,"low":63.27,"close":64.88,"volume":547.5},{"trade_date":"2026-06-11","open":64.42,"high":65.28,"low":63.4,"close":63.4,"volume":379.7},{"trade_date":"2026-06-12","open":63.01,"high":67.92,"low":62.95,"close":67.2,"volume":961.1},{"trade_date":"2026-06-15","open":67.2,"high":67.5,"low":65.93,"close":66.59,"volume":463.4},{"trade_date":"2026-06-16","open":66.21,"high":66.7,"low":64.61,"close":66.27,"volume":493.2},{"trade_date":"2026-06-17","open":66.2,"high":66.58,"low":65.2,"close":65.99,"volume":297.8},{"trade_date":"2026-06-18","open":65.98,"high":67.1,"low":64.08,"close":64.64,"volume":508.6},{"trade_date":"2026-06-22","open":64.1,"high":64.19,"low":59.0,"close":60.45,"volume":1029.0},{"trade_date":"2026-06-23","open":59.5,"high":60.91,"low":57.62,"close":58.12,"volume":655.0},{"trade_date":"2026-06-24","open":57.61,"high":58.34,"low":56.1,"close":56.55,"volume":536.7},{"trade_date":"2026-06-25","open":56.36,"high":57.67,"low":54.52,"close":56.43,"volume":668.7},{"trade_date":"2026-06-26","open":56.3,"high":57.3,"low":54.91,"close":56.7,"volume":513.8},{"trade_date":"2026-06-29","open":56.4,"high":59.18,"low":54.3,"close":57.66,"volume":679.5},{"trade_date":"2026-06-30","open":56.75,"high":60.0,"low":56.37,"close":59.92,"volume":635.8},{"trade_date":"2026-07-01","open":59.59,"high":61.1,"low":58.66,"close":60.24,"volume":470.1},{"trade_date":"2026-07-02","open":60.54,"high":60.88,"low":58.75,"close":58.91,"volume":403.1},{"trade_date":"2026-07-03","open":59.0,"high":60.5,"low":59.0,"close":59.91,"volume":348.6},{"trade_date":"2026-07-06","open":59.76,"high":59.9,"low":58.16,"close":58.86,"volume":458.8},{"trade_date":"2026-07-07","open":59.0,"high":59.49,"low":57.9,"close":57.9,"volume":276.8},{"trade_date":"2026-07-08","open":57.65,"high":60.12,"low":57.23,"close":57.92,"volume":378.0},{"trade_date":"2026-07-09","open":57.8,"high":58.24,"low":56.56,"close":57.01,"volume":326.9},{"trade_date":"2026-07-10","open":56.51,"high":58.54,"low":56.18,"close":57.72,"volume":371.0},{"trade_date":"2026-07-13","open":57.15,"high":57.75,"low":55.71,"close":56.18,"volume":435.2},{"trade_date":"2026-07-14","open":56.2,"high":57.58,"low":55.88,"close":57.38,"volume":515.9},{"trade_date":"2026-07-15","open":57.12,"high":60.49,"low":56.6,"close":60.0,"volume":744.4},{"trade_date":"2026-07-16","open":59.67,"high":61.06,"low":59.46,"close":60.22,"volume":561.8},{"trade_date":"2026-07-17","open":60.22,"high":60.6,"low":56.56,"close":56.73,"volume":829.9},{"trade_date":"2026-07-20","open":56.73,"high":58.08,"low":56.48,"close":57.5,"volume":440.5},{"trade_date":"2026-07-21","open":57.5,"high":59.31,"low":57.29,"close":57.81,"volume":596.2},{"trade_date":"2026-07-22","open":56.5,"high":58.49,"low":56.06,"close":58.49,"volume":564.6},{"trade_date":"2026-07-23","open":57.8,"high":58.5,"low":57.14,"close":58.28,"volume":351.5},{"trade_date":"2026-07-24","open":57.86,"high":58.26,"low":56.2,"close":56.25,"volume":323.8},{"trade_date":"2026-07-27","open":56.4,"high":58.98,"low":56.16,"close":58.74,"volume":501.1},{"trade_date":"2026-07-28","open":58.13,"high":60.65,"low":57.75,"close":60.26,"volume":558.6},{"trade_date":"2026-07-29","open":60.3,"high":62.16,"low":60.0,"close":61.13,"volume":668.0},{"trade_date":"2026-07-30","open":62.01,"high":63.86,"low":61.11,"close":61.8,"volume":732.9},{"trade_date":"2026-07-31","open":60.8,"high":62.37,"low":60.45,"close":61.29,"volume":506.9},{"trade_date":"2026-08-03","open":61.28,"high":61.97,"low":60.58,"close":60.8,"volume":364.6},{"trade_date":"2026-08-04","open":60.9,"high":61.2,"low":58.81,"close":58.99,"volume":591.5},{"trade_date":"2026-08-05","open":58.98,"high":60.11,"low":58.12,"close":58.9,"volume":636.4},{"trade_date":"2026-08-06","open":58.99,"high":59.12,"low":57.33,"close":57.9,"volume":525.1},{"trade_date":"2026-08-07","open":57.9,"high":57.93,"low":57.03,"close":57.72,"volume":407.5},{"trade_date":"2026-08-10","open":57.79,"high":59.6,"low":57.46,"close":59.03,"volume":628.6}],"indicators":[{"ma5":74.19,"ma20":72.2,"ma60":70.25,"vol_mean20":673.1,"dif":1.39,"dea":0.973,"macd_hist":0.832},{"ma5":75.02,"ma20":72.46,"ma60":70.31,"vol_mean20":670.4,"dif":1.464,"dea":1.072,"macd_hist":0.785},{"ma5":75.68,"ma20":72.68,"ma60":70.37,"vol_mean20":651.5,"dif":1.458,"dea":1.149,"macd_hist":0.619},{"ma5":75.11,"ma20":72.86,"ma60":70.4,"vol_mean20":652.2,"dif":1.302,"dea":1.179,"macd_hist":0.244},{"ma5":74.6,"ma20":73.0,"ma60":70.4,"vol_mean20":651.3,"dif":1.131,"dea":1.17,"macd_hist":-0.078},{"ma5":73.66,"ma20":73.09,"ma60":70.39,"vol_mean20":645.2,"dif":0.882,"dea":1.112,"macd_hist":-0.461},{"ma5":72.9,"ma20":73.1,"ma60":70.39,"vol_mean20":622.2,"dif":0.682,"dea":1.026,"macd_hist":-0.689},{"ma5":72.07,"ma20":73.04,"ma60":70.38,"vol_mean20":607.4,"dif":0.437,"dea":0.908,"macd_hist":-0.943},{"ma5":71.6,"ma20":73.01,"ma60":70.38,"vol_mean20":600.8,"dif":0.256,"dea":0.778,"macd_hist":-1.043},{"ma5":70.88,"ma20":72.81,"ma60":70.37,"vol_mean20":583.6,"dif":-0.023,"dea":0.618,"macd_hist":-1.281},{"ma5":70.13,"ma20":72.55,"ma60":70.33,"vol_mean20":572.4,"dif":-0.356,"dea":0.423,"macd_hist":-1.558},{"ma5":69.21,"ma20":72.28,"ma60":70.27,"vol_mean20":566.0,"dif":-0.681,"dea":0.202,"macd_hist":-1.766},{"ma5":68.48,"ma20":72.06,"ma60":70.22,"vol_mean20":553.2,"dif":-0.931,"dea":-0.024,"macd_hist":-1.813},{"ma5":67.92,"ma20":71.79,"ma60":70.18,"vol_mean20":517.5,"dif":-1.025,"dea":-0.225,"macd_hist":-1.601},{"ma5":67.44,"ma20":71.49,"ma60":70.13,"vol_mean20":505.6,"dif":-1.193,"dea":-0.418,"macd_hist":-1.549},{"ma5":67.53,"ma20":71.38,"ma60":70.12,"vol_mean20":488.0,"dif":-1.186,"dea":-0.572,"macd_hist":-1.229},{"ma5":67.83,"ma20":71.24,"ma60":70.11,"vol_mean20":478.8,"dif":-1.151,"dea":-0.688,"macd_hist":-0.926},{"ma5":68.02,"ma20":71.06,"ma60":70.09,"vol_mean20":471.4,"dif":-1.156,"dea":-0.781,"macd_hist":-0.75},{"ma5":67.94,"ma20":70.64,"ma60":70.08,"vol_mean20":367.3,"dif":-1.172,"dea":-0.86,"macd_hist":-0.626},{"ma5":68.2,"ma20":70.28,"ma60":70.08,"vol_mean20":330.5,"dif":-1.134,"dea":-0.914,"macd_hist":-0.438},{"ma5":68.13,"ma20":69.86,"ma60":70.09,"vol_mean20":308.5,"dif":-1.101,"dea":-0.952,"macd_hist":-0.299},{"ma5":67.94,"ma20":69.47,"ma60":70.09,"vol_mean20":293.6,"dif":-1.097,"dea":-0.981,"macd_hist":-0.232},{"ma5":67.65,"ma20":69.05,"ma60":70.08,"vol_mean20":288.4,"dif":-1.172,"dea":-1.019,"macd_hist":-0.306},{"ma5":67.1,"ma20":68.64,"ma60":70.06,"vol_mean20":283.5,"dif":-1.345,"dea":-1.084,"macd_hist":-0.522},{"ma5":65.86,"ma20":68.09,"ma60":69.96,"vol_mean20":289.2,"dif":-1.715,"dea":-1.21,"macd_hist":-1.009},{"ma5":64.72,"ma20":67.63,"ma60":69.88,"vol_mean20":283.6,"dif":-1.955,"dea":-1.359,"macd_hist":-1.192},{"ma5":63.61,"ma20":67.15,"ma60":69.77,"vol_mean20":285.6,"dif":-2.144,"dea":-1.516,"macd_hist":-1.255},{"ma5":62.47,"ma20":66.65,"ma60":69.64,"vol_mean20":282.1,"dif":-2.366,"dea":-1.686,"macd_hist":-1.36},{"ma5":61.81,"ma20":66.19,"ma60":69.53,"vol_mean20":283.9,"dif":-2.447,"dea":-1.838,"macd_hist":-1.217},{"ma5":61.71,"ma20":65.8,"ma60":69.42,"vol_mean20":272.5,"dif":-2.498,"dea":-1.97,"macd_hist":-1.055},{"ma5":61.4,"ma20":65.45,"ma60":69.3,"vol_mean20":262.4,"dif":-2.566,"dea":-2.089,"macd_hist":-0.953},{"ma5":61.3,"ma20":65.17,"ma60":69.2,"vol_mean20":258.4,"dif":-2.526,"dea":-2.177,"macd_hist":-0.698},{"ma5":61.34,"ma20":64.87,"ma60":69.1,"vol_mean20":256.6,"dif":-2.511,"dea":-2.244,"macd_hist":-0.535},{"ma5":60.96,"ma20":64.45,"ma60":68.97,"vol_mean20":254.0,"dif":-2.572,"dea":-2.309,"macd_hist":-0.525},{"ma5":60.61,"ma20":64.09,"ma60":68.83,"vol_mean20":243.6,"dif":-2.598,"dea":-2.367,"macd_hist":-0.463},{"ma5":60.7,"ma20":63.74,"ma60":68.7,"vol_mean20":246.2,"dif":-2.459,"dea":-2.385,"macd_hist":-0.147},{"ma5":60.34,"ma20":63.3,"ma60":68.54,"vol_mean20":251.3,"dif":-2.446,"dea":-2.398,"macd_hist":-0.098},{"ma5":60.35,"ma20":62.95,"ma60":68.41,"vol_mean20":261.2,"dif":-2.301,"dea":-2.378,"macd_hist":0.154},{"ma5":60.45,"ma20":62.58,"ma60":68.27,"vol_mean20":264.8,"dif":-2.225,"dea":-2.348,"macd_hist":0.245},{"ma5":60.52,"ma20":62.18,"ma60":68.12,"vol_mean20":274.1,"dif":-2.161,"dea":-2.31,"macd_hist":0.299},{"ma5":60.22,"ma20":61.76,"ma60":67.94,"vol_mean20":279.5,"dif":-2.111,"dea":-2.27,"macd_hist":0.319},{"ma5":60.25,"ma20":61.38,"ma60":67.77,"vol_mean20":286.8,"dif":-2.031,"dea":-2.223,"macd_hist":0.383},{"ma5":59.88,"ma20":61.01,"ma60":67.58,"vol_mean20":286.9,"dif":-2.006,"dea":-2.179,"macd_hist":0.346},{"ma5":59.84,"ma20":60.77,"ma60":67.42,"vol_mean20":284.0,"dif":-1.889,"dea":-2.121,"macd_hist":0.465},{"ma5":59.9,"ma20":60.68,"ma60":67.26,"vol_mean20":272.8,"dif":-1.759,"dea":-2.049,"macd_hist":0.58},{"ma5":60.18,"ma20":60.62,"ma60":67.12,"vol_mean20":285.3,"dif":-1.569,"dea":-1.953,"macd_hist":0.768},{"ma5":60.33,"ma20":60.56,"ma60":66.94,"vol_mean20":292.1,"dif":-1.436,"dea":-1.849,"macd_hist":0.827},{"ma5":60.65,"ma20":60.56,"ma60":66.75,"vol_mean20":298.8,"dif":-1.309,"dea":-1.741,"macd_hist":0.864},{"ma5":61.06,"ma20":60.58,"ma60":66.59,"vol_mean20":313.3,"dif":-1.082,"dea":-1.609,"macd_hist":1.054},{"ma5":61.28,"ma20":60.58,"ma60":66.4,"vol_mean20":322.7,"dif":-0.954,"dea":-1.478,"macd_hist":1.048},{"ma5":61.5,"ma20":60.65,"ma60":66.21,"vol_mean20":329.4,"dif":-0.775,"dea":-1.338,"macd_hist":1.125},{"ma5":61.73,"ma20":60.66,"ma60":66.04,"vol_mean20":331.9,"dif":-0.658,"dea":-1.202,"macd_hist":1.087},{"ma5":61.87,"ma20":60.69,"ma60":65.87,"vol_mean20":336.9,"dif":-0.588,"dea":-1.079,"macd_hist":0.982},{"ma5":61.75,"ma20":60.78,"ma60":65.67,"vol_mean20":337.7,"dif":-0.521,"dea":-0.968,"macd_hist":0.893},{"ma5":61.74,"ma20":60.86,"ma60":65.48,"vol_mean20":348.0,"dif":-0.477,"dea":-0.869,"macd_hist":0.785},{"ma5":61.41,"ma20":60.83,"ma60":65.32,"vol_mean20":357.5,"dif":-0.502,"dea":-0.796,"macd_hist":0.588},{"ma5":60.81,"ma20":60.78,"ma60":65.11,"vol_mean20":374.8,"dif":-0.664,"dea":-0.77,"macd_hist":0.211},{"ma5":60.04,"ma20":60.61,"ma60":64.87,"vol_mean20":393.8,"dif":-0.877,"dea":-0.791,"macd_hist":-0.173},{"ma5":59.01,"ma20":60.42,"ma60":64.55,"vol_mean20":409.9,"dif":-1.139,"dea":-0.861,"macd_hist":-0.556},{"ma5":57.95,"ma20":60.22,"ma60":64.22,"vol_mean20":409.9,"dif":-1.358,"dea":-0.96,"macd_hist":-0.795},{"ma5":57.06,"ma20":60.04,"ma60":63.89,"vol_mean20":411.0,"dif":-1.51,"dea":-1.07,"macd_hist":-0.879},{"ma5":56.48,"ma20":59.84,"ma60":63.56,"vol_mean20":407.0,"dif":-1.63,"dea":-1.182,"macd_hist":-0.896},{"ma5":56.15,"ma20":59.68,"ma60":63.25,"vol_mean20":409.8,"dif":-1.698,"dea":-1.285,"macd_hist":-0.825},{"ma5":55.93,"ma20":59.44,"ma60":62.95,"vol_mean20":412.6,"dif":-1.787,"dea":-1.386,"macd_hist":-0.803},{"ma5":56.34,"ma20":59.33,"ma60":62.7,"vol_mean20":449.8,"dif":-1.604,"dea":-1.429,"macd_hist":-0.349},{"ma5":56.72,"ma20":59.17,"ma60":62.48,"vol_mean20":447.5,"dif":-1.455,"dea":-1.434,"macd_hist":-0.041},{"ma5":57.08,"ma20":59.02,"ma60":62.24,"vol_mean20":439.1,"dif":-1.342,"dea":-1.416,"macd_hist":0.147},{"ma5":57.69,"ma20":58.94,"ma60":62.05,"vol_mean20":451.9,"dif":-1.132,"dea":-1.359,"macd_hist":0.454},{"ma5":58.16,"ma20":58.71,"ma60":61.83,"vol_mean20":446.6,"dif":-1.064,"dea":-1.3,"macd_hist":0.473},{"ma5":58.89,"ma20":58.73,"ma60":61.7,"vol_mean20":491.2,"dif":-0.662,"dea":-1.172,"macd_hist":1.021},{"ma5":60.71,"ma20":58.97,"ma60":61.69,"vol_mean20":566.5,"dif":0.1,"dea":-0.918,"macd_hist":2.036},{"ma5":62.13,"ma20":59.12,"ma60":61.65,"vol_mean20":593.3,"dif":0.51,"dea":-0.632,"macd_hist":2.284},{"ma5":63.17,"ma20":59.26,"ma60":61.61,"vol_mean20":614.9,"dif":0.777,"dea":-0.351,"macd_hist":2.255},{"ma5":64.92,"ma20":59.51,"ma60":61.58,"vol_mean20":652.3,"dif":1.158,"dea":-0.049,"macd_hist":2.414},{"ma5":65.71,"ma20":59.72,"ma60":61.56,"vol_mean20":671.6,"dif":1.385,"dea":0.238,"macd_hist":2.295},{"ma5":65.59,"ma20":60.02,"ma60":61.53,"vol_mean20":689.9,"dif":1.61,"dea":0.512,"macd_hist":2.195},{"ma5":65.6,"ma20":60.32,"ma60":61.47,"vol_mean20":689.2,"dif":1.632,"dea":0.736,"macd_hist":1.792},{"ma5":65.71,"ma20":60.68,"ma60":61.41,"vol_mean20":679.7,"dif":1.63,"dea":0.915,"macd_hist":1.43},{"ma5":65.1,"ma20":61.03,"ma60":61.34,"vol_mean20":670.8,"dif":1.487,"dea":1.029,"macd_hist":0.915},{"ma5":65.38,"ma20":61.58,"ma60":61.33,"vol_mean20":702.2,"dif":1.672,"dea":1.158,"macd_hist":1.028},{"ma5":65.39,"ma20":62.1,"ma60":61.3,"vol_mean20":705.4,"dif":1.748,"dea":1.276,"macd_hist":0.944},{"ma5":65.67,"ma20":62.62,"ma60":61.28,"vol_mean20":718.0,"dif":1.761,"dea":1.373,"macd_hist":0.776},{"ma5":65.89,"ma20":63.12,"ma60":61.27,"vol_mean20":717.2,"dif":1.728,"dea":1.444,"macd_hist":0.568},{"ma5":66.14,"ma20":63.58,"ma60":61.26,"vol_mean20":723.2,"dif":1.57,"dea":1.469,"macd_hist":0.202},{"ma5":64.79,"ma20":63.69,"ma60":61.24,"vol_mean20":724.6,"dif":1.083,"dea":1.392,"macd_hist":-0.618},{"ma5":63.09,"ma20":63.7,"ma60":61.17,"vol_mean20":732.7,"dif":0.496,"dea":1.213,"macd_hist":-1.434},{"ma5":61.15,"ma20":63.64,"ma60":61.07,"vol_mean20":744.5,"dif":-0.1,"dea":0.95,"macd_hist":-2.1},{"ma5":59.24,"ma20":63.5,"ma60":61.0,"vol_mean20":743.4,"dif":-0.575,"dea":0.645,"macd_hist":-2.441},{"ma5":57.65,"ma20":63.45,"ma60":60.92,"vol_mean20":747.2,"dif":-0.919,"dea":0.332,"macd_hist":-2.502},{"ma5":57.09,"ma20":63.24,"ma60":60.85,"vol_mean20":718.2,"dif":-1.098,"dea":0.046,"macd_hist":-2.289},{"ma5":57.45,"ma20":62.88,"ma60":60.84,"vol_mean20":656.3,"dif":-1.039,"dea":-0.171,"macd_hist":-1.737},{"ma5":58.19,"ma20":62.65,"ma60":60.81,"vol_mean20":639.2,"dif":-0.955,"dea":-0.328,"macd_hist":-1.254},{"ma5":58.69,"ma20":62.38,"ma60":60.78,"vol_mean20":621.9,"dif":-0.987,"dea":-0.46,"macd_hist":-1.056},{"ma5":59.33,"ma20":62.05,"ma60":60.78,"vol_mean20":589.2,"dif":-0.919,"dea":-0.552,"macd_hist":-0.736},{"ma5":59.57,"ma20":61.71,"ma60":60.76,"vol_mean20":576.4,"dif":-0.942,"dea":-0.63,"macd_hist":-0.625},{"ma5":59.16,"ma20":61.28,"ma60":60.71,"vol_mean20":548.2,"dif":-1.029,"dea":-0.71,"macd_hist":-0.639},{"ma5":58.7,"ma20":60.93,"ma60":60.68,"vol_mean20":535.3,"dif":-1.083,"dea":-0.784,"macd_hist":-0.598},{"ma5":58.32,"ma20":60.53,"ma60":60.61,"vol_mean20":524.2,"dif":-1.189,"dea":-0.865,"macd_hist":-0.648},{"ma5":57.88,"ma20":60.25,"ma60":60.56,"vol_mean20":523.8,"dif":-1.2,"dea":-0.932,"macd_hist":-0.535},{"ma5":57.35,"ma20":59.7,"ma60":60.5,"vol_mean20":497.5,"dif":-1.321,"dea":-1.01,"macd_hist":-0.623},{"ma5":57.24,"ma20":59.24,"ma60":60.46,"vol_mean20":500.1,"dif":-1.303,"dea":-1.069,"macd_hist":-0.468},{"ma5":57.66,"ma20":58.92,"ma60":60.46,"vol_mean20":512.7,"dif":-1.056,"dea":-1.066,"macd_hist":0.019},{"ma5":58.3,"ma20":58.64,"ma60":60.48,"vol_mean20":525.9,"dif":-0.833,"dea":-1.02,"macd_hist":0.373},{"ma5":58.1,"ma20":58.24,"ma60":60.42,"vol_mean20":542.0,"dif":-0.937,"dea":-1.003,"macd_hist":0.131},{"ma5":58.37,"ma20":58.09,"ma60":60.37,"vol_mean20":512.5,"dif":-0.945,"dea":-0.991,"macd_hist":0.093},{"ma5":58.45,"ma20":58.08,"ma60":60.32,"vol_mean20":509.6,"dif":-0.914,"dea":-0.976,"macd_hist":0.124},{"ma5":57.2,"ma20":57.04,"ma60":59.06,"vol_mean20":511.0,"dif":-0.722,"dea":-0.925,"macd_hist":0.406},{"ma5":57.05,"ma20":57.19,"ma60":59.04,"vol_mean20":495.1,"dif":-0.581,"dea":-0.856,"macd_hist":0.551},{"ma5":57.19,"ma20":57.23,"ma60":58.96,"vol_mean20":485.6,"dif":-0.635,"dea":-0.812,"macd_hist":0.354},{"ma5":57.68,"ma20":57.34,"ma60":58.94,"vol_mean20":476.7,"dif":-0.46,"dea":-0.742,"macd_hist":0.563},{"ma5":58.4,"ma20":57.42,"ma60":58.92,"vol_mean20":472.8,"dif":-0.189,"dea":-0.631,"macd_hist":0.884},{"ma5":58.93,"ma20":57.52,"ma60":58.93,"vol_mean20":482.7,"dif":0.098,"dea":-0.485,"macd_hist":1.167},{"ma5":59.64,"ma20":57.73,"ma60":58.96,"vol_mean20":499.2,"dif":0.379,"dea":-0.312,"macd_hist":1.383},{"ma5":60.64,"ma20":57.86,"ma60":58.97,"vol_mean20":507.1,"dif":0.552,"dea":-0.14,"macd_hist":1.383},{"ma5":61.06,"ma20":58.02,"ma60":58.98,"vol_mean20":502.4,"dif":0.639,"dea":0.016,"macd_hist":1.246},{"ma5":60.8,"ma20":58.13,"ma60":58.98,"vol_mean20":518.2,"dif":0.548,"dea":0.123,"macd_hist":0.851},{"ma5":60.36,"ma20":58.24,"ma60":59.0,"vol_mean20":531.1,"dif":0.462,"dea":0.19,"macd_hist":0.544},{"ma5":59.58,"ma20":58.34,"ma60":59.02,"vol_mean20":541.0,"dif":0.306,"dea":0.214,"macd_hist":0.184},{"ma5":58.86,"ma20":58.4,"ma60":59.06,"vol_mean20":542.8,"dif":0.164,"dea":0.204,"macd_hist":-0.079},{"ma5":58.51,"ma20":58.6,"ma60":59.13,"vol_mean20":552.5,"dif":0.162,"dea":0.195,"macd_hist":-0.066}],"card":{"tiers":[{"tier":1,"lo":61.5,"hi":64.1},{"tier":2,"lo":54.7,"hi":57.6},{"tier":3,"lo":42.8,"hi":46.2}],"invalidation":42.8,"box":{"box_low":54.7,"box_high":61.0},"right_side":{"trigger":61.0}},"executions":[{"date":"2026-07-15","action":"sell","price":59.5},{"date":"2026-07-13","action":"buy","price":55.93},{"date":"2026-07-09","action":"buy","price":57.0},{"date":"2026-07-03","action":"sell","price":60.2}],"sig_marks":[{"date":"2026-03-13","name":"干涸型"},{"date":"2026-04-03","name":"干涸型"},{"date":"2026-04-10","name":"干涸型"},{"date":"2026-05-08","name":"干涸型"},{"date":"2026-05-08","name":"周线底背离"},{"date":"2026-06-05","name":"恐慌型"},{"date":"2026-06-05","name":"周线底背离"},{"date":"2026-08-10","name":"档位临近"}]};
+const bars = DATA.bars;
+const dates = bars.map(b => b.trade_date);
+const closeByDate = {}; bars.forEach(b => closeByDate[b.trade_date] = b.close);
+const card = DATA.card;
+const RED = '#dc2626', GREEN = '#16a34a';
+
+// ---------- 三联图：一个实例、三个 grid、共享时间轴 ----------
+function buildAll() {
+  const chart = echarts.init(document.getElementById('chart-all'));
+  const xBase = { type: 'category', data: dates, boundaryGap: true,
+                  axisLine: { lineStyle: { color: '#e5e7eb' } }, axisTick: { show: false } };
+  const yBase = { scale: true, position: 'right',
+                  splitLine: { lineStyle: { color: '#f3f4f6' } },
+                  axisLabel: { fontSize: 10, color: '#9ca3af' } };
+
+  // ---- 主图 series（grid 0）：蜡烛图，红涨绿跌
+  const series = [{
+    name: 'K线', type: 'candlestick',
+    data: bars.map(b => [b.open, b.close, b.low, b.high]),
+    itemStyle: { color: RED, color0: GREEN, borderColor: RED, borderColor0: GREEN },
+    z: 5,
+  }];
+  const maColors = { ma5: '#f59e0b', ma20: '#a855f7', ma60: '#64748b' };
+  ['ma5', 'ma20', 'ma60'].forEach(m => series.push({
+    name: m.toUpperCase(), type: 'line', data: DATA.indicators.map(r => r[m]),
+    showSymbol: false, connectNulls: true, lineStyle: { width: 1, color: maColors[m] }, z: 4,
+  }));
+
+  // 卡片价区：浅色横带，小字标在带内左侧；边界线只标关键线
+  const areas = [], markers = [];
+  const tierColors = { 1: 'rgba(22,163,74,0.07)', 2: 'rgba(37,99,235,0.07)', 3: 'rgba(220,38,38,0.07)' };
+  card.tiers.forEach(t => {
+    areas.push([{ name: 'T' + t.tier, yAxis: t.lo, itemStyle: { color: tierColors[t.tier] },
+                  label: { show: true, position: 'insideLeft', fontSize: 9, color: '#9ca3af',
+                           formatter: 'T' + t.tier + '  ' + t.lo + '–' + t.hi } },
+                { yAxis: t.hi }]);
+  });
+  const line = (y, text, color, type, width) => markers.push({
+    yAxis: y, label: { show: true, position: 'insideStartTop', fontSize: 9, color, formatter: text },
+    lineStyle: { color, type, width } });
+  line(card.invalidation, '证伪 ' + card.invalidation, RED, 'solid', 1.5);
+  line(card.box.box_low, '箱体 ' + card.box.box_low, GREEN, 'dotted', 1.2);
+  line(card.box.box_high, '箱体 ' + card.box.box_high, GREEN, 'dotted', 1.2);
+  line(card.right_side.trigger, '右侧触发 ' + card.right_side.trigger, '#2563eb', 'dashed', 1);
+
+  // 执行标记：买红卖绿，带文字（只有 4 笔，不吵）
+  const execPts = DATA.executions.filter(x => closeByDate[x.date] != null).map(x => ({
+    coord: [x.date, closeByDate[x.date]],
+    value: (x.action === 'sell' ? '卖' : '买') + x.price,
+    itemStyle: { color: x.action === 'sell' ? GREEN : RED },
+  }));
+  if (execPts.length) series.push({ name: '执行', type: 'scatter', data: execPts,
+    symbolSize: 9, z: 8, label: { show: true, formatter: p => p.data.value, position: 'top', fontSize: 9, color: '#6b7280' } });
+
+  // 触发信号：小图钉不带文字，悬停见名（防杂乱）
+  const sigPts = DATA.sig_marks.filter(d => closeByDate[d.date] != null).map(d => ({
+    coord: [d.date, closeByDate[d.date]], value: d.name, itemStyle: { color: '#f59e0b' },
+  }));
+  if (sigPts.length) series.push({ name: '信号', type: 'scatter', data: sigPts,
+    symbol: 'pin', symbolSize: 14, z: 7, label: { show: false } });
+
+  // ---- 成交量（grid 1）：涨红跌绿 + 20 日均量线
+  const volData = bars.map((b, i) => ({
+    value: b.volume,
+    itemStyle: { color: (i > 0 && b.close < bars[i - 1].close) ? 'rgba(22,163,74,0.65)' : 'rgba(220,38,38,0.65)' },
+  }));
+  series.push({ name: '成交量', type: 'bar', data: volData, xAxisIndex: 1, yAxisIndex: 1, barWidth: '60%' });
+  series.push({ name: '均量20', type: 'line', data: DATA.indicators.map(r => r.vol_mean20),
+    xAxisIndex: 1, yAxisIndex: 1, showSymbol: false, lineStyle: { width: 1, color: '#f59e0b' } });
+
+  // ---- MACD（grid 2）：柱红正绿负
+  const histData = DATA.indicators.map(r => ({
+    value: r.macd_hist,
+    itemStyle: { color: (r.macd_hist || 0) >= 0 ? 'rgba(220,38,38,0.6)' : 'rgba(22,163,74,0.6)' },
+  }));
+  series.push({ name: 'DIF', type: 'line', data: DATA.indicators.map(r => r.dif),
+    xAxisIndex: 2, yAxisIndex: 2, showSymbol: false, lineStyle: { width: 1, color: '#2563eb' } });
+  series.push({ name: 'DEA', type: 'line', data: DATA.indicators.map(r => r.dea),
+    xAxisIndex: 2, yAxisIndex: 2, showSymbol: false, lineStyle: { width: 1, color: '#f59e0b' } });
+  series.push({ name: 'MACD柱', type: 'bar', data: histData, xAxisIndex: 2, yAxisIndex: 2, barWidth: '60%' });
+
+  series[0].markArea = { silent: true, data: areas };
+  series[0].markLine = { silent: true, symbol: 'none', data: markers };
+
+  chart.setOption({
+    animation: false,
+    axisPointer: { link: [{ xAxisIndex: 'all' }] },   // 三格十字线联动
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross', label: { fontSize: 10 } },
+               textStyle: { fontSize: 11 },
+               formatter: ps => {
+                 if (!ps.length) return '';
+                 const lines = [ps[0].axisValue];
+                 ps.forEach(p => {
+                   if (p.seriesType === 'candlestick') {
+                     const d = p.data;   // [open, close, low, high]
+                     lines.push(`开 ${d[1]}　收 ${d[2]}　低 ${d[3]}　高 ${d[4]}`);
+                   } else if (p.seriesName === '执行' || p.seriesName === '信号') {
+                     lines.push(`${p.marker}${p.seriesName} ${p.data.value}`);
+                   } else if (p.seriesName === '成交量' || p.seriesName === '均量20') {
+                     lines.push(`${p.marker}${p.seriesName} ${p.value == null ? '—' : Number(p.value).toFixed(0)}万`);
+                   } else {
+                     lines.push(`${p.marker}${p.seriesName} ${p.value == null ? '—' : Number(p.value).toFixed(2)}`);
+                   }
+                 });
+                 return lines.join('<br>');
+               } },
+    legend: { data: ['K线', 'MA5', 'MA20', 'MA60', '执行', '信号'],
+              top: 0, textStyle: { fontSize: 11 }, itemWidth: 14, itemHeight: 8 },
+    grid: [
+      { left: 40, right: 52, top: 30, height: 290 },   // 价格
+      { left: 40, right: 52, top: 342, height: 82 },   // 成交量
+      { left: 40, right: 52, top: 442, height: 100 },  // MACD
+    ],
+    xAxis: [
+      Object.assign({}, xBase, { gridIndex: 0, axisLabel: { show: false } }),
+      Object.assign({}, xBase, { gridIndex: 1, axisLabel: { show: false } }),
+      Object.assign({}, xBase, { gridIndex: 2, axisLabel: { fontSize: 10, color: '#9ca3af', formatter: v => v.slice(5) } }),
+    ],
+    yAxis: [
+      Object.assign({}, yBase, { gridIndex: 0 }),
+      Object.assign({}, yBase, { gridIndex: 1, name: '量·万', nameTextStyle: { fontSize: 9, color: '#9ca3af' }, splitNumber: 2 }),
+      Object.assign({}, yBase, { gridIndex: 2, name: 'MACD', nameTextStyle: { fontSize: 9, color: '#9ca3af' }, splitNumber: 3 }),
+    ],
+    dataZoom: [
+      { type: 'inside', xAxisIndex: [0, 1, 2] },
+      { type: 'slider', xAxisIndex: [0, 1, 2], bottom: 6, height: 16,
+        borderColor: '#e5e7eb', fillerColor: 'rgba(37,99,235,0.08)' },
+    ],
+    series: series,
+  });
+  return chart;
+}
+
+const chart = buildAll();
+window.addEventListener('resize', () => chart.resize());
+</script>
+</body>
+</html>

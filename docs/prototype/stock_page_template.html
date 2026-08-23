@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>单股页原型 — 珀莱雅 603605.SH</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    .num-card { background:#fff; border:1px solid #e5e7eb; border-radius:.5rem; padding:.6rem .8rem; min-width:0; }
+    .num-card .label { font-size:11px; color:#6b7280; margin-bottom:2px; }
+    .num-card .value { font-size:15px; font-weight:600; white-space:nowrap; }
+    .num-card .sub { font-size:11px; color:#9ca3af; }
+    .tab { padding:.45rem .9rem; border-radius:.375rem; font-size:13px; color:#4b5563; white-space:nowrap; cursor:default; }
+    .tab.active { background:#1f2937; color:#fff; }
+    .sig-row { display:flex; gap:.5rem; align-items:baseline; padding:.45rem 0; border-bottom:1px dashed #e5e7eb; font-size:13px; }
+    .sig-name { width:6.5rem; flex:none; color:#374151; font-weight:500; }
+    .sig-state { flex:none; font-size:11px; padding:0 .4rem; border-radius:.25rem; }
+    .st-on { background:#dcfce7; color:#15803d; } .st-off { background:#f3f4f6; color:#6b7280; }
+    .st-warn { background:#fef9c3; color:#a16207; } .st-bad { background:#fee2e2; color:#b91c1c; }
+    .sig-detail { color:#6b7280; font-size:12px; }
+    .evt { padding:.4rem 0; border-bottom:1px dashed #e5e7eb; font-size:13px; display:flex; gap:.6rem; }
+    .evt .d { color:#9ca3af; font-family:ui-monospace,monospace; font-size:12px; flex:none; width:5rem; }
+    .news { padding:.45rem 0; border-bottom:1px dashed #e5e7eb; font-size:13px; display:flex; gap:.5rem; align-items:baseline; }
+    .news .d { color:#9ca3af; font-family:ui-monospace,monospace; font-size:12px; flex:none; width:4.5rem; }
+    .news .src { color:#9ca3af; font-size:11px; flex:none; }
+    .ntag { flex:none; font-size:11px; padding:0 .45rem; border-radius:.25rem; }
+    .ntag-pos { background:#fee2e2; color:#b91c1c; }   /* 正面=红（A股习惯红涨） */
+    .ntag-neg { background:#dcfce7; color:#15803d; }   /* 负面=绿 */
+    .ntag-neu { background:#f3f4f6; color:#6b7280; }   /* 无影响=灰 */
+    .up { color:#dc2626; } .down { color:#16a34a; }
+    .proto-tag { position:fixed; right:12px; bottom:12px; background:#1f2937; color:#fff; font-size:11px; padding:4px 10px; border-radius:999px; opacity:.85; z-index:50; }
+  </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+  <nav class="bg-gray-900 text-white shadow">
+    <div class="container mx-auto px-4 flex items-center h-14 gap-1 overflow-x-auto">
+      <span class="text-lg font-semibold tracking-wide mr-4 flex-none">股票监测</span>
+      <select id="stock-select" onchange="if(this.value) location.href='stock_'+this.value.split('.')[0]+'.html'"
+              class="bg-gray-800 text-sm rounded-md px-3 py-1.5 border border-gray-600 text-gray-100 focus:outline-none focus:border-gray-400">
+        <!--STOCK_OPTIONS-->
+      </select>
+      <span class="flex-1"></span>
+      <span class="tab flex-none text-gray-300">数据</span>
+    </div>
+  </nav>
+
+  <main class="container mx-auto px-4 py-5 space-y-5">
+    <section>
+      <div class="flex items-baseline gap-3 mb-2">
+        <h1 class="text-xl font-bold">珀莱雅 <span class="text-sm font-normal text-gray-500">603605.SH</span></h1>
+        <span class="text-xs text-gray-400">数据截止 <!--CUTOFF--></span>
+      </div>
+      <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2" id="num-cards"><!--NUM_CARDS--></div>
+    </section>
+
+    <!-- 主图区：价格/成交量/MACD 同一时间轴三联图 -->
+    <section class="bg-white rounded-lg border border-gray-200 p-3">
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-1 text-xs text-gray-500">
+        <span class="font-medium text-gray-700">不复权口径 · 价区底色为卡片三档 · 标线为证伪/箱体/右侧</span>
+        <span>口径: <b>不复权</b> / 完全复权</span>
+        <span>周期: <b>日线</b> / 周线</span>
+        <span>图例可点击开关各均线/标记</span>
+      </div>
+      <div id="chart-all" style="height:600px"></div>
+    </section>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <section class="bg-white rounded-lg border border-gray-200 p-4">
+        <h2 class="font-semibold text-sm mb-2">信号现状</h2>
+        <div id="sig-summary"><!--SIG_ROWS--></div>
+      </section>
+      <section class="bg-white rounded-lg border border-gray-200 p-4">
+        <h2 class="font-semibold text-sm mb-2">资讯流
+          <span class="ml-1 text-[11px] font-normal text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">示例数据 · 二期接入真实资讯源</span>
+        </h2>
+        <div id="news"><!--NEWS_HTML--></div>
+      </section>
+    </div>
+
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div class="bg-white rounded-lg border border-gray-200 p-4">
+        <h2 class="font-semibold text-sm mb-2">当前排期卡</h2>
+        <!--CARD_HTML-->
+      </div>
+      <div class="bg-white rounded-lg border border-gray-200 p-4">
+        <h2 class="font-semibold text-sm mb-2">执行记录</h2>
+        <!--EXEC_HTML-->
+      </div>
+    </section>
+  </main>
+
+  <div class="proto-tag">交互原型 · 静态数据 · 供评审</div>
+
+<script>
+const DATA = /*__DATA__*/null;
+const bars = DATA.bars;
+const dates = bars.map(b => b.trade_date);
+const closeByDate = {}; bars.forEach(b => closeByDate[b.trade_date] = b.close);
+const card = DATA.card;
+const RED = '#dc2626', GREEN = '#16a34a';
+
+// ---------- 三联图：一个实例、三个 grid、共享时间轴 ----------
+function buildAll() {
+  const chart = echarts.init(document.getElementById('chart-all'));
+  const xBase = { type: 'category', data: dates, boundaryGap: true,
+                  axisLine: { lineStyle: { color: '#e5e7eb' } }, axisTick: { show: false } };
+  const yBase = { scale: true, position: 'right',
+                  splitLine: { lineStyle: { color: '#f3f4f6' } },
+                  axisLabel: { fontSize: 10, color: '#9ca3af' } };
+
+  // ---- 主图 series（grid 0）：蜡烛图，红涨绿跌
+  const series = [{
+    name: 'K线', type: 'candlestick',
+    data: bars.map(b => [b.open, b.close, b.low, b.high]),
+    itemStyle: { color: RED, color0: GREEN, borderColor: RED, borderColor0: GREEN },
+    z: 5,
+  }];
+  const maColors = { ma5: '#f59e0b', ma20: '#a855f7', ma60: '#64748b' };
+  ['ma5', 'ma20', 'ma60'].forEach(m => series.push({
+    name: m.toUpperCase(), type: 'line', data: DATA.indicators.map(r => r[m]),
+    showSymbol: false, connectNulls: true, lineStyle: { width: 1, color: maColors[m] }, z: 4,
+  }));
+
+  // 卡片价区：浅色横带，小字标在带内左侧；边界线只标关键线
+  const areas = [], markers = [];
+  const tierColors = { 1: 'rgba(22,163,74,0.07)', 2: 'rgba(37,99,235,0.07)', 3: 'rgba(220,38,38,0.07)' };
+  card.tiers.forEach(t => {
+    areas.push([{ name: 'T' + t.tier, yAxis: t.lo, itemStyle: { color: tierColors[t.tier] },
+                  label: { show: true, position: 'insideLeft', fontSize: 9, color: '#9ca3af',
+                           formatter: 'T' + t.tier + '  ' + t.lo + '–' + t.hi } },
+                { yAxis: t.hi }]);
+  });
+  const line = (y, text, color, type, width) => markers.push({
+    yAxis: y, label: { show: true, position: 'insideStartTop', fontSize: 9, color, formatter: text },
+    lineStyle: { color, type, width } });
+  line(card.invalidation, '证伪 ' + card.invalidation, RED, 'solid', 1.5);
+  line(card.box.box_low, '箱体 ' + card.box.box_low, GREEN, 'dotted', 1.2);
+  line(card.box.box_high, '箱体 ' + card.box.box_high, GREEN, 'dotted', 1.2);
+  line(card.right_side.trigger, '右侧触发 ' + card.right_side.trigger, '#2563eb', 'dashed', 1);
+
+  // 执行标记：买红卖绿，带文字（只有 4 笔，不吵）
+  const execPts = DATA.executions.filter(x => closeByDate[x.date] != null).map(x => ({
+    coord: [x.date, closeByDate[x.date]],
+    value: (x.action === 'sell' ? '卖' : '买') + x.price,
+    itemStyle: { color: x.action === 'sell' ? GREEN : RED },
+  }));
+  if (execPts.length) series.push({ name: '执行', type: 'scatter', data: execPts,
+    symbolSize: 9, z: 8, label: { show: true, formatter: p => p.data.value, position: 'top', fontSize: 9, color: '#6b7280' } });
+
+  // 触发信号：小图钉不带文字，悬停见名（防杂乱）
+  const sigPts = DATA.sig_marks.filter(d => closeByDate[d.date] != null).map(d => ({
+    coord: [d.date, closeByDate[d.date]], value: d.name, itemStyle: { color: '#f59e0b' },
+  }));
+  if (sigPts.length) series.push({ name: '信号', type: 'scatter', data: sigPts,
+    symbol: 'pin', symbolSize: 14, z: 7, label: { show: false } });
+
+  // ---- 成交量（grid 1）：涨红跌绿 + 20 日均量线
+  const volData = bars.map((b, i) => ({
+    value: b.volume,
+    itemStyle: { color: (i > 0 && b.close < bars[i - 1].close) ? 'rgba(22,163,74,0.65)' : 'rgba(220,38,38,0.65)' },
+  }));
+  series.push({ name: '成交量', type: 'bar', data: volData, xAxisIndex: 1, yAxisIndex: 1, barWidth: '60%' });
+  series.push({ name: '均量20', type: 'line', data: DATA.indicators.map(r => r.vol_mean20),
+    xAxisIndex: 1, yAxisIndex: 1, showSymbol: false, lineStyle: { width: 1, color: '#f59e0b' } });
+
+  // ---- MACD（grid 2）：柱红正绿负
+  const histData = DATA.indicators.map(r => ({
+    value: r.macd_hist,
+    itemStyle: { color: (r.macd_hist || 0) >= 0 ? 'rgba(220,38,38,0.6)' : 'rgba(22,163,74,0.6)' },
+  }));
+  series.push({ name: 'DIF', type: 'line', data: DATA.indicators.map(r => r.dif),
+    xAxisIndex: 2, yAxisIndex: 2, showSymbol: false, lineStyle: { width: 1, color: '#2563eb' } });
+  series.push({ name: 'DEA', type: 'line', data: DATA.indicators.map(r => r.dea),
+    xAxisIndex: 2, yAxisIndex: 2, showSymbol: false, lineStyle: { width: 1, color: '#f59e0b' } });
+  series.push({ name: 'MACD柱', type: 'bar', data: histData, xAxisIndex: 2, yAxisIndex: 2, barWidth: '60%' });
+
+  series[0].markArea = { silent: true, data: areas };
+  series[0].markLine = { silent: true, symbol: 'none', data: markers };
+
+  chart.setOption({
+    animation: false,
+    axisPointer: { link: [{ xAxisIndex: 'all' }] },   // 三格十字线联动
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross', label: { fontSize: 10 } },
+               textStyle: { fontSize: 11 },
+               formatter: ps => {
+                 if (!ps.length) return '';
+                 const lines = [ps[0].axisValue];
+                 ps.forEach(p => {
+                   if (p.seriesType === 'candlestick') {
+                     const d = p.data;   // [open, close, low, high]
+                     lines.push(`开 ${d[1]}　收 ${d[2]}　低 ${d[3]}　高 ${d[4]}`);
+                   } else if (p.seriesName === '执行' || p.seriesName === '信号') {
+                     lines.push(`${p.marker}${p.seriesName} ${p.data.value}`);
+                   } else if (p.seriesName === '成交量' || p.seriesName === '均量20') {
+                     lines.push(`${p.marker}${p.seriesName} ${p.value == null ? '—' : Number(p.value).toFixed(0)}万`);
+                   } else {
+                     lines.push(`${p.marker}${p.seriesName} ${p.value == null ? '—' : Number(p.value).toFixed(2)}`);
+                   }
+                 });
+                 return lines.join('<br>');
+               } },
+    legend: { data: ['K线', 'MA5', 'MA20', 'MA60', '执行', '信号'],
+              top: 0, textStyle: { fontSize: 11 }, itemWidth: 14, itemHeight: 8 },
+    grid: [
+      { left: 40, right: 52, top: 30, height: 290 },   // 价格
+      { left: 40, right: 52, top: 342, height: 82 },   // 成交量
+      { left: 40, right: 52, top: 442, height: 100 },  // MACD
+    ],
+    xAxis: [
+      Object.assign({}, xBase, { gridIndex: 0, axisLabel: { show: false } }),
+      Object.assign({}, xBase, { gridIndex: 1, axisLabel: { show: false } }),
+      Object.assign({}, xBase, { gridIndex: 2, axisLabel: { fontSize: 10, color: '#9ca3af', formatter: v => v.slice(5) } }),
+    ],
+    yAxis: [
+      Object.assign({}, yBase, { gridIndex: 0 }),
+      Object.assign({}, yBase, { gridIndex: 1, name: '量·万', nameTextStyle: { fontSize: 9, color: '#9ca3af' }, splitNumber: 2 }),
+      Object.assign({}, yBase, { gridIndex: 2, name: 'MACD', nameTextStyle: { fontSize: 9, color: '#9ca3af' }, splitNumber: 3 }),
+    ],
+    dataZoom: [
+      { type: 'inside', xAxisIndex: [0, 1, 2] },
+      { type: 'slider', xAxisIndex: [0, 1, 2], bottom: 6, height: 16,
+        borderColor: '#e5e7eb', fillerColor: 'rgba(37,99,235,0.08)' },
+    ],
+    series: series,
+  });
+  return chart;
+}
+
+const chart = buildAll();
+window.addEventListener('resize', () => chart.resize());
+</script>
+</body>
+</html>

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}卡片列表 - 股票监测系统{% endblock %}
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+  <aside class="lg:col-span-3 card space-y-3 text-sm">
+    <h3 class="card-title">卡片筛选</h3>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">股票代码</label>
+      <input id="card-symbol" type="text" class="w-full px-2 py-1 rounded border border-gray-300" placeholder="如 603605.SH">
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">状态</label>
+      <div id="card-status-checks" class="flex flex-wrap gap-2"></div>
+    </div>
+    <div class="grid grid-cols-2 gap-2">
+      <div><label class="block text-xs text-gray-500 mb-1">生效开始</label><input id="card-ef" type="date" class="w-full px-2 py-1 rounded border border-gray-300"></div>
+      <div><label class="block text-xs text-gray-500 mb-1">生效结束</label><input id="card-et" type="date" class="w-full px-2 py-1 rounded border border-gray-300"></div>
+    </div>
+    <div class="flex gap-2">
+      <button id="card-apply" class="flex-1 px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700">应用</button>
+      <button id="card-reset" class="px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-100">重置</button>
+    </div>
+  </aside>
+
+  <section class="lg:col-span-9">
+    <div class="card overflow-x-auto">
+      <table class="data-table">
+        <thead><tr>
+          <th>card_version_id</th>
+          <th>股票</th><th>状态</th>
+          <th>生效起</th><th>生效止</th>
+          <th>替代</th><th>价区摘要</th><th>下次复核</th><th>操作</th>
+        </tr></thead>
+        <tbody id="card-tbody"></tbody>
+      </table>
+      <div id="card-empty" class="py-8 text-center text-gray-400 hidden">没有匹配的卡片</div>
+    </div>
+    <div class="flex flex-wrap items-center justify-between gap-3 mt-3 text-sm">
+      <span id="card-total" class="text-gray-500"></span>
+      <div class="flex items-center gap-2">
+        <button id="card-prev" class="px-3 py-1 rounded border border-gray-300 hover:bg-gray-100">上一页</button>
+        <button id="card-next" class="px-3 py-1 rounded border border-gray-300 hover:bg-gray-100">下一页</button>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/cards.js') }}"></script>
+{% endblock %}

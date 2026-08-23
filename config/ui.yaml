@@ -1,0 +1,32 @@
+# Web UI 配置（第一期，docs/ui_design_phase1.md §6）
+app:
+  host: 127.0.0.1
+  port: 5000
+  debug: false
+
+defaults:
+  page_size: 50
+  recent_trading_days: 90
+  default_indicators:
+    - ma5
+    - ma20
+    - ma60
+    - macd_hist
+    - rsi12
+    - pe_ttm
+
+price_display:
+  default: unadjusted          # 与卡片价区对比默认不复权
+  options:
+    - unadjusted
+    - fully_adjusted
+
+charts:
+  library: echarts
+  colors:
+    - "#5470c6"
+    - "#91cc75"
+    - "#fac858"
+    - "#ee6666"
+    - "#73c0de"
+    - "#3ba272"

@@ -1,0 +1,25 @@
+# A 股 2024 年交易日历种子（设计 §3.5）
+# 来源：上海证券交易所《关于上海证券交易所2024年部分节假日休市安排的通知》
+#       上证公告〔2023〕47号，2023-12-26 发布
+#       https://www.sse.com.cn/disclosure/announcement/general/c/c_20231226_5733939.shtml
+# 规则：周一至周五开市，除以下休市区间；周六、周日一律休市（含调班周末）。
+
+market: CN
+year: 2024
+timezone: Asia/Shanghai
+session:
+  open: "09:30"
+  close: "15:00"
+  full_day: true
+
+holidays:
+  - { name: 元旦,   from: 2024-01-01, to: 2024-01-01 }
+  - { name: 春节,   from: 2024-02-09, to: 2024-02-17 }
+  - { name: 清明节, from: 2024-04-04, to: 2024-04-06 }
+  - { name: 劳动节, from: 2024-05-01, to: 2024-05-05 }
+  - { name: 端午节, from: 2024-06-10, to: 2024-06-10 }
+  - { name: 中秋节, from: 2024-09-15, to: 2024-09-17 }
+  - { name: 国庆节, from: 2024-10-01, to: 2024-10-07 }
+
+# 半日市：A 股无
+half_days: []

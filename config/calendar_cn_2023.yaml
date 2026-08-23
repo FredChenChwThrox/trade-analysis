@@ -1,0 +1,25 @@
+# A 股 2023 年交易日历种子（设计 §3.5）
+# 来源：上海证券交易所《关于上海证券交易所2023年全年休市安排的通知》
+#       上证公告〔2022〕51号，2022-12-27 发布
+#       https://www.sse.com.cn/disclosure/announcement/general/c/c_20221227_5714458.shtml
+#       中秋国庆：上证公告〔2023〕36号
+# 规则：周一至周五开市，除以下休市区间；周六、周日一律休市（含调班周末）。
+
+market: CN
+year: 2023
+timezone: Asia/Shanghai
+session:
+  open: "09:30"
+  close: "15:00"
+  full_day: true
+
+holidays:
+  - { name: 元旦,   from: 2023-01-01, to: 2023-01-02 }
+  - { name: 春节,   from: 2023-01-21, to: 2023-01-27 }
+  - { name: 清明节, from: 2023-04-05, to: 2023-04-05 }
+  - { name: 劳动节, from: 2023-04-29, to: 2023-05-03 }
+  - { name: 端午节, from: 2023-06-22, to: 2023-06-24 }
+  - { name: 中秋国庆, from: 2023-09-29, to: 2023-10-06 }
+
+# 半日市：A 股无
+half_days: []

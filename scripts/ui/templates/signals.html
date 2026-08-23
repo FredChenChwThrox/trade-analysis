@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}信号时间轴 - 股票监测系统{% endblock %}
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+  <aside class="lg:col-span-3 card space-y-3 text-sm">
+    <h3 class="card-title">信号筛选</h3>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">股票（多选）</label>
+      <div id="sig-search-box" class="mb-1"></div>
+      <div id="sig-symbol-tags" class="flex flex-wrap gap-1"></div>
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">信号类型</label>
+      <div id="sig-type-checks" class="max-h-40 overflow-auto space-y-1"></div>
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">状态</label>
+      <div id="sig-state-checks" class="flex flex-wrap gap-2"></div>
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">是否触发</label>
+      <select id="sig-triggered" class="w-full px-2 py-1 rounded border border-gray-300">
+        <option value="">全部</option>
+        <option value="1">仅触发</option>
+        <option value="0">未触发</option>
+      </select>
+    </div>
+    <div class="grid grid-cols-2 gap-2">
+      <div><label class="block text-xs text-gray-500 mb-1">开始</label><input id="sig-start" type="date" class="w-full px-2 py-1 rounded border border-gray-300"></div>
+      <div><label class="block text-xs text-gray-500 mb-1">结束</label><input id="sig-end" type="date" class="w-full px-2 py-1 rounded border border-gray-300"></div>
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">anchor_id</label>
+      <input id="sig-anchor" type="text" class="w-full px-2 py-1 rounded border border-gray-300" placeholder="数字">
+    </div>
+    <div class="flex gap-2">
+      <button id="sig-apply" class="flex-1 px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700">应用</button>
+      <button id="sig-reset" class="px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-100">重置</button>
+    </div>
+  </aside>
+
+  <section class="lg:col-span-9">
+    <div class="card mb-3 flex flex-wrap items-center justify-between gap-2">
+      <h3 class="card-title mb-0">信号 <span id="sig-total" class="text-gray-400 font-normal"></span></h3>
+      <div class="flex items-center gap-2 text-sm">
+        <select id="sig-view" class="px-2 py-1 rounded border border-gray-300">
+          <option value="list">列表视图</option>
+          <option value="by_date">按日期分组</option>
+          <option value="by_symbol">按股票分组</option>
+        </select>
+        <button id="sig-timeline-btn" class="px-3 py-1 rounded border border-gray-300 hover:bg-gray-100">时间轴视图</button>
+      </div>
+    </div>
+    <div class="card overflow-x-auto">
+      <div id="sig-timeline" class="hidden mb-4"></div>
+      <table class="data-table">
+        <thead><tr>
+          <th class="sortable" data-sort="observed_on">观测日</th>
+          <th class="sortable" data-sort="symbol">股票</th>
+          <th class="sortable" data-sort="signal">信号</th>
+          <th class="sortable" data-sort="state">状态</th>
+          <th>触发</th>
+          <th>活跃截止</th>
+          <th>anchor</th>
+          <th>操作</th>
+        </tr></thead>
+        <tbody id="sig-tbody"></tbody>
+      </table>
+      <div id="sig-empty" class="py-8 text-center text-gray-400 hidden">没有匹配的信号</div>
+    </div>
+    <div class="flex flex-wrap items-center justify-between gap-3 mt-3 text-sm">
+      <div class="flex items-center gap-2">
+        <span class="text-gray-500">每页</span>
+        <select id="sig-page-size" class="px-2 py-1 rounded border border-gray-300">
+          <option>50</option><option selected>100</option><option>200</option>
+        </select>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="sig-page-info" class="text-gray-500"></span>
+        <button id="sig-prev" class="px-3 py-1 rounded border border-gray-300 hover:bg-gray-100">上一页</button>
+        <button id="sig-next" class="px-3 py-1 rounded border border-gray-300 hover:bg-gray-100">下一页</button>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/signals.js') }}"></script>
+{% endblock %}

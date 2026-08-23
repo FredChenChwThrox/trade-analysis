@@ -1,0 +1,96 @@
+# 跟踪股票池种子（导入 watchlist 表，设计 §7）
+# 字段：symbol, market, name, aliases（新闻匹配用别名）, benchmark_code, currency, timezone
+
+stocks:
+  - symbol: 603605.SH
+    market: CN
+    name: 珀莱雅
+    aliases: [珀莱雅, Proya]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 603288.SH
+    market: CN
+    name: 海天味业
+    aliases: [海天味业, 海天, Haitian]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 601318.SH
+    market: CN
+    name: 中国平安
+    aliases: [中国平安, 平安, Ping An]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 002747.SZ
+    market: CN
+    name: 埃斯顿
+    aliases: [埃斯顿, Estun]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 601899.SH
+    market: CN
+    name: 紫金矿业
+    aliases: [紫金矿业, 紫金, Zijin]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 600029.SH
+    market: CN
+    name: 南方航空
+    aliases: [南方航空, 南航, China Southern]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 600531.SH
+    market: CN
+    name: 豫光金铅
+    aliases: [豫光金铅, 豫光, Yuguang]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 600346.SH
+    market: CN
+    name: 恒力石化
+    aliases: [恒力石化, 恒力, Hengli]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 002709.SZ
+    market: CN
+    name: 天赐材料
+    aliases: [天赐材料, 天赐, Tinci]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 002714.SZ
+    market: CN
+    name: 牧原股份
+    aliases: [牧原股份, 牧原, Muyuan]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  # 2026-08-16 消费筛选核心候选入池（reports/screening/2026-08-16-消费.md）
+  - symbol: 002299.SZ
+    market: CN
+    name: 圣农发展
+    aliases: [圣农发展, 圣农, Sunner]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 002557.SZ
+    market: CN
+    name: 洽洽食品
+    aliases: [洽洽食品, 洽洽, Qiaqia]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 603697.SH
+    market: CN
+    name: 有友食品
+    aliases: [有友食品, 有友, Youyou]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
