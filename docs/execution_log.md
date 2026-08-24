@@ -759,3 +759,64 @@
   5. `_classify_raw_files` 识别 tdx 前/后复权文件（kline 目录 `{symbol}_tq1/_tq2.csv`，tdx-collect skill 命名约定）路由到 forward 因子变化检查（§3.3），不再误入 by_symbol；`adjust.load_forward_closes` 本已兼容 tdx `data` 列名。
   6. 新增 `--source` 参数（可重复）：raw-dir 只处理所列数据源目录，其余跳过并记 notes；`run_daily` 加 `sources` 参数。
 - **测试**：test_tdx_adapter 新增 period_end fallback / fallback 仍 conflict / revision run_id 3 用例（替换 1 旧用例）；test_daily 新增 tq 文件分类 / source 过滤 2 用例。全量 `uv run pytest -q` **370 全绿**。
+
+## 2026-08-24（万华化学 600309.SH 排期卡底稿解堵：pit_backfill + 股本补录 + 重算重导）
+
+- **背景**：建卡评估（前条）结论"是"，但底稿 pe_ttm 非空仅 1/700、分位退化、pe_status 带 degraded_available_at。本批执行解堵链路。
+- **公告采集**：天眼查"上市信息-上市公告"33 页 660 行（2020-10-16~2026-08-05，子代理抓取），落 `data/raw/tianyancha/announcement/2026-08-23/pit_backfill_600309/`（含 _meta.json）。
+- **代码修复**：`pit_backfill.title_keywords` 年报关键词补 `{fy}年度报告` 变体——万华 2020/2021 年报标题为"万华化学2020年度报告"（年份后无"年"），原单关键词 `matched=8/10`；修复后 dry-run **10/10 全匹配**。test_title_keywords_mapping 同步更新。
+- **pit_backfill 正式回填**：`--backup data/backups/financial_reports_20260823_pit600309.csv`（132 行）→ matched=10，2020FY~2026Q1 全部恢复真实披露日（点时口径）。
+- **股本补录（新发现的卡点）**：重算后仍 `no_share_capital` 699/700——tdx quotes 快照 effective_at=2026-08-21 只覆盖最新日，历史区间无股本事件。按 2025-07-14《关于股份回购实施结果暨股份变动的公告》（tianyancha uuid bf5f2a22…，p7.csv 已登记 raw_tyc_ann_0394059f85b4）手工补录 2 行 share_capital_events：① effective 2023-09-28（K线 origin）snapshot_issued 3,139,746,626（公告佐证"注销前总股本"；公告流 2020-10~2026-08 核对无其他增发/送转/注销）；② effective 2025-07-14 buyback_cancel −9,275,000 → 3,130,471,626，available_at 次一交易日（§2.1 保守规则）。NOTE：tdx ZSZ=3,130,471,560 与公告值差 66 股，仅影响 2026-08-21 当日 PE 第 8 位小数，记录不处理。
+- **重算 + 重导**：`indicators.compute` → pe_ttm 非空 **454/700**，`degraded_available_at` 标注消失（published_at 全非 NULL，assume_visible 自动转严格点时）；空值 246 天 = 2025-04-16~2026-04-21 `ttm_missing_prev_same_period`（缺 2024 季报，与全池 init 采集"年报+2025 起季报"口径一致，601168 同型洞，不单独补齐）。`card_inputs` 重导 `cards/600309.SH/inputs_2026-08-21.json`：PE 分位 p5/p50/p95 = 12.65/14.97/18.23（样本 454 日强制标注 §3.2），当前 PE 17.59 处 p75~p95 区间；market_snapshot pe_status=`ok;snapshot_share_basis`。
+- **forecast 补采失败**：`get_forecast` EMPTY_DATA×2（接口不稳，与公告接口 8/13 起持续 EMPTY 同型）；底稿 `forecasts_snapshot=None` 缺口保留，一致预期以评估报告外部快照（FY2026E 185.1 亿）为参考、不入库。
+- **测试**：`uv run pytest -q` **370 全绿**。
+- **状态**：600309 排期卡 draft 链路就绪（card_inputs ✅ → fred-valuation-card-skill → create-draft → 人工 activate）。激活节奏沿用评估报告建议：正式半年报披露后复核 H1 营收/现金流再人工激活。
+
+## 2026-08-24（法拉电子 600563.SH 排期卡 draft：pit_backfill + 股本补录 + skill 出卡）
+
+- **背景**：建卡评估（`reports/screening/2026-08-23-法拉电子建卡评估.md`）结论**暂缓**（三轨零命中：PE 3 年 80.7% 分位、盈利峰值区缓增 +2.2%、年内 +84.6% 后 -33% 筹码未出清）。用户明确要求建卡 → 按等待型左侧卡出 draft，评估风险写入胜率打分与复核触发器。**draft-only，activate 待人工**。
+- **公告采集**：天眼查"上市信息-上市公告"13 页 260 行（2020-04-29~2026-08-22，子代理抓取），落 `data/raw/tianyancha/announcement/2026-08-24/pit_backfill_600563/`。
+- **pit_backfill**：dry-run 10/10 匹配（年报变体修复已在 600309 批次落地，法拉 2020/2021 年报标题为"年年度报告"标准写法）→ 正式回填 `--backup data/backups/financial_reports_20260824_pit600563.csv`（132 行），2020FY~2026Q1 全部恢复点时口径。
+- **股本补录**：`no_share_capital` 与 600309 同型（tdx 快照只覆盖 2026-08-21）。补录 snapshot_issued：effective 2023-09-28 = 225,000,000 股（kimi get_stock_info 与 tdx ZSZ 双口径一致；天眼查全量公告核对 2020-04 以来无增发/送转/回购注销，仅现金分派）。raw_object 登记 `raw_ths_stock_info_600563SH_*`。
+- **重算 + 底稿**：pe_ttm 非空 478/700（空 222 = 2025-04~2026-04 缺 2024 季报全池共性洞 + 起始段），degraded_available_at 消失。`card_inputs` → `cards/600563.SH/inputs_2026-08-21.json`：PE 分位 p5/p50/p95=17.36/22.70/30.23，当前 25.04 处 p50~p75。
+- **forecast 缺口**：get_forecast 两次返回估值比率有、FY1-FY3 预测字段全空（接口不稳，与 600309 当日的 EMPTY_DATA 同型），底稿 forecasts=None；一致预期用 2026-08-23 外部快照（FY1 13.49 亿 +13.1%）写入卡 narrative，不入库。
+- **skill 出卡**（`fred-valuation-card-skill` 流程，build_schedule.py --eps 5.60,5.30,4.55 --pe 25,20,16 --price 133.07 --winrate 35,50,55）：
+  - 体系判断：底部刻度 16.1-19.1（2024）→ 27.8（2026-05）上移由 AI 叙事驱动、未经盈利验证 → 锚定旧体系带 PE 16/20/25。
+  - 三档：T1 107.5-112.0 / T2 100.7-106.0 / T3 72.8-78.6；证伪线 72.80；右侧触发 145.00 / 止损 128.00；波段仓不适用（横盘 3 周 < 4 周门槛）。
+  - 胜率 T1 35-50% / T2 50-65% / T3 55-70%；Kelly 上限 T1 0.0% / T2 2.1% / T3 13.2%——T1 非正期望注，卡上建议 T1 预算并入 T2 等信号。现价 133.07 高于 T1 上沿 18.8%，卡当前含义=不动。
+- **落盘**：`cards/600563.SH/法拉电子估值排期卡_draft_2026-08-24.md` + `draft_2026-08-24.json` → `create-draft` 入库 **600563SH_b11e5de5（draft，待人工 activate/reject）**。
+- **测试**：`uv run pytest -q` **370 全绿**（本批无代码变更，纯数据/产物）。
+
+## 2026-08-24（万华化学 600309.SH 排期卡 draft：skill 出卡）
+
+- **背景**：建卡评估（`reports/screening/2026-08-23-万华化学600309-路由建卡评估.md`）结论**是**（Track A 主轨 H1 预告 +60~70% + Track B 副轨，第一梯队候选，附条件：正式半年报验证营收与现金流）。昨日已解堵底稿（pit_backfill + 股本补录 + 重算），本批出卡。**draft-only，activate 待人工**；评估建议正式半年报披露复核后再激活。
+- **锚定体系**：周期股 mixed 锚——PB 带主锚（gildata 5 年：1.68-6.28，中位 2.93，当前 2.08 处 16% 分位，BVPS≈35.6）+ 前瞻 PE 辅锚（FY2026E 12.5x/FY2027E 10.9x）；库内 PE(TTM) 刻度（p5/p50/p95=12.65/14.97/18.23）在盈利上行期失真（TTM 分母 131.6 亿为底部基数），当前 17.6 处 p75-p95 判定为口径现象。
+- **情景**：EPS 中性 5.90（FY1 185 亿兑现，H1 预告已完成 53-56%，反向裂口有利）/ 悲观 5.30（涨价回吐 +33%）/ 极悲 4.30（涨价证伪回落至 135 亿）/ bull 6.55；PE 正常化口径 乐观 15 / 中性 12.5 / 悲观 11（低于 TTM 刻度，因分母用 FY2026 情景盈利）。
+- **三档**（build_schedule.py --eps 5.90,5.30,4.30 --pe 15,12.5,11 --price 73.98 --winrate 55,70,75）：T1 70.8-73.8（≈PB 2.0-2.1）/ T2 62.9-66.2（≈PB 1.8-1.9）/ T3 47.3-51.1（≈PB 1.3-1.4，体系重构情形）；证伪线 47.30 + 先行预警 PB<1.68（≈59.8 元）触发锚重检；右侧触发 79.20 / 止损 72.00；波段仓暂不定义（72.4-79.1 横盘刚满 4 周，达箱体定义门槛边缘）。
+- **现价定位**：73.98 高于 T1 上沿仅 0.3%——正贴 T1 上沿，首档触发距离极近。胜率 T1 55-75% / T2 70-90% / T3 75-95%；Kelly 上限 T1 0.0%（赔率 0.65，证伪线远）/ T2 12.1% / T3 18.4%——T1 非正期望注，卡上写明"T1 执行须半年报兑现验证，更稳妥并入 T2 等信号"。
+- **锚过期警示**：系统衰竭锚仍是 2024-09-30 老段（前低 75.85 除权前口径，复权等效 77.58），现价已破——2026-03 回撤段将由系统重建锚与量能阈值，卡上量能阈值（放量≥2.98 亿/缩量 0.60-0.89 亿股调整量）届时失效。
+- **落盘**：`cards/600309.SH/万华化学估值排期卡_draft_2026-08-24.md` + `draft_2026-08-24.json` → `create-draft` 入库 **600309SH_6c62ce20（draft，待人工 activate/reject）**。
+- **测试**：`uv run pytest -q` **370 全绿**（本批无代码变更，纯产物）。
+
+## 2026-08-24（tdx 公告补齐：watchlist 16 只 → 今日）
+
+- **背景**：handoff.md §5 已知缺口②"公告接口（get_stock_announcement）返回空未验证"，且实际 queries 发现 watchlist 公告 latest published_at 距今最大 96 天（法拉电子 600563.SH 2026-05-20）。本批用 tdx wenda_notice_query 给所有 16 只按"已有最新 + 1 天 → 今日"窗口补齐。
+- **接口实测**：tdx wenda_notice_query 1.6~9.2 秒/次（深交所要等深交所公告、上交所快约 100-200 ms），单次最多返 5 条（top_k=50 仍截顶）。本次无跨年深窗，仍有 5 条/次上限。
+- **覆盖**（bdate → edate=20260824）：
+  - 002299 002709 002714 002747 600309：20260821~+（半年度报告窗口期，含 8-21~8-22 batch 半年度报告全套）
+  - 601168 西部矿业、600563 法拉电子（5-21 起）、600531 豫光金铅（8-22）、603288 海天（8-15 H股）、603697 有友（8-21）、002557 洽洽（8-08）、600346 恒力（8-20）、601318 平安（8-21）、601899 紫金（8-22）、603288（8-15）：覆盖至 8-24
+  - 603605 珀莱雅、600029 南航：接口返回 0 条（确认这些股在窗口内确无新公告，非采集失败）
+- **落盘**：`data/raw/tdx/announcement/2026-08-24/run_announcements/` 新增 13 个 CSV（600563 等 16 个 `_tdx.csv`，3 个空文件保留）+ `_meta.json`（run_id + request_url + content_hash 16 字段）。
+- **入库**：`uv run python -m scripts.pipeline.ingest data/raw/tdx/announcement/2026-08-24/run_announcements` → **inserted=15 / skipped=35 / conflicts=0 / errors=0**。35 条 skipped 为 title|pub_date 哈希与 tianyancha 已存公告冲突（同标题同日去重，§3.6）；未跨源去重（与 tianyancha 的 source_external_id 体系隔离，handoff §6 已记）。
+- **效果**（按 lag 距今日 8-24 重排）：
+  - 法拉电子 600563.SH：**96 → 3 天** ✅（5-21/6-5/8-18/8-22 共 5 条全入库，原有 1 条 5-20 已 stripped by title-hash 跳）
+  - 万华化学 600309.SH：**63 → 20 天**（6-23~8-5 五条均首次入库；3 月前的更老缺口因 top_k=5 单页限制需后续分页补）
+  - 圣农 002299/紫金 601899/天赐 002709/埃斯顿 002747/牧原 002714/平安 601318/恒力 600346/海天 603288/有友 603697：**4~10 天** 全部正常最新
+  - 西部矿业 601168（lag=8）/洽洽 002557（17）/珀莱雅 603605（21）：当前 wenda 接口在窗口内确无新公告 → 0 inserted，**已确认无遗漏**
+  - 豫光金铅 600531 1 条（担保进展）、南航 600029 0 条：均为真实数据集现状，非采集失败
+- **tdx 来源占比变化**：events.source='tdx' 公告数 105 → 120；raw_objects tdx announcement 35 → 48。
+- **测试**：`uv run pytest -q` 370 全绿（本批无代码变更，仅 raw_data + events 入库 + raw_object 登记；adapter 既有 parse_announcement_csv 路径）。
+- **下一步建议**（人工决定）：
+  - 1. 万华化学 600309 5 月底前的更深历史公告可分多次小窗分页（每窗 ≤30 天）补完——若评估需要可加 staging worktree 再跑。
+  - 2. 跨源公告去重（tdx vs tianyancha）的 source_external_id 校对——handoff §6 已记二期。
+  - 3. 排期卡相关股的近期公告（万华化学 6-23 起两条检修、平安 8-21 中期分红、紫金 8-22 员工持股调价、恒力 8-20 中报）尚未被对应日报管线消费，明日 daily 后日报内将自然出现。
