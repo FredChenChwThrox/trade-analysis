@@ -902,3 +902,8 @@
 - **增量/全量结论**（回答本轮问题）：采集层无自动增量——price/forward 按 `--start/--end` 手动指定区间，financials/index 接口全量返回；入库层幂等（upsert + content hash 去重 + data_revisions），全量拉重复入库安全。
 - **测试**：新增 3 项（forward qfq 命名/列对齐、sina volume 不换算、财报 published_at 回填不升 revision 且幂等），`uv run pytest -q` **389 全绿**（386+3）。
 - **遗留**：① 东财 push2his 恢复后 price 默认 em 源可切回（sina 仅 A 股）；② 平安银行 1990-92 披露日无源，degraded 标保留；③ 法拉/万华头部 23 天 pe_ttm 空（no_share_capital，需更早期本快照才可解，影响仅限该窗口）；④ 南航/豫光 2026H1 待披露后补采（重跑 financials 即可，published_at 回填已自动化）；⑤ corporate_actions 12 只空 + 换手率/股东人数 + 万华 forecasts + 法拉/万华公告簿偏薄，akshare 现有采集器未覆盖（telegraph 无历史区间）。
+
+## 2026-08-26（洛阳钼业 603993.SH 加入观察列表）
+
+- `config/watchlist.yaml` 末尾新增 603993.SH 洛阳钼业（market CN，aliases [洛阳钼业, 洛钼, CMOC]，benchmark 000300.SH）→ `db seed` 导入 watchlist 全池 18 只。
+- **待办**：3 年历史采集（日线/财报/公告）+ adjust/weekly/compute/weekly_signals 初始化（与 600563/600309/000001 待采集同列）；采集前 daily 对该股输出 incomplete 属设计预期。洛阳钼业主营铜/钴/铌/磷，副产钼，跨基本金属与新能源金属两大主题（铜价、钴价、汇率、地缘等均可能成为消息面映射主题，待 §3.6 行业映射落地后入 themes_json）。
