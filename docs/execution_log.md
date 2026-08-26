@@ -934,3 +934,16 @@
 - **排期卡（人工确认激活）**：`card_inputs 603993.SH` 底稿 → fred-valuation-card-skill 产 draft（卡 md + draft_2026-08-26.json）→ `create-draft` 入库 `603993SH_67042523` → 用户明确指令后 `activate --effective-from 2026-08-27`（下一交易日起生效，next_review 2026-10-31）。要点：TTM 278.2 亿/EPS 1.30，现价 19.59、PE(TTM) 15.07；反向裂口 −24.4pp（FY1 预期 +61.8% < 2026H1 实际 +86.3%）；PE 刻度随 EPS 上台阶断崖下移（2023 年 31–48 → 2025 年 9.7–11.9）判为盈利驱动的体系切换期，PE 情景 18/14/11 按体系带给；EPS 情景 1.54/1.39/1.23；三档 20.70–21.56 / 18.49–19.46 / 13.53–14.61，证伪线 13.53；现价已掠过第一档（低 5.4%）、贴第二档上沿（信号 0 项不释放）；Kelly（55/65/70 下沿）T1 0.8% / T2 10.8% / T3 17.2%；波段箱体 16.20–21.60（2026-02 以来震荡）；右侧触发 21.65 / 止损 21.45。
 - **测试**：新增 9 项（collect forecast/stock_info 列对齐、亿元换算、空接口、港股拒绝；adapter forecast 来源标注、stock_info 快照/无日线报错/跨源同股本幂等/跨源异股本冲突），`uv run pytest -q` **399 全绿**（389+10，含 1 项既有测试名修复）。
 - **遗留**：① akshare forecast 营收接口对 603993 空（kimi 源有营收预测）；② kimi MCP file_path 相对路径不落盘（本次仍复现，已用绝对路径）；③ akshare 股本快照为单点（东财接口另有全历史变动行，未来可细化真实事件流替代快照假设）。
+
+## 2026-08-26（盘后 daily：601899 因子污染修复 + daily.py 批量 forward 防御 + ok=18）
+
+- **事件定位（紫金矿业 601899.SH raw 污染）**：昨日 20:45 daily_2026-08-25 首跑把 kimi 批量命名的 `batch2_forward.csv`（前复权）当 price 入库——`_classify_raw_files` 按文件名映射 watchlist 个股，`batch2` 映射不到个股落入 `other`，而 `other` 入库循环无 forward 跳过 → 601899 2026-08-14~08-20 共 5 行 close_raw 被前复权值覆盖（32.53→32.13 等，data_revisions 1039–1043）。600029.SH 同日被同文件触碰但无除权、价无差（仅 volume 尾差/amount→null，benign）；其余 16 只与 sina 不复权重叠窗口逐行比对无偏差，污染范围锁定 601899 这 5 行。
+- **今日连锁暴露**：今日 sina 正确 raw 入库后，因子检查识别出 08-21 真实除权平台位移（1.24%）→ 触发全量重建，但手头的 forward CSV 仅 9 天短窗 → `origin 日 2023-08-10 不在因子序列内`，601899 单股回滚 failed（其余 17 只 ok）。
+- **修复**：
+  1. `akshare_collect --symbols 601899.SH --sources forward --price-api sina --start 2023-08-10 --end 2026-08-26 --run-id run_601899_fwd`（738 行全历史前复权）；
+  2. ingest 今日 sina 不复权文件（inserted=1 updated=8，5 行脏值改回真实不复权）；
+  3. `adjust 601899.SH --forward-csv run_601899_fwd/...` 全量重建：7 平台段（最近切换 2026-08-21→f 步进 1.0124，对应 2026 年中期分红），周线同事务重建 156 周；corporate_actions 无记录（已知缺口，平台切换日未交叉印证，与法拉/万华先例一致）。
+- **代码修复（防复发）**：`daily.py` `other` 入库循环加防御——price 含 `_forward`、kline 含 `_tq1/_tq2/_forward` 的文件一律跳过并记 notes（与 ingest CLI 路由层、tdx adapter 口径一致）；`_classify_raw_files` 注释同步。回归测试 `test_batch_forward_file_never_ingested`（批量命名 forward 不落 daily_bars）。
+- **教训（操作）**：`--raw-dir` 是单值参数，重复传参后者覆盖前者——今日首跑误只入库指数（ok=1/suspended=17），二跑 `--raw-dir data/raw/akshare` 才覆盖 price+index。
+- **daily 2026-08-26 结果**：`uv run python -m scripts.pipeline.daily --date 2026-08-26 --raw-dir data/raw/akshare` → **ok=18**（calendar/event_study/summary success；report 阶段 degraded 仅因 4 只无激活卡：600309/600563/601168 no_active_card、603993 卡 2026-08-27 起生效，均属 §2.5 预期）。601899 因子检查通过、pe_ttm=13.55 正常，报告 complete P5。全池日报 revision=4：优先级 3 决策点 002557 箱体 buy_zone、000001 箱体 sell_zone、600029/603697 档位 T1 等（详见 reports/daily/2026-08-26.md）。
+- **测试**：`uv run pytest -q` **400 全绿**（399+1 新增回归）。

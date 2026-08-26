@@ -376,6 +376,27 @@ def test_classify_source_filter(tmp_path):
     assert len(by2["TEST.SH"]) == 2 and filtered2 == []
 
 
+def test_batch_forward_file_never_ingested(conn, tmp_path):
+    """回归（2026-08-25 紫金污染事件）：kimi 批量命名的 batch2_forward.csv
+    按文件名映射不到 watchlist 个股而落入 other，other 入库循环必须防御跳过，
+    前复权值不得写入 daily_bars（§3.3）。"""
+    _add_watchlist(conn, "TEST.SH")
+    _add_bars(conn, "TEST.SH", WEEK[:-1])
+    raw = _raw_dir(tmp_path, {
+        "TEST.SH.csv": _price_csv("TEST.SH", RUN_DATE, 104.0),
+        "batch2_forward.csv": _price_csv("TEST.SH", RUN_DATE, 999.0),
+    })
+
+    res = run_daily(conn, RUN_DATE, raw_dir=raw, reports_root=str(tmp_path / "reports"))
+
+    assert res.symbols[0].status == ST_OK
+    assert conn.execute(
+        "SELECT close_raw FROM daily_bars WHERE symbol='TEST.SH' AND trade_date=?",
+        (RUN_DATE,)).fetchone()[0] == pytest.approx(104.0)
+    assert any("前/后复权文件不入 daily_bars" in n and "batch2_forward.csv" in n
+               for n in res.notes)
+
+
 # ---------------------------------------------------------------- 日历缺失市场
 def test_missing_calendar_market_incomplete(conn, tmp_path):
     _add_watchlist(conn, "0700.HK", market="HK")  # 无 HK 日历种子

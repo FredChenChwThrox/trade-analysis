@@ -219,7 +219,8 @@ def _classify_raw_files(
             if fwd_symbol in watchlist:
                 forward_by_symbol.setdefault(fwd_symbol, []).append(path)
             else:
-                other.append(path)  # 非 watchlist 的 forward 文件本流程不处理
+                other.append(path)  # 非 watchlist 的 forward 文件（如批量命名）：
+                # other 入库循环再防御跳过，本流程始终不入 daily_bars
             continue
         symbol = ingest_mod._symbol_from_filename(path)
         if symbol and symbol in watchlist:
@@ -405,6 +406,16 @@ def run_daily(
             by_symbol.setdefault(s, [])
         for path in other:  # 非 watchlist 文件（指数/fx 等）：单文件事务入库
             source, data_type = ingest_mod._route(path)
+            stem = path.stem
+            # 防御：批量命名的前/后复权文件（如 kimi batch2_forward.csv，按文件名
+            # 无法映射 watchlist 个股而落入 other）同样不入 daily_bars（§3.3，
+            # 与 ingest CLI 路由层/tdx adapter 的跳过口径一致）。
+            if (data_type == "price" and "_forward" in stem) or (
+                data_type == "kline"
+                and any(m in stem for m in ("_tq1", "_tq2", "_forward"))
+            ):
+                result.notes.append(f"前/后复权文件不入 daily_bars，跳过: {path.name}")
+                continue
             r = ingest_file(conn, path, source=source, data_type=data_type,
                             symbol=ingest_mod._symbol_from_filename(path),
                             parse=ingest_mod._ROUTES[(source, data_type)])
