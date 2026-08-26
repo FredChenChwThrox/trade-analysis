@@ -5,6 +5,10 @@ akshare 采集器（scripts/collect/akshare_collect.py）落盘列与既有 adap
 - price → 复用 stock_finance_data.upsert_daily_bars（source=akshare）
 - index → 复用 stock_finance_data.upsert_index_bars（source=akshare）
 - financials → 直接转发 tdx.parse_financials_csv（列约定一致，含 published_at/下一开市日/单位换算/修订）
+- forecast → 转发 stock_finance_data.parse_forecast_csv（列约定一致，source=akshare）
+- stock_info → share_capital_events（snapshot_group_total/group_total，复用
+  indicators.valuation.load_group_total_snapshot；与 kimi 源可切换：同 effective_at
+  已有其他来源同股本快照幂等跳过，股本不一致记 conflict）
 - telegraph → events + event_symbols（source_external_id/content_hash 去重，§3.6；
   股票关联按 watchlist 名称/别名/symbol 匹配）
 
@@ -20,6 +24,7 @@ import hashlib
 import re
 import sqlite3
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 from scripts.adapters.common import (
@@ -32,12 +37,17 @@ from scripts.adapters.common import (
 from scripts.adapters.stock_finance_data import (
     _num,
     _validate_bar_row,
+    parse_forecast_csv as _sfd_parse_forecast,
     upsert_daily_bars,
     upsert_index_bars,
 )
 from scripts.adapters.tdx import parse_financials_csv as _tdx_parse_financials
+from scripts.indicators import valuation
 
 SOURCE = "akshare"
+
+# stock_info 快照入库用的来源标签（share_capital_events.source / raw_objects.source）
+_STOCK_INFO_API = "stock_zh_a_gbjg_em"
 
 # events 去重来源外部 ID 前缀（与采集器 source_external_id 约定一致）
 _SYMBOL_RE = re.compile(r"\b(\d{6}\.(?:SH|SZ|BJ|HK))\b")
@@ -114,6 +124,92 @@ def parse_financials_csv(conn: sqlite3.Connection, path: Path, raw_object_id: st
     其中 published_at = NOTICE_DATE（东财正式披露日），正好补上 A 股披露时间缺口。
     """
     return _tdx_parse_financials(conn, path, raw_object_id, result)
+
+
+def parse_forecast_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,
+                       result: IngestResult) -> IngestResult:
+    """akshare 一致预期 CSV → forecasts（列对齐 kimi 约定，转发 sfd 已验证解析）。
+
+    采集器（collect_forecast）把同花顺盈利预测换算/映射为 kimi forecast 列约定
+    （ths_fore_np_fyN_stock，单位元），payload_json 全量保留附加列
+    （ak_np_orgs/ak_np_min/ak_np_max/ak_eps 等）。source 记为 akshare，
+    与 kimi 源快照并存，card_inputs 取最新快照（§3.7）。
+    """
+    return _sfd_parse_forecast(conn, path, raw_object_id, result, source=SOURCE)
+
+
+def parse_stock_info_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,
+                         result: IngestResult) -> IngestResult:
+    """akshare 股本快照 CSV → share_capital_events（snapshot_group_total/group_total）。
+
+    列对齐 kimi stock_info 约定（thscode + ths_total_shares_stock 集团总股本）。
+    与 kimi 源**可切换**：同一 symbol 同一 effective_at 已存在其他来源的
+    group_total 快照时——股本一致则幂等跳过（不重复写，避免 PE 取数歧义），
+    股本不一致记 conflict 交人工核对（§3.2 数据冲突）。
+
+    effective_at 推导：该股 daily_bars 最早交易日（覆盖保留区间起点，与既有
+    各股快照惯例一致）；无日线数据时报错不猜（§2.5）。
+    """
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f))
+    rec = next((r for r in rows if (r.get("thscode") or "").strip()), None)
+    if rec is None:
+        result.conflicts += 1
+        result.errors.append("股本快照 CSV 缺少 thscode")
+        return result
+    symbol = rec["thscode"].strip()
+    if not (rec.get("ths_total_shares_stock") or "").strip():
+        result.conflicts += 1
+        result.errors.append(f"{symbol} 无 ths_total_shares_stock 字段值（§2.5 不猜）")
+        return result
+    row = conn.execute(
+        "SELECT MIN(trade_date) AS d FROM daily_bars WHERE symbol = ?", (symbol,),
+    ).fetchone()
+    effective_at = row["d"] if row else None
+    if not effective_at:
+        result.conflicts += 1
+        result.errors.append(
+            f"{symbol} daily_bars 为空，无法推导股本快照 effective_at（§2.5 不猜）")
+        return result
+
+    shares = str(Decimal(rec["ths_total_shares_stock"].strip()).to_integral_value())
+    cross = conn.execute(
+        """
+        SELECT sce_id, source, shares_issued_after FROM share_capital_events
+        WHERE symbol = ? AND effective_at = ? AND share_count_type = 'group_total'
+        """,
+        (symbol, effective_at),
+    ).fetchone()
+    if cross is not None:
+        if Decimal(cross["shares_issued_after"]) == Decimal(shares):
+            result.skipped += 1
+            result.notes.append(
+                f"{symbol} {effective_at} 已有同源股本 {shares} 的 group_total 快照"
+                f"（{cross['source']}），幂等跳过")
+            return result
+        result.conflicts += 1
+        result.errors.append(
+            f"股本冲突：{symbol} {effective_at} 已有 group_total "
+            f"{cross['shares_issued_after']}（{cross['source']}），akshare 快照 {shares}"
+            "（§3.2 数据冲突，交人工核对）")
+        return result
+
+    run_id = Path(path).parent.name
+    try:
+        res = valuation.load_group_total_snapshot(
+            conn, symbol, path, effective_at=effective_at, run_id=run_id,
+            source=SOURCE, api_label=_STOCK_INFO_API,
+            raw_prefix="raw_ak_stock_info")
+    except ValueError as exc:
+        result.conflicts += 1
+        result.errors.append(str(exc))
+        return result
+    if res["inserted"]:
+        result.inserted += 1
+    else:
+        result.skipped += 1
+        result.notes.append(f"{symbol} {effective_at} group_total 快照已存在，幂等跳过")
+    return result
 
 
 def parse_index_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,

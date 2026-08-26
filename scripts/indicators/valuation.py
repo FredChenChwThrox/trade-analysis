@@ -377,9 +377,12 @@ def load_group_total_snapshot(
     *,
     effective_at: str,
     run_id: str,
+    source: str = "stock_finance_data",
+    api_label: str = "get_stock_info",
+    raw_prefix: str = "raw_ths_stock_info",
 ) -> dict:
-    """解析 stock_finance_data get_stock_info CSV 的集团总股本（A+H 全口径）快照，
-    以 share_count_type='group_total' 写入 share_capital_events。
+    """解析集团总股本（A+H 全口径）快照 CSV，以 share_count_type='group_total'
+    写入 share_capital_events。
 
     ths_total_shares_stock 为 A+H 集团总股本（vendor 通用 PE 股本口径）。
     CSV 可为多股票批量文件，按 thscode 列定位 symbol 对应行。快照只有当前值：
@@ -388,7 +391,11 @@ def load_group_total_snapshot(
     总股本计算，存在口径偏差，后续可用 get_stock_actions 细化）。
     已存在同 effective_at/source/share_count_type 的事件且股本一致时跳过（幂等）；
     同类型股本不一致抛"股本冲突"，与 issued 等其他口径并存不视为冲突。
+
+    source/api_label/raw_prefix 供对齐同列约定的可选源复用（如 akshare
+    stock_zh_a_gbjg_em，source='akshare'），默认保持 stock_finance_data 行为不变。
     """
+    source_label = f"{source} {api_label}"
     csv_path = Path(csv_path)
     with open(csv_path, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
@@ -405,21 +412,21 @@ def load_group_total_snapshot(
 
     content_hash = sha256_file(csv_path)
     now = utc_now()
-    raw_object_id = f"raw_ths_stock_info_{symbol.replace('.', '')}_{content_hash[:12]}"
+    raw_object_id = f"{raw_prefix}_{symbol.replace('.', '')}_{content_hash[:12]}"
     conn.execute(
         """
         INSERT OR IGNORE INTO raw_objects (raw_object_id, run_id, source, data_type,
             symbol, request_params_json, file_path, content_hash, fetch_status, ingested_at)
-        VALUES (?, ?, 'stock_finance_data', 'stock_info', ?, ?, ?, ?, 'ok', ?)
+        VALUES (?, ?, ?, 'stock_info', ?, ?, ?, ?, 'ok', ?)
         """,
-        (raw_object_id, run_id, symbol,
-         json.dumps({"api": "get_stock_info", "field": "ths_total_shares_stock",
+        (raw_object_id, run_id, source, symbol,
+         json.dumps({"api": api_label, "field": "ths_total_shares_stock",
                      "ticker_csv": csv_path.name}, ensure_ascii=False),
          str(csv_path), content_hash, now),
     )
 
     details = {
-        "snapshot": "stock_finance_data get_stock_info ths_total_shares_stock"
+        "snapshot": f"{source_label} ths_total_shares_stock"
                     "（A+H 集团总股本，单点快照，无历史事件流）",
         "assumption": f"整个保留区间（自 {effective_at} 起）集团总股本按此值；H 股上市/"
                       "增发/回购注销前的历史区间存在口径偏差，需后续用 get_stock_actions "
@@ -430,10 +437,10 @@ def load_group_total_snapshot(
         """
         SELECT sce_id, shares_issued_after FROM share_capital_events
         WHERE symbol = ? AND effective_at = ?
-          AND source = 'stock_finance_data get_stock_info'
+          AND source = ?
           AND share_count_type = 'group_total'
         """,
-        (symbol, effective_at),
+        (symbol, effective_at, source_label),
     ).fetchone()
     if existing is not None:
         if Decimal(existing["shares_issued_after"]) == shares:
@@ -448,10 +455,10 @@ def load_group_total_snapshot(
             share_change, shares_issued_after, share_count_type, details_json, source,
             raw_object_id, created_at)
         VALUES (?, ?, ?, 'snapshot_group_total', NULL, ?, 'group_total', ?,
-                'stock_finance_data get_stock_info', ?, ?)
+                ?, ?, ?)
         """,
         (symbol, effective_at, now, str(shares),
-         json.dumps(details, ensure_ascii=False), raw_object_id, now),
+         json.dumps(details, ensure_ascii=False), source_label, raw_object_id, now),
     )
     return {"inserted": True, "shares": str(shares), "sce_id": cur.lastrowid,
             "raw_object_id": raw_object_id}

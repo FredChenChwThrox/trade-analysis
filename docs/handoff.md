@@ -9,7 +9,7 @@
 - 所有命令前缀 `uv run`；包下载失败时走系统代理。
 - 测试：`uv run pytest -q`（当前 389 项，全绿才算完成）。
 - 数据库：SQLite `data/market.db`（schema `scripts/pipeline/migrations/0001_init.sql`，`scripts/pipeline/db.py` 的 `migrate` 建库）。
-- 数据源（2026-08-21 起）：**通达信 tdx-connector 第一优先**（`scripts/adapters/tdx.py`，A 股+港股+指数行情+公告+估值/股本快照，采集规范 `skills/tdx-collect/SKILL.md`）；kimi-datasource 兜底（`stock_finance_data` A 股全量 + `yahoo_finance` 港股/股本/FX，access_token 易失效需 `/login`，公告接口自 8/13 持续 EMPTY_DATA）；tianyancha 公告补采兜底；**akshare 可选源**（`scripts/collect/akshare_collect.py` + `scripts/adapters/akshare.py`，需 `uv sync --extra akshare`；财联社电报→events、财报披露日 NOTICE_DATE 回填、指数全历史、A/H 行情，字段对齐既有 adapter 约定）。接口探测记录见 `docs/probe_20260809_stock_finance_data.md`、`docs/probe_20260815_tianyancha.md`、`docs/probe_20260821_tdx.md`。**港股源已通过 tdx 接入**（setcode=31，0700.HK 在 watchlist 待采集）。
+- 数据源（2026-08-21 起）：**通达信 tdx-connector 第一优先**（`scripts/adapters/tdx.py`，A 股+港股+指数行情+公告+估值/股本快照，采集规范 `skills/tdx-collect/SKILL.md`）；kimi-datasource 兜底（`stock_finance_data` A 股全量 + `yahoo_finance` 港股/股本/FX，access_token 易失效需 `/login`，公告接口自 8/13 持续 EMPTY_DATA）；tianyancha 公告补采兜底；- **akshare 采集器**（可选数据源，字段对齐现有 adapter 约定，实测通过）：`scripts/collect/akshare_collect.py` + `scripts/adapters/akshare.py`，sources = price/forward/financials/index/telegraph/**forecast/stock_info**（后两者 2026-08-26 新增：forecast=同花顺盈利预测，stock_info=东财股本结构集团总股本快照，均仅 A 股；与 kimi 源可切换，stock_info 跨源同股本幂等跳过/异股本冲突）；需 `uv sync --extra akshare`；财联社电报→events、财报披露日 NOTICE_DATE 回填、指数全历史、A/H 行情，字段对齐既有 adapter 约定）。接口探测记录见 `docs/probe_20260809_stock_finance_data.md`、`docs/probe_20260815_tianyancha.md`、`docs/probe_20260821_tdx.md`。**港股源已通过 tdx 接入**（setcode=31，0700.HK 在 watchlist 待采集）。
 
 ## 2. 目录结构
 
@@ -92,6 +92,7 @@ uv run python -m scripts.pipeline.ingest data/raw/akshare/{financials,telegraph,
 - 下一例行事项：2026-08-10（周一）盘后首个正式 daily（先采集增量再 `--raw-dir`）。
 - （2026-08-23 补记）601168.SH 西部矿业已入池（watchlist 14 只）：3 年日线/周线/指标/信号齐全，14 期财报披露日已 pit_backfill 回填（点时口径）；排期卡 draft `601168SH_cc4c2ac7` 待人工激活（next_review 2026-10-31）。详见执行日志 2026-08-23 节。
 - （2026-08-26 补记）akshare 缺口补齐：全池财报全历史入库（期次 2023Q3 起 12 期全覆盖，published_at 66 行回填，16 只转严格点时口径）；法拉/万华头部 23 个交易日补齐（sina 源），因子重建为平台段口径（4/5 段），周线 153/指标 725/信号已重算。测试 389 全绿。详见执行日志 2026-08-26（akshare 缺口补齐）节。
+- （2026-08-26 补记②）akshare 采集器新增 forecast/stock_info 两源（与 kimi 可切换，跨源幂等/冲突语义见执行日志）；603993.SH 洛阳钼业股本快照（akshare 集团总股本 213.94 亿股，与 kimi 一致）+ 双源一致预期入库，pe_ttm 726/726 转正；**排期卡 `603993SH_67042523` 已激活**（effective 2026-08-27，next_review 2026-10-31，三档 20.70–21.56 / 18.49–19.46 / 13.53–14.61，证伪线 13.53；现价 19.59 已掠过第一档、贴第二档上沿但信号 0 项不释放）。测试 399 全绿。详见执行日志 2026-08-26（akshare 两新源 + 洛阳钼业）节。
 
 ## 6. 常见任务怎么做
 

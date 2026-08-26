@@ -13,6 +13,15 @@
     published_at=akshare 的 NOTICE_DATE 披露日，§2.1 available_at 由 tdx 复用逻辑计算）
 - telegraph：列 = events 字段（published_at UTC / published_tz / title / summary /
   content / source_external_id / content_hash）
+- forecast：一致预期（同花顺盈利预测，仅 A 股）→ 列对齐 kimi forecast 约定
+  （ths_fore_np_fy1..3_stock 净利预测均值，单位由「亿元」×1e8 换算为「元」；
+  ths_fore_mbi_fy1..3_stock 营收预测，接口为空时留空标缺口 §2.5；
+  ths_fore_np_yoy_stock akshare 无直接口径，留空）→ akshare.parse_forecast_csv
+  （转发 stock_finance_data.parse_forecast_csv，source=akshare）
+- stock_info：股本快照（东财股本结构 stock_zh_a_gbjg_em，仅 A 股）→
+  列对齐 kimi stock_info 约定（thscode + ths_total_shares_stock 集团总股本，
+  取最新变动行）→ akshare.parse_stock_info_csv → share_capital_events
+  （snapshot_group_total / group_total，参与 PE 取数，与 kimi 源可切换）
 
 口径换算（与库 schema 对齐，§3.2/§9.5）：
 - 成交量：东财接口单位「手」，落盘前 ×100 换算为项目 volume_raw 口径「股」（指数不换算）；
@@ -270,6 +279,121 @@ def _csv_escape(s: str) -> str:
     return s
 
 
+# ---------------------------------------------------------------- forecast（一致预期，仅 A 股）
+
+_FORECAST_COLS = [
+    "ths_fore_np_fy1_stock", "ths_fore_np_fy2_stock", "ths_fore_np_fy3_stock",
+    "ths_fore_np_in12m_stock", "ths_fore_np_yoy_stock",
+    "ths_fore_mbi_fy1_stock", "ths_fore_mbi_fy2_stock", "ths_fore_mbi_fy3_stock",
+    "ths_fore_mbi_yoy_stock", "thscode", "time",
+    # akshare 同花顺口径附加列（payload_json 全量保留，card_inputs 不消费）
+    "ak_np_orgs_fy1", "ak_np_orgs_fy2", "ak_np_orgs_fy3",
+    "ak_np_min_fy1", "ak_np_max_fy1", "ak_np_min_fy2", "ak_np_max_fy2",
+    "ak_np_min_fy3", "ak_np_max_fy3",
+    "ak_eps_fy1", "ak_eps_fy2", "ak_eps_fy3",
+]
+
+
+def _yi_to_yuan(v) -> str | None:
+    """同花顺盈利预测单位「亿元」→ 项目口径「元」（×1e8）。"""
+    s = _num(v)
+    if s is None:
+        return None
+    return str(int(float(s) * 1e8))
+
+
+def _int_str(v) -> str | None:
+    """整数值规范化（iterrows 行内 dtype 统一会把 int 读成 float）。"""
+    s = _num(v)
+    if s is None:
+        return None
+    return str(int(float(s)))
+
+
+def _ths_forecast_rows(ak, code: str, indicator: str):
+    """ak.stock_profit_forecast_ths → {年度: row dict}；接口空/异常返回 {}。"""
+    try:
+        df = ak.stock_profit_forecast_ths(symbol=code, indicator=indicator)
+    except Exception:  # noqa: BLE001  源侧抖动（代理/限流），按缺口处理不猜
+        return {}
+    if df is None or df.empty:
+        return {}
+    return {int(r["年度"]): r for _, r in df.iterrows()}
+
+
+def collect_forecast(ak, symbol: str, out_dir: Path, date: str, run_id: str) -> Path | None:
+    """一致预期（同花顺 stock_profit_forecast_ths，仅 A 股）→ {symbol}.csv。
+
+    列对齐 kimi forecast 约定（ths_fore_np_fyN_stock 等），FY1 = --date 所在日历年；
+    净利单位「亿元」换算为「元」。FY1 净利增速（ths_fore_np_yoy_stock）akshare
+    无直接口径，留空（card_inputs 的裂口检查降级，§2.5 不猜）。
+    """
+    if not symbol.endswith((".SH", ".SZ", ".BJ")):
+        raise ValueError(f"forecast 源仅支持 A 股: {symbol}")
+    code, _s, _c, _m = _symbol_parts(symbol)
+    np_rows = _ths_forecast_rows(ak, code, "预测年报净利润")
+    if not np_rows:
+        return None
+    eps_rows = _ths_forecast_rows(ak, code, "预测年报每股收益")
+    rev_rows = _ths_forecast_rows(ak, code, "预测年报主营业务收入")
+    fy1_year = int(date[:4])
+    rec = {c: "" for c in _FORECAST_COLS}
+    rec["thscode"] = symbol
+    for year, r in np_rows.items():
+        n = year - fy1_year + 1
+        if not 1 <= n <= 3:
+            continue
+        rec[f"ths_fore_np_fy{n}_stock"] = _yi_to_yuan(r.get("均值")) or ""
+        rec[f"ak_np_orgs_fy{n}"] = _int_str(r.get("预测机构数")) or ""
+        rec[f"ak_np_min_fy{n}"] = _yi_to_yuan(r.get("最小值")) or ""
+        rec[f"ak_np_max_fy{n}"] = _yi_to_yuan(r.get("最大值")) or ""
+        if year in eps_rows:
+            rec[f"ak_eps_fy{n}"] = _num(eps_rows[year].get("均值")) or ""
+        if year in rev_rows:
+            rec[f"ths_fore_mbi_fy{n}_stock"] = _yi_to_yuan(rev_rows[year].get("均值")) or ""
+    out = out_dir / "forecast" / date / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    fp = out / f"{symbol}.csv"
+    with open(fp, "w", newline="", encoding="utf-8") as f:
+        f.write(",".join(_FORECAST_COLS) + "\n")
+        f.write(",".join(rec[c] for c in _FORECAST_COLS) + "\n")
+    return fp
+
+
+# ---------------------------------------------------------------- stock_info（股本快照，仅 A 股）
+
+def collect_stock_info(ak, symbol: str, out_dir: Path, date: str, run_id: str) -> Path | None:
+    """股本快照（东财 stock_zh_a_gbjg_em，仅 A 股）→ {symbol}.csv。
+
+    列对齐 kimi stock_info 约定（thscode + ths_total_shares_stock 集团总股本，
+    A+H 股含 H 股，与 stock_finance_data 同口径），取最新变动日期一行；
+    附 ak_change_date / ak_change_reason / ak_float_a_shares 备查。
+    """
+    if not symbol.endswith((".SH", ".SZ", ".BJ")):
+        raise ValueError(f"stock_info 源仅支持 A 股: {symbol}")
+    code, _s, _c, _m = _symbol_parts(symbol)
+    df = ak.stock_zh_a_gbjg_em(symbol=code)
+    if df is None or df.empty:
+        return None
+    latest = df.iloc[0]  # 接口返回按变更日期倒序，首行即最新
+    shares = _num(latest.get("总股本"))
+    if shares is None:
+        return None
+    out = out_dir / "stock_info" / date / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    fp = out / f"{symbol}.csv"
+    with open(fp, "w", newline="", encoding="utf-8") as f:
+        f.write("thscode,ths_total_shares_stock,ak_change_date,ak_change_reason,"
+                "ak_float_a_shares\n")
+        f.write(",".join([
+            symbol, str(int(float(shares))),
+            _date_compact(latest["变更日期"]),
+            _csv_escape(str(latest.get("变动原因") or "")),
+            _num(latest.get("已上市流通A股")) or "",
+        ]) + "\n")
+    return fp
+
+
 # ---------------------------------------------------------------- meta / CLI
 
 def write_meta(out_dir: Path, data_type: str, date: str, run_id: str,
@@ -376,8 +500,39 @@ def main(argv: list[str] | None = None) -> int:
                 requests.append({"api": "stock_info_global_cls", "params": {},
                                  "file": None, "status": "error", "error": f"{type(e).__name__}: {e}"})
                 print(f"[telegraph] ERROR {e}")
+        elif source == "forecast":
+            for sym in symbols:
+                try:
+                    fp = collect_forecast(ak, sym, out_dir, args.date, args.run_id)
+                    requests.append({"api": "stock_profit_forecast_ths",
+                                     "params": {"symbol": sym},
+                                     "file": fp.name if fp else None,
+                                     "status": "ok" if fp else "empty",
+                                     "error": None if fp else "EMPTY_DATA"})
+                    print(f"[forecast] {sym}: {'ok' if fp else 'EMPTY'}")
+                except Exception as e:  # noqa: BLE001
+                    requests.append({"api": "stock_profit_forecast_ths",
+                                     "params": {"symbol": sym}, "file": None,
+                                     "status": "error", "error": f"{type(e).__name__}: {e}"})
+                    print(f"[forecast] {sym}: ERROR {e}")
+        elif source == "stock_info":
+            for sym in symbols:
+                try:
+                    fp = collect_stock_info(ak, sym, out_dir, args.date, args.run_id)
+                    requests.append({"api": "stock_zh_a_gbjg_em",
+                                     "params": {"symbol": sym},
+                                     "file": fp.name if fp else None,
+                                     "status": "ok" if fp else "empty",
+                                     "error": None if fp else "EMPTY_DATA"})
+                    print(f"[stock_info] {sym}: {'ok' if fp else 'EMPTY'}")
+                except Exception as e:  # noqa: BLE001
+                    requests.append({"api": "stock_zh_a_gbjg_em",
+                                     "params": {"symbol": sym}, "file": None,
+                                     "status": "error", "error": f"{type(e).__name__}: {e}"})
+                    print(f"[stock_info] {sym}: ERROR {e}")
         else:
-            print(f"[skip] 未知 source: {source}（可选 price,forward,financials,index,telegraph）")
+            print(f"[skip] 未知 source: {source}（可选 price,forward,financials,index,"
+                  f"telegraph,forecast,stock_info）")
             continue
         write_meta(out_dir, source, args.date, args.run_id, requests, args.purpose)
         errs = [r for r in requests if r["status"] == "error"]

@@ -83,6 +83,36 @@ class FakeAk:
             "发布时间": [pd.Timestamp("10:30:00").time(), pd.Timestamp("10:31:00").time()],
         })
 
+    def stock_profit_forecast_ths(self, symbol, indicator):
+        if indicator == "预测年报净利润":  # 单位：亿元
+            return pd.DataFrame({
+                "年度": [2026, 2027, 2028],
+                "预测机构数": [23, 23, 19],
+                "最小值": [196.83, 207.52, 332.50],
+                "均值": [329.17, 368.37, 419.41],
+                "最大值": [385.10, 449.28, 538.99],
+                "行业平均数": [167.41, 198.79, 229.54],
+            })
+        if indicator == "预测年报每股收益":
+            return pd.DataFrame({
+                "年度": [2026, 2027, 2028],
+                "预测机构数": [23, 23, 19],
+                "最小值": [0.92, 0.97, 1.55],
+                "均值": [1.54, 1.72, 1.96],
+                "最大值": [1.80, 2.10, 2.52],
+                "行业平均数": [2.07, 2.53, 3.01],
+            })
+        return pd.DataFrame()  # 预测年报主营业务收入等：空
+
+    def stock_zh_a_gbjg_em(self, symbol):
+        return pd.DataFrame({
+            "变更日期": ["2025-07-16", "2025-02-06"],
+            "总股本": [21394310176, 21499240619],
+            "已流通股份": [21394310176, 21499240619],
+            "已上市流通A股": [1.746084e10, 1.756577e10],
+            "变动原因": ["回购", "回购"],
+        })
+
 
 @pytest.fixture()
 def fake_ak():
@@ -239,6 +269,67 @@ def test_collect_telegraph_aligned(fake_ak, out_dir):
     path2 = ac.collect_telegraph(fake_ak, out_dir, "2026-08-25", "run_ak")
     rows2 = list(csv_rows(path2))
     assert rows2[0]["source_external_id"] == r0["source_external_id"]
+
+
+# ---------------------------------------------------------------- forecast（一致预期）
+
+def test_collect_forecast_aligned(fake_ak, out_dir):
+    path = ac.collect_forecast(fake_ak, "603993.SH", out_dir, "2026-08-25", "run_ak")
+    assert path.name == "603993.SH.csv"
+    rows = list(csv_rows(path))
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["thscode"] == "603993.SH"
+    # 亿元 → 元（×1e8）
+    assert r["ths_fore_np_fy1_stock"] == "32917000000"
+    assert r["ths_fore_np_fy2_stock"] == "36837000000"
+    assert r["ths_fore_np_fy3_stock"] == "41941000000"
+    # FY1 = --date 所在年（2026）的预测
+    assert r["ak_np_orgs_fy1"] == "23"
+    assert r["ak_np_min_fy1"] == "19683000000"
+    assert r["ak_np_max_fy3"] == "53899000000"
+    assert r["ak_eps_fy1"] == "1.54"
+    # akshare 无 FY1 净利增速直接口径、营收预测接口空 → 留空（§2.5 不猜）
+    assert r["ths_fore_np_yoy_stock"] == ""
+    assert r["ths_fore_mbi_fy1_stock"] == ""
+
+
+def test_collect_forecast_empty(fake_ak, out_dir):
+    class EmptyAk(FakeAk):
+        def stock_profit_forecast_ths(self, symbol, indicator):
+            return pd.DataFrame()
+
+    assert ac.collect_forecast(EmptyAk(), "603993.SH", out_dir,
+                               "2026-08-25", "run_ak") is None
+
+
+def test_collect_forecast_hk_rejected(fake_ak, out_dir):
+    with pytest.raises(ValueError, match="仅支持 A 股"):
+        ac.collect_forecast(fake_ak, "00700.HK", out_dir, "2026-08-25", "run_ak")
+
+
+# ---------------------------------------------------------------- stock_info（股本快照）
+
+def test_collect_stock_info_aligned(fake_ak, out_dir):
+    path = ac.collect_stock_info(fake_ak, "603993.SH", out_dir, "2026-08-25", "run_ak")
+    assert path.name == "603993.SH.csv"
+    rows = list(csv_rows(path))
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["thscode"] == "603993.SH"
+    assert r["ths_total_shares_stock"] == "21394310176"  # 取最新变动行
+    assert r["ak_change_date"] == "20250716"
+    assert r["ak_change_reason"] == "回购"
+    assert r["ak_float_a_shares"] == "17460840000.0"
+
+
+def test_collect_stock_info_empty(fake_ak, out_dir):
+    class EmptyAk(FakeAk):
+        def stock_zh_a_gbjg_em(self, symbol):
+            return pd.DataFrame()
+
+    assert ac.collect_stock_info(EmptyAk(), "603993.SH", out_dir,
+                                 "2026-08-25", "run_ak") is None
 
 
 # ---------------------------------------------------------------- 未安装提示

@@ -549,10 +549,11 @@ def parse_announcement_csv(conn: sqlite3.Connection, path: Path, raw_object_id: 
 # ---------------------------------------------------------------- 一致预期 → forecasts
 
 def parse_forecast_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,
-                       result: IngestResult) -> IngestResult:
+                       result: IngestResult, *, source: str = SOURCE) -> IngestResult:
     """一致预期 CSV → forecasts（每次抓取一批快照，全量保存；§3.7）。
 
     payload_json 保存当次 CSV 全量行；历史查询取 snapshot_at <= as_of 最新快照。
+    source 参数供 akshare 等对齐同列约定的可选源复用（默认本源）。
     """
     with open(path, newline="", encoding="utf-8") as f:
         rows = [dict(r) for r in csv.DictReader(f)]
@@ -576,7 +577,7 @@ def parse_forecast_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,
                                raw_object_id, ingested_at)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (symbol, now, SOURCE,
+        (symbol, now, source,
          json.dumps({"rows": rows}, ensure_ascii=False), raw_object_id, now),
     )
     result.inserted += 1

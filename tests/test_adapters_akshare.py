@@ -226,3 +226,136 @@ def test_parse_telegraph_csv_empty_title_row_skipped(conn, tmp_path):
     links = conn.execute(
         "SELECT symbol FROM event_symbols WHERE event_id=?", (ev[0]["event_id"],)).fetchall()
     assert ("603288.SH",) in {tuple(x) for x in links}  # 名称 + 代码 双匹配
+
+
+# ---------------------------------------------------------------- forecast → forecasts
+
+_FORECAST_COLS = [
+    "ths_fore_np_fy1_stock", "ths_fore_np_fy2_stock", "ths_fore_np_fy3_stock",
+    "ths_fore_np_in12m_stock", "ths_fore_np_yoy_stock",
+    "ths_fore_mbi_fy1_stock", "ths_fore_mbi_fy2_stock", "ths_fore_mbi_fy3_stock",
+    "ths_fore_mbi_yoy_stock", "thscode", "time",
+    "ak_np_orgs_fy1", "ak_np_orgs_fy2", "ak_np_orgs_fy3",
+    "ak_np_min_fy1", "ak_np_max_fy1", "ak_np_min_fy2", "ak_np_max_fy2",
+    "ak_np_min_fy3", "ak_np_max_fy3",
+    "ak_eps_fy1", "ak_eps_fy2", "ak_eps_fy3",
+]
+
+
+def test_parse_forecast_csv_aligned(conn, tmp_path):
+    path = tmp_path / "raw" / "akshare" / "forecast" / "2026-08-26" / "run_ak" / "603605.SH.csv"
+    path.parent.mkdir(parents=True)
+    row = [""] * len(_FORECAST_COLS)
+    row[0], row[1], row[2] = "32917000000", "36837000000", "41941000000"
+    row[9] = "603605.SH"
+    row[11] = "23"  # ak_np_orgs_fy1
+    _write_csv(path, _FORECAST_COLS, [row])
+    r = ingest_file(conn, path, source="akshare", data_type="forecast",
+                    symbol="603605.SH", parse=ak_adapter.parse_forecast_csv)
+    assert r.status == "ok", r.summary()
+    assert r.inserted == 1
+    fc = conn.execute("SELECT * FROM forecasts WHERE symbol='603605.SH'").fetchone()
+    assert fc["source"] == "akshare"  # 来源标注为 akshare，非 stock_finance_data
+    import json
+    payload = json.loads(fc["payload_json"])
+    rec = payload["rows"][0]
+    assert rec["ths_fore_np_fy1_stock"] == "32917000000"
+    assert rec["ak_np_orgs_fy1"] == "23"  # 附加列全量保留
+
+
+# ---------------------------------------------------------------- stock_info → share_capital_events
+
+_STOCK_INFO_COLS = ["thscode", "ths_total_shares_stock", "ak_change_date",
+                    "ak_change_reason", "ak_float_a_shares"]
+
+
+def _seed_daily_bar(conn, symbol, trade_date):
+    conn.execute(
+        """
+        INSERT INTO daily_bars (symbol, trade_date, market, open_raw, high_raw,
+            low_raw, close_raw, volume_raw, amount_raw, currency, trading_status,
+            source, updated_at)
+        VALUES (?, ?, 'CN', 10, 10.5, 9.9, 10.2, 1000000, 10000000, 'CNY',
+                'normal', 'test', '2026-08-26T00:00:00+00:00')
+        """,
+        (symbol, trade_date),
+    )
+
+
+def _stock_info_csv(path, shares, symbol="603605.SH"):
+    _write_csv(path, _STOCK_INFO_COLS,
+               [[symbol, shares, "20250716", "回购", "17460840000.0"]])
+
+
+def test_parse_stock_info_csv_snapshot(conn, tmp_path):
+    _seed_daily_bar(conn, "603605.SH", "2023-08-10")
+    path = tmp_path / "raw" / "akshare" / "stock_info" / "2026-08-26" / "run_ak" / "603605.SH.csv"
+    path.parent.mkdir(parents=True)
+    _stock_info_csv(path, "21394310176")
+    r = ingest_file(conn, path, source="akshare", data_type="stock_info",
+                    symbol="603605.SH", parse=ak_adapter.parse_stock_info_csv)
+    assert r.status == "ok", r.summary()
+    assert r.inserted == 1
+    ev = conn.execute(
+        "SELECT * FROM share_capital_events WHERE symbol='603605.SH'").fetchone()
+    assert ev["event_type"] == "snapshot_group_total"
+    assert ev["share_count_type"] == "group_total"
+    assert ev["shares_issued_after"] == "21394310176"
+    assert ev["effective_at"] == "2023-08-10"  # 推导自 daily_bars 最早交易日
+    assert ev["source"] == "akshare stock_zh_a_gbjg_em"
+
+
+def test_parse_stock_info_csv_no_daily_bars_conflict(conn, tmp_path):
+    path = tmp_path / "stock_info.csv"
+    _stock_info_csv(path, "21394310176")
+    r = ingest_file(conn, path, source="akshare", data_type="stock_info",
+                    symbol="603605.SH", parse=ak_adapter.parse_stock_info_csv)
+    assert r.status == "conflict"
+    assert "daily_bars 为空" in r.errors[0]
+    assert conn.execute("SELECT COUNT(*) FROM share_capital_events").fetchone()[0] == 0
+
+
+def test_parse_stock_info_csv_cross_source_same_shares_skipped(conn, tmp_path):
+    """kimi 源已有同 effective_at 同股本 group_total 快照 → 幂等跳过（源可切换不重复写）。"""
+    _seed_daily_bar(conn, "603605.SH", "2023-08-10")
+    conn.execute(
+        """
+        INSERT INTO share_capital_events (symbol, effective_at, available_at, event_type,
+            share_change, shares_issued_after, share_count_type, details_json, source,
+            raw_object_id, created_at)
+        VALUES ('603605.SH', '2023-08-10', '2026-08-17T00:00:00+00:00',
+                'snapshot_group_total', NULL, '21394310176', 'group_total', '{}',
+                'stock_finance_data get_stock_info', NULL, '2026-08-17T00:00:00+00:00')
+        """)
+    conn.commit()  # 预置行先落盘，避免被 ingest_file 事务回滚连带撤销
+    path = tmp_path / "stock_info.csv"
+    _stock_info_csv(path, "21394310176")
+    r = ingest_file(conn, path, source="akshare", data_type="stock_info",
+                    symbol="603605.SH", parse=ak_adapter.parse_stock_info_csv)
+    assert r.status == "ok", r.summary()
+    assert r.inserted == 0 and r.skipped == 1
+    assert conn.execute("SELECT COUNT(*) FROM share_capital_events").fetchone()[0] == 1
+
+
+def test_parse_stock_info_csv_cross_source_conflict(conn, tmp_path):
+    """kimi 源已有同 effective_at 但股本不同 → conflict 交人工核对（§3.2）。"""
+    _seed_daily_bar(conn, "603605.SH", "2023-08-10")
+    conn.execute(
+        """
+        INSERT INTO share_capital_events (symbol, effective_at, available_at, event_type,
+            share_change, shares_issued_after, share_count_type, details_json, source,
+            raw_object_id, created_at)
+        VALUES ('603605.SH', '2023-08-10', '2026-08-17T00:00:00+00:00',
+                'snapshot_group_total', NULL, '21000000000', 'group_total', '{}',
+                'stock_finance_data get_stock_info', NULL, '2026-08-17T00:00:00+00:00')
+        """)
+    conn.commit()  # 预置行先落盘，避免被 ingest_file 事务回滚连带撤销
+    path = tmp_path / "stock_info.csv"
+    _stock_info_csv(path, "21394310176")
+    r = ingest_file(conn, path, source="akshare", data_type="stock_info",
+                    symbol="603605.SH", parse=ak_adapter.parse_stock_info_csv)
+    assert r.status == "conflict"
+    assert "股本冲突" in r.errors[0]
+    # 整批回滚：akshare 行未写入
+    rows = conn.execute("SELECT source FROM share_capital_events").fetchall()
+    assert [x["source"] for x in rows] == ["stock_finance_data get_stock_info"]

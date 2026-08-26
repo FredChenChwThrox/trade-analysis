@@ -921,3 +921,16 @@
   - 2. corporate_actions 空 → 平台段切换日未交叉印证，复权因子已重建但缺事件流；后续需 akshare 分红接口或 tdx/wenda 公告采集补齐。
   - 3. 公告（events）未采，本期跳过去重逻辑未触发；待 D3 消息评价落地或按需补 wenda_notice_query。
   - 4. 排期卡 draft 待人工激活流程（无卡 → degraded P5 持续，本周内可走 `pipeline.card_inputs` + fred-valuation-card-skill）。
+
+## 2026-08-26（akshare 采集器新增 forecast/stock_info 两源 + 洛阳钼业股本/预期补齐 + 排期卡激活）
+
+- **akshare 两新源（代码改动）**：
+  - `scripts/collect/akshare_collect.py`：新 source `forecast`（同花顺 `stock_profit_forecast_ths` 净利/EPS/营收三指标，净利「亿元」×1e8 换算为元，FY1=--date 所在年，附加列 ak_np_orgs/min/max、ak_eps 全量保留；营收接口对 603993 返回空 → 留空标缺口 §2.5；FY1 净利增速 akshare 无直接口径留空，裂口检查降级）与 `stock_info`（东财 `stock_zh_a_gbjg_em` 股本结构最新行 → 集团总股本快照，列对齐 kimi stock_info 约定 thscode+ths_total_shares_stock）。两源均仅 A 股。
+  - `scripts/adapters/akshare.py`：`parse_forecast_csv` 转发 `sfd.parse_forecast_csv`（sfd 侧加 `source` 关键字参数，默认行为不变，forecasts.source 正确记 akshare）；`parse_stock_info_csv` → share_capital_events（snapshot_group_total/group_total，**参与 PE 取数**），effective_at 推导自该股 daily_bars 最早交易日；**源可切换语义**：同 symbol 同 effective_at 已有其他来源 group_total 快照时股本一致幂等跳过、不一致记 conflict 交人工核对（§3.2），避免双源同口径并存造成 PE 取数歧义。
+  - `scripts/indicators/valuation.py`：`load_group_total_snapshot` 加 `source/api_label/raw_prefix` 关键字参数（默认保持 stock_finance_data 行为不变），供 akshare 复用同一入库与幂等/冲突逻辑。
+  - `ingest.py` `_ROUTES` 注册 ("akshare","forecast") / ("akshare","stock_info")。
+- **洛阳钼业股本/预期补齐**：akshare 采集 `data/raw/akshare/{stock_info,forecast}/2026-08-26/run_603993/` 并 ingest（inserted=2）；kimi 源同日快照交叉核对——集团总股本 21,394,310,176 两源**完全一致**；FY1–FY3 净利 329.17/368.37/419.41 亿两源一致（kimi 精度到小数）。股本采用 akshare 源入库（effective_at=2023-08-28 日线起点），kimi stock_info CSV 留档不重复入库（防双 group_total 并存）；forecasts 两源快照均入库（全量保存 §3.7），card_inputs 取最新（kimi，含营收与 FY1 增速）。
+- **指标转正**：`indicators.compute 603993.SH` 重算 → pe_ttm 726/726 非空（snapshot_share_basis），昨日遗留缺口①消除。
+- **排期卡（人工确认激活）**：`card_inputs 603993.SH` 底稿 → fred-valuation-card-skill 产 draft（卡 md + draft_2026-08-26.json）→ `create-draft` 入库 `603993SH_67042523` → 用户明确指令后 `activate --effective-from 2026-08-27`（下一交易日起生效，next_review 2026-10-31）。要点：TTM 278.2 亿/EPS 1.30，现价 19.59、PE(TTM) 15.07；反向裂口 −24.4pp（FY1 预期 +61.8% < 2026H1 实际 +86.3%）；PE 刻度随 EPS 上台阶断崖下移（2023 年 31–48 → 2025 年 9.7–11.9）判为盈利驱动的体系切换期，PE 情景 18/14/11 按体系带给；EPS 情景 1.54/1.39/1.23；三档 20.70–21.56 / 18.49–19.46 / 13.53–14.61，证伪线 13.53；现价已掠过第一档（低 5.4%）、贴第二档上沿（信号 0 项不释放）；Kelly（55/65/70 下沿）T1 0.8% / T2 10.8% / T3 17.2%；波段箱体 16.20–21.60（2026-02 以来震荡）；右侧触发 21.65 / 止损 21.45。
+- **测试**：新增 9 项（collect forecast/stock_info 列对齐、亿元换算、空接口、港股拒绝；adapter forecast 来源标注、stock_info 快照/无日线报错/跨源同股本幂等/跨源异股本冲突），`uv run pytest -q` **399 全绿**（389+10，含 1 项既有测试名修复）。
+- **遗留**：① akshare forecast 营收接口对 603993 空（kimi 源有营收预测）；② kimi MCP file_path 相对路径不落盘（本次仍复现，已用绝对路径）；③ akshare 股本快照为单点（东财接口另有全历史变动行，未来可细化真实事件流替代快照假设）。

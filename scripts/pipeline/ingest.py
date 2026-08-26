@@ -47,6 +47,8 @@ _ROUTES = {
     ("akshare", "financials"): ak.parse_financials_csv,
     ("akshare", "index"): ak.parse_index_csv,
     ("akshare", "telegraph"): ak.parse_telegraph_csv,
+    ("akshare", "forecast"): ak.parse_forecast_csv,      # 一致预期（转发 sfd 解析）
+    ("akshare", "stock_info"): ak.parse_stock_info_csv,  # 股本快照 → share_capital_events
 }
 
 
