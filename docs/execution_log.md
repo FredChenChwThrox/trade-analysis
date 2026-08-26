@@ -820,3 +820,85 @@
   - 1. 万华化学 600309 5 月底前的更深历史公告可分多次小窗分页（每窗 ≤30 天）补完——若评估需要可加 staging worktree 再跑。
   - 2. 跨源公告去重（tdx vs tianyancha）的 source_external_id 校对——handoff §6 已记二期。
   - 3. 排期卡相关股的近期公告（万华化学 6-23 起两条检修、平安 8-21 中期分红、紫金 8-22 员工持股调价、恒力 8-20 中报）尚未被对应日报管线消费，明日 daily 后日报内将自然出现。
+
+## 2026-08-24（平安银行 000001.SZ 加入观察列表）
+
+- `config/watchlist.yaml` 末尾新增 000001.SZ 平安银行（market CN，aliases [平安银行, Ping An Bank]——不与 601318 中国平安的「平安」别名混用，benchmark 000300.SH）→ `db seed` 导入 17 只全成功。
+- **待办**：3 年历史采集（日线/财报/公告）+ adjust/weekly/compute/weekly_signals 初始化（同 600563/600309 待采集队列）；采集前 daily 对该股输出 incomplete 属预期。
+
+- **000001.SZ 平安银行 3 年初始化采集与管线齐备**（接续 2026-08-24 入池待办）：
+  - **采集落盘**：`data/raw/tdx/{kline,quotes,financials}/2026-08-24/run_init_pingan_bank/`——8 批分页（wantNum=100+80）抓 780 根日线（2023-06-07~2026-08-24），tdx_quotes hasCwInfo=1 估值/GDRS/股本快照 1 份，tdx_api_data `TdxShareCW.ph_agf10_cw_lyb` (fixedTag=00101/00102) 10 期利润表（FY2020..FY2025 + 2025Q1/中报/Q3 + 2026Q1/中报）。HACK：单 MCP 响应超 100k 字符，无法直传窗口；写 `scripts/collect/_tmp_aggregate_pingan.py` 把分页 rows JSON 拼合成 tdx CSV（8 batch 文件 + aggregator），再写 `_tmp_build_quotes_financials.py` 生成 10 个 `*_is_<YYYYMMDD>.csv`（含 BOM 与 _meta.json）。
+  - **入库**：`uv run python -m scripts.pipeline.ingest data/raw/tdx/{kline,quotes,financials}/2026-08-24/run_init_pingan_bank` → **inserted=791 / errors=0 / incomplete=10**（10 笔 financials 都是 A 股 tdx 财报接口无 published_at 降级标 `degraded_available_at`，available_at 取入库时间——后续用 wenda_notice_query 抓披露公告回填 pit_backfill）。
+  - **管线跑通（带 factor=1.0 降级）**：
+    - 跳过 `scripts.pipeline.adjust`：本批 tdx 没有 tqFlag=0（不复权，下游 daily_bars 已写入）+ tqFlag=1（前复权）的成对数据；复权因子 `price_adj_factor_t=1.0`（初始列默认）。tdx 前复权分页需要另起 ~8 MCP 调用成本过高，务实做法：本期指标/周线在 factor=1 下降级跑通（二期计划：用 kimi-datasource forward+none 重铺 601318 SH 同款路径）。
+    - `scripts.pipeline.weekly 000001.SZ` → 165 完成周
+    - `scripts.indicators.compute 000001.SZ` → indicators_daily 780 / indicators_weekly 165 / pe_ttm 非空 1 行（最新一日带 snapshot_share_basis）/ 空 779 行（缺历史 quarter 同比期间，TTM 三件套不备，属设计预期）
+    - `scripts.signals.weekly_signals` → weekly_anchors 14 行 / signal_facts 825 行；当前周 2026-08-21 panic_low=2024-09-23 decline_start=2024-03-29 episode=ended（2024-Q3 大跌后反弹 + duration 8 周后结束），活跃 0 项（min 2 阈值未达）
+    - `scripts.signals.daily_watch` / `right_side` / `accumulation` / `corporate_action` 全跑——前两个 `incomplete (no_active_card)` 属设计预期，accumulation 历史转换 3 次（2025-04 watching → 04-21 consolidating → 05-13 confirmed），corporate_action 0 待处理
+    - `scripts.pipeline.report --date 2026-08-24 --symbol 000001.SZ` → `reports/000001.SZ/2026-08-24.md`（P5 普通状态更新）+ `reports/daily/2026-08-24.md`（全池日报 1 只 degraded P5）
+  - **DB 校验**：daily_bars 780 / weekly_bars 165（min 2023-06-09 / max 2026-08-21）/ indicators_daily 780 / financial_reports 10 / financial_facts 10 / share_capital_events 1（snapshot_group_total_tdx @ 2026-08-24, shares 19,405,918,800）/ signal_facts 825 (5 类 × ~165 周)。今日收盘 11.56、MA20=11.32、MA60=10.94、MA120=10.85、MA250=10.96、pe_ttm=5.16（ok；snapshot_share_basis;degraded_available_at）。
+  - **测试**：`uv run pytest -q` 367 失败 3（UI 测硬编码假设的 symbol 排序），修复 `tests/test_ui_queries.py`（test_search_stocks 现 000001.SZ 排前、test_list_stocks_sort_and_pagination pe_ttm asc 现 000001.SZ 排前、test_list_stocks_filter_data_quality_pe_status `ok` 集合用 issubset 允许 000001.SZ 加入）+ `tests/test_ui_layout.py`（test_api_stocks_search 同改）→ **370 全绿**。
+  - **偏差/决定**：① factor=1.0 入库为合理降级；tdx 前复权拉取放在二期用 kimi forward 兜底或 tdx tqFlag=1/2 双拉重建。② 10 笔 financials A 股 tdx 接口无 published_at 是 tdx 已知缺口；补采顺序：先用 wenda_notice_query 抓披露公告做 pit_backfill，回填后 strict 点时口径生效。③ `daily_bars.price_adj_factor` 仍为 1.0，对应 weekly_bars / indicators 周线也基于 raw 价；待前复权回到后 weekly_anchors.fallback 与 panic_low_transition 重算（如 2024-09-23 锚点 8.67 → 8.67×factor→ 调整后会更"破"，panic 形态影响应验机率，影响低）。④ 清理临时脚本 `_tmp_aggregate_pingan.py` / `_tmp_build_quotes_financials.py`（保留 `scripts/collect/`，是 init 标准工具；`_tmp_` 前缀利于标记临时，待二期交接 cleanup 阶段删除）。
+
+
+## 2026-08-24（平安银行 000001.SZ kimi 重铺 + pit_backfill + 估值排期卡 draft）
+
+- **kimi 口径重铺**（替代 tdx 初始化，解决 factor=1.0 降级）：日线 725 行（2023-08-25~2026-08-24，kimi get_price 双口径成对，前复权因子 6 平台段，切换日 2024-06-14 / 2024-10-10 / 2025-06-12 / 2025-10-15 / 2026-06-12）；财报 kimi 14 期 + forecast；公告 105 条；yahoo stock_actions 分红 29 条；股本快照双口径（sce_id=50/51）。周线 154 周、pe_ttm 非空 592/725、周线信号已跑（活跃 0 项）。
+- **数据清洗**：剔除 55 行 tdx 前缀污染日线（备份 `data/backups/000001.SZ_daily_bars_tdx_prefix_20260824.csv`）。
+- **pit_backfill**：天眼查 37 页 740 行披露公告回填，matched=24，`degraded_available_at` 全部消除。**遗留待办**：financial_reports 存在 tdx/sfd 双源同 period 重复行 24 行，待去重策略。
+- **BPS 补采**（PB 锚必需）：kimi financial_index 8 期落盘 `data/raw/stock_finance_data/financial_index/2026-08-24/run_init_000001/`——BPS 2022FY 18.80 → 2026H1 24.13；当前 PB=0.479；三轮底部 PB 刻度 2023-12-21 / 2024-01-18 / 2024-09-23 = 0.457/0.457/0.465（稳定）。TTM 每股分红 0.596 元（2025-10-15 派 0.236 + 2026-06-12 派 0.36），现价股息率 5.16%。
+- **估值排期卡**（fred-valuation-card-skill，draft-only §5.6）：
+  - 底稿 `cards/000001.SZ/inputs_2026-08-24.json`（现价 11.56、TTM 归母 434.59 亿、TTM EPS 2.2395、PE 5.16、样本窗 2024-03-18~2026-08-24 p5=4.18/p50=4.92/p95=5.47、前低 9.87）。
+  - 情景矩阵 `build_schedule.py --eps 2.26,2.20,2.02 --pe 5.5,4.9,4.2 --price 11.56 --winrate 60,70,75` → 档线 T1 10.6–11.1 / T2 10.2–10.8 / T3 8.5–9.2，证伪线 8.5；Kelly 上限 T1 0.0% / T2 9.6% / T3 18.2%（修复目标价 12.4）。
+  - MD 卡 `cards/000001.SZ/平安银行估值排期卡.md`（锚=PB+股息率；波段箱体 10.40–11.90 上限 10%；右侧 trigger 11.82 / stop 11.70；next_review 2026-10-31）。
+  - JSON `cards/000001.SZ/draft_2026-08-24.json` → `create-draft` 入库：**card_version_id=000001SZ_63cdff82**，**未激活，待人工确认 activate**。
+- **遗留**：① tdx 前缀污染删除仅涉 000001.SZ，其他池内标的未排查；② financial_reports 24 行双源重复期待去重；③ 不良/拨备明细未采（卡中列为复核触发器，worst 情景 EPS 2.02 依赖定性假设）。
+- **人工激活**（§5.6）：`card activate 000001SZ_63cdff82` → status=active，effective_from=2026-08-24，生成 `cards/000001.SZ/2026-08-24_000001SZ_63cdff82.md` 并刷新 `current.md`。下一个交易日起 daily_watch / right_side 对该股按卡执行。
+
+
+## 2026-08-25（恒力石化 600346.SH 清仓止损）
+
+- **executions #9**：sell 18.20 × 1600，executed_at=2026-08-25，关联 active 卡 600346SH_5df2b631，信号快照冻结至 2026-08-21（库内最新 bar 日；08-24/08-25 增量未采）。
+- 对应买入 #8（2026-08-21 右侧 confirmed 后 18.99 × 1600），本轮平仓亏损约 -4.16%（(18.20−18.99)/18.99，未计费用；fees 未提供未记）。
+- **性质**：人工止损决策——卖价 18.20 高于卡内右侧止损位 16.60，非系统证伪线/止损位触发；排期卡仍 active（未关闭/未新建版本），该股当前空仓。
+
+## 2026-08-25（珀莱雅 603605.SH 卖出 1000 股 @61.00）
+
+- **executions #10**：sell 61.00 × 1000，executed_at=2026-08-25，关联 active 卡 603605SH_120ca661，信号快照冻结至 2026-08-21（库内最新 bar 日；08-24/08-25 增量未采）。
+- **与卡片框架对照**：卖价 61.00 恰在卡内波段箱体卖出区 [59.50, 61.00] 上沿（inclusive），属波段仓卖点执行；对应买入 #7（08-19 T2 档 55.98 × 900）浮盈约 +8.97%。
+- **持仓口径差异（NOTE）**：库内记录持仓为 900 股（#1–#4 轧平 + #7 买 900），用户确认实际持仓 1000 股——差额 100 股来自系统上线前未入库的老仓，按用户实际持仓如实记录 1000 股，库内口径与实盘差 100 股已声明（同 #4 备注"含 100 股更早底仓"为同类历史口径问题）；卖出后珀莱雅持仓视为 0。
+
+## 2026-08-25（盘后例行：daily 8/24+8/25，forward 文件路由事故与修复）
+
+- **采集**（tdx MCP 不可用，走 kimi-datasource fallback，符合 tdx-collect skill 失败处理约定）：`data/raw/stock_finance_data/{price,index,announcement}/2026-08-25/run_daily_20260825/`——17 只日线 adjust=none（batch1-6.csv，窗口 2026-08-14~08-25）+ 逐只 adjust=forward + 沪深300 指数 8 行 + 公告 60 行（wenda 接口恢复，含珀莱雅半年报全套 16 条、万华半年报+中期分红等）。**坑**：kimi MCP 工具 file_path 相对路径不落盘（声称 saved 实际没有），必须绝对路径。
+- **事故**：daily --date 2026-08-24 首跑 failed=2（000001.SZ / 601899.SH，`origin 日不在因子序列内`，事务回滚无污染）。根因：本次 forward 用 `batchN_forward.csv` 多票混排文件名，`_classify_raw_files` 按 `_forward` 前缀取 symbol 得到 "batchN" 不在 watchlist → 未进入各股因子检查；daily 退用历史遗留文件——000001 选中 8/24 重铺探针残留 `000001.SZ_forward_gap.csv`（2023-06~08-24，与库内零重叠 → 保守判 changed → 重建崩溃）；601899 选中 8/17 旧 vintage 文件（kimi 前复权历史已重述，旧文件显示 8/14 前 1.24% 位移，现 vintage forward=raw 无位移；corporate_actions 紫金无除权记录，判为数据源重述假阳性）。
+- **修复**：batch forward 按 ticker 拆成 17 个 `<symbol>_forward.csv` 单票文件（符合 run_YYYYMMDD_daily 既有命名约定），全池预检 17/17 `因子一致（位移 0.0000%）`；`batch2_forward.csv` 曾被作 "other" 误入库 raw_objects（raw_b4fc8aeba43a1a08，更新 601899 五行，因现 vintage forward=raw 数值与 raw 相同无实际污染），已按 content_hash 逐字节重建原文件恢复证据链，后续重跑 content hash 去重自动跳过。
+- **重跑**：daily 2026-08-24 与 2026-08-25 均 **ok=17**。8/25 决策点：南航 600029 T1、有友 603697 T1、**天赐 002709 T1+箱体 buy_zone（收 36.40 入 [35.00,36.50]，低点 35.50 恰触 box_low）**、平安 601318 箱体 sell_zone（55.01）；观察点：珀莱雅距 T1 下沿 61.50 差 0.5%（右侧突破线 61.61 差 0.7%）、海天距 T1 下沿 1.2%。601168/600309/600563 degraded=no_active_card（§2.5 预期）。恒力 600346 收 18.30 跌回右侧触发位 18.50 下方（突破线 18.68），与当日人工止损 18.20 一致。
+- **测试**：`uv run pytest -q` **370 全绿**（无代码变更）。
+- **待办/建议**：① daily forward 文件选择对"零重叠/旧 vintage 残留文件"脆弱——后续可考虑按与库内日期重叠度选文件或对零重叠跳过检查（需设计评审，本次未改代码）；② 采集脚本侧约定：kimi get_price 多 ticker 返回必须拆单票文件落盘，禁用 batch 前缀命名 forward 文件；③ handoff.md 常见任务节建议补"kimi MCP file_path 必须绝对路径"。
+
+## 2026-08-26（akshare 采集器接入）
+
+- **akshare 采集器**（可选数据源，字段对齐现有 adapter 约定，实测通过）：
+  - `scripts/collect/akshare_collect.py`：CLI 按 `--sources price,financials,index,telegraph` 采集落盘 raw CSV + `_meta.json`（失败重试一次/记录 error 不中断）。akshare 为 optional extra（`pyproject.toml [project.optional-dependencies] akshare`，体积大不进主依赖，未装时 CLI 给出 `uv sync --extra akshare` 提示）。
+  - `scripts/adapters/akshare.py`：price→复用 `upsert_daily_bars`（source=akshare）、index→复用 `upsert_index_bars`、financials→**直接转发 `tdx.parse_financials_csv`**（列约定一致，published_at=东财 NOTICE_DATE 正式披露日，available_at=下一开市交易日 §2.1，单位换算/修订升级复用）、telegraph→events+event_symbols（source_external_id/content_hash 去重 §3.6，按 watchlist 名称/别名/六位代码匹配）。
+  - `ingest.py` `_ROUTES` 注册 4 条 akshare 路由。
+- **落盘列对齐约定**（实测 2026-08-26）：price/index 用 kimi 列约定（thscode,time,open,high,low,close,volume,amount,currency）；financials 用 tdx 列约定（code,setcode,period_end,...,published_at）；telegraph 用 events 字段（published_at UTC/published_tz/title/summary/content/source_external_id/content_hash）。
+- **口径换算（关键）**：东财成交量单位「手」→ 采集器落盘前 ×100 换为项目 volume_raw 口径「股」；成交额「元」直接入库；财报金额 unit='yuan'。
+- **实测值（真实 akshare，2026-08-26）**：财联社电报 20 条落盘→17 入库+3 无标题行跳过；沪深300 全历史 5978 行入库、恒生 3172+30 行源缺陷跳过（新浪 open=0/close>high 噪声，行级跳过记 note 不整批回滚 §2.5）；珀莱雅利润表全历史 40 期，2025 年报/2026Q1/2026 中报入库 **published_at 正确回填**（2026 中报 NOTICE_DATE=08-25，pub=08-24T16:00Z，avail=下一开市日 08-25T16:00Z）——补齐 A 股披露时间缺口（pit_backfill 之外的通道）。
+- **边界处理（实测暴露后修复）**：① 电报无标题行（图片快讯）→ 行级跳过不整批回滚；② 指数 OHLC 源缺陷行（新浪恒生历史 open=0 等 30 行）→ 行级跳过记 note。
+- **已知限制**：① 港股财报 `stock_profit_sheet_by_report_em` 当前报错（东财接口不支持该 symbol 形态），采集记 error 不阻塞，A 股财报为价值主力；② 恒生指数新浪源有零星坏行（已跳过）；③ A 股日线/复权接口依赖东财 push2his 域名，本沙箱网络偶发不可达（接口本身可用，日志记 error）。
+- **测试**：`tests/test_akshare_collect.py` 10 项（mock akshare：成交量×100/列对齐/披露日/电报 UTC 与哈希稳定/未装提示）+ `tests/test_adapters_akshare.py` 6 项（price 冲突回滚/财报 published_at+下一开市日+修订升级/指数坏行跳过/电报事件去重+股票匹配+空标题行跳过）。**`uv run pytest -q` 386 全绿**（370+16）。
+- 用法：`uv sync --extra akshare` 后 `uv run python -m scripts.collect.akshare_collect --symbols 603605.SH --sources financials,telegraph --date 2026-08-26 --run-id run_ak` → `uv run python -m scripts.pipeline.ingest data/raw/akshare/{financials,telegraph}`。
+
+## 2026-08-26（akshare 缺口补齐：全池财报 + published_at 回填 + 法拉/万华头部日线）
+
+- **驱动**：缺口盘点（17 只 watchlist 逐表核对）发现 ① 财报历史期次普遍缺 2023Q3/2024 季报、13 只 published_at 全空；② 法拉/万华日线头部缺 2023-08-28~09-27 共 23 个交易日；③ 万华 forecasts 缺；④ 12 只 corporate_actions 空。本次用 akshare 补 ①②。
+- **全池 financials 补齐**：`akshare_collect --sources financials`（东财 datacenter，经系统代理）17/17 成功，每股 43~122 期全历史落盘 `data/raw/akshare/financials/2026-08-26/run_ak_fin_20260826/`；ingest inserted=1270 / skipped=83 / 0 冲突。期次矩阵 2023Q3 起 12 期全覆盖（南航/豫光缺 2026H1 系尚未披露，8/31 截止后再采）。东财更正被 revision 机制正确捕捉（如 603288 2024FY 营收 269.01 亿→269.05 亿升 revision 2）；万华 2026H1 旧占位空行（rev1 全 NULL）升级为 rev2 真实值+披露日。
+- **披露日回填通道（tdx.py 改动）**：`parse_financials_csv` 内容一致分支新增——已有报告 published_at 为 NULL 且本批 CSV 带披露日时，回填 published_at/published_tz/available_at（记 data_revisions，source 取 raw_objects 登记值），**不新增 revision**（事实数字未变）。本批 CSV 文件级 hash 去重会挡重放，用逐文件直调 parse 的方式重放一次：回填 66 行。**2023 年以来全部最新 revision 的 published_at 已齐**；残余 NULL 均为被取代的旧 revision（§3.7 历史保留）或平安银行 1990-92 三期远古年报（东财无 NOTICE_DATE，保持 NULL 不猜）。
+- **连带修复（valuation/compute）**：① `compute_pe_series` assume_visible 降级路径原来不做 revision 去重，万华 2026H1 rev1 占位空行（净利 NULL）污染 TTM 致 pe_ttm 全空——改为降级路径也经 `_latest_revisions` 只取最新 revision；② `compute.py` 降级自动判定从"任一财报 published_at NULL"改为"任一**最新 revision** NULL"，避免被取代的旧行把股票永久钉在 degraded。修复后万华 pe_ttm 701/725 恢复，全池 17 只重算指标：16 只转严格点时口径，平安银行保 `degraded_available_at` 标（1990-92 远古行所致，数值用最新 revision 正常计算）。其余 pe 空值均为诚实原因码：`ttm_non_positive`（南航/埃斯顿/牧原/恒力亏损期，设计预期）、`no_share_capital`（法拉/万华头部 23 天无股本快照覆盖）。
+- **akshare_collect 增强**：① 新 source `forward`——`stock_zh_a_hist(adjust="qfq")` 前复权落盘 `{symbol}_forward.csv`（列同 price 约定；ingest 按 `*_forward*` 跳过，专供 adjust 因子重建）；② 新 `--price-api sina` 备用源（`stock_zh_a_daily`，A 股专用，volume 已是「股」**不 ×100**）——东财 push2his 域名当时直连与代理均不可达（datacenter 经代理正常），sina 源实测可用。
+- **法拉/万华头部补齐**：先口径核对——sina 不复权 OHLCV 与库内（tdx 源）重叠窗口 11 天逐行一致（容差 0.005 价/0.1% 量），混源安全。采 2023-08-28~09-28 落盘 → ingest 各 inserted=23（重叠日 09-28 因浮点尾差 97.599998 vs 97.6 记 2 条 source_revision，无实质变化）→ `adjust --forward-csv`（sina qfq 全区间）全量重建：origin 前移至 2023-08-28，法拉 4 平台段（切换日 2024-06-14/2025-06-13/2026-06-12，年均 6 月分红）、万华 5 段（2024-04-22/2024-09-05/2025-05-30/2026-05-27），周线同事务重建 153 周 → compute 725 行 → weekly_signals 重算。因子 distinct 从 199/88（tdx 等比连续漂移口径）收敛为 4/5 平台段，与 §3.3 平台模型吻合。NOTE：两只 corporate_actions 为空，切换日未交叉印证（已知缺口④）。
+- **增量/全量结论**（回答本轮问题）：采集层无自动增量——price/forward 按 `--start/--end` 手动指定区间，financials/index 接口全量返回；入库层幂等（upsert + content hash 去重 + data_revisions），全量拉重复入库安全。
+- **测试**：新增 3 项（forward qfq 命名/列对齐、sina volume 不换算、财报 published_at 回填不升 revision 且幂等），`uv run pytest -q` **389 全绿**（386+3）。
+- **遗留**：① 东财 push2his 恢复后 price 默认 em 源可切回（sina 仅 A 股）；② 平安银行 1990-92 披露日无源，degraded 标保留；③ 法拉/万华头部 23 天 pe_ttm 空（no_share_capital，需更早期本快照才可解，影响仅限该窗口）；④ 南航/豫光 2026H1 待披露后补采（重跑 financials 即可，published_at 回填已自动化）；⑤ corporate_actions 12 只空 + 换手率/股东人数 + 万华 forecasts + 法拉/万华公告簿偏薄，akshare 现有采集器未覆盖（telegraph 无历史区间）。

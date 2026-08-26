@@ -16,6 +16,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from scripts.adapters import akshare as ak
 from scripts.adapters import stock_finance_data as sfd
 from scripts.adapters import tdx
 from scripts.adapters import tianyancha as tyc
@@ -41,6 +42,11 @@ _ROUTES = {
     ("yahoo_finance", "stock_actions"): yf.parse_stock_actions_csv,
     ("yahoo_finance", "index"): yf.parse_index_csv,
     ("tianyancha", "announcement"): tyc.parse_announcement_csv,
+    # akshare（可选源：字段对齐现有 adapter 约定；财报复用 tdx 解析含披露日）
+    ("akshare", "price"): ak.parse_price_csv,
+    ("akshare", "financials"): ak.parse_financials_csv,
+    ("akshare", "index"): ak.parse_index_csv,
+    ("akshare", "telegraph"): ak.parse_telegraph_csv,
 }
 
 

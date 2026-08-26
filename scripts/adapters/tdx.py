@@ -655,7 +655,8 @@ def parse_financials_csv(conn: sqlite3.Connection, path: Path, raw_object_id: st
     # 修订升级：内容一致跳过；不一致新增 revision
     existing = conn.execute(
         """
-        SELECT r.report_id, r.revision, f.revenue, f.net_profit_attr,
+        SELECT r.report_id, r.revision, r.published_at, r.available_at,
+               f.revenue, f.net_profit_attr,
                f.eps_basic, f.eps_diluted
         FROM financial_reports r
         JOIN financial_facts f ON f.report_id = r.report_id
@@ -670,9 +671,44 @@ def parse_financials_csv(conn: sqlite3.Connection, path: Path, raw_object_id: st
         latest = existing[0]
         same = all(latest[k] == facts[k] for k in facts)
         if same:
-            result.skipped += 1
-            result.notes.append(
-                f"{symbol} {period_end} 报告内容一致，跳过（已有 revision={latest['revision']}）")
+            # 披露日补齐：已有报告 published_at 为 NULL（D1.3 降级入库）而本批 CSV
+            # 带来披露日（如 akshare NOTICE_DATE）时，回填 published_at/available_at
+            # 并记 data_revisions；事实数字未变，不新增 revision
+            if published_at_utc is not None and latest["published_at"] is None:
+                avail = _next_open_available_at(
+                    load_calendar(conn, market), published_at_raw, market)
+                src_row = conn.execute(
+                    "SELECT source FROM raw_objects WHERE raw_object_id = ?",
+                    (raw_object_id,)).fetchone()
+                src = src_row["source"] if src_row else SOURCE
+                record_revision(
+                    conn, table_name="financial_reports",
+                    record_key={"report_id": latest["report_id"], "symbol": symbol,
+                                "period_end": period_end, "period_type": period_type},
+                    old_value={"published_at": None,
+                               "available_at": latest["available_at"]},
+                    new_value={"published_at": published_at_utc,
+                               "published_tz": published_tz,
+                               "available_at": avail,
+                               "source_file": Path(path).name,
+                               "raw_object_id": raw_object_id},
+                    source=src,
+                    reason="披露日回填：published_at 由 NULL 补为本批披露日（解除 D1.3 降级）",
+                    run_id=Path(path).parent.name)
+                conn.execute(
+                    """
+                    UPDATE financial_reports
+                    SET published_at = ?, published_tz = ?, available_at = ?
+                    WHERE report_id = ?
+                    """,
+                    (published_at_utc, published_tz, avail, latest["report_id"]))
+                result.updated += 1
+                result.notes.append(
+                    f"{symbol} {period_end} 内容一致，回填 published_at={published_at_raw}")
+            else:
+                result.skipped += 1
+                result.notes.append(
+                    f"{symbol} {period_end} 报告内容一致，跳过（已有 revision={latest['revision']}）")
             return result
         revision = latest["revision"] + 1
         result.notes.append(

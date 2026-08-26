@@ -60,7 +60,8 @@ def title_keywords(period_type: str, period_end: str, fiscal_year: int) -> list[
     mmdd = period_end[5:]
     fy = fiscal_year
     if period_type == "annual" and mmdd == "12-31":
-        return [f"{fy}年年度报告"]
+        # 年报标题存在"2023年年度报告"与"2020年度报告"（年份后无"年"）两种写法
+        return [f"{fy}年年度报告", f"{fy}年度报告"]
     if period_type == "interim" and mmdd == "06-30":
         return [f"{fy}年半年度报告"]
     if period_type == "quarterly" and mmdd == "03-31":

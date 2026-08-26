@@ -10,7 +10,9 @@ def test_api_markets(client):
 def test_api_stocks_search(client):
     rv = client.get("/api/stocks/search?q=平安")
     data = rv.get_json()["items"]
-    assert data and data[0]["symbol"] == "601318.SH"
+    # 2026-08-24 加 000001.SZ（平安银行）后按 symbol 字典序排前
+    assert data and data[0]["symbol"] == "000001.SZ"
+    assert any(it["symbol"] == "601318.SH" for it in data)
 
 
 def test_api_stocks_search_by_symbol(client):

@@ -5,11 +5,11 @@
 
 ## 1. 环境
 
-- Python ≥3.12，用 **uv** 管理：依赖 `pyproject.toml`（pandas/pyyaml/jsonschema，dev: pytest），锁文件 `uv.lock`。
+- Python ≥3.12，用 **uv** 管理：依赖 `pyproject.toml`（pandas/pyyaml/jsonschema/flask，dev: pytest），锁文件 `uv.lock`。
 - 所有命令前缀 `uv run`；包下载失败时走系统代理。
-- 测试：`uv run pytest -q`（当前 161 项，全绿才算完成）。
+- 测试：`uv run pytest -q`（当前 389 项，全绿才算完成）。
 - 数据库：SQLite `data/market.db`（schema `scripts/pipeline/migrations/0001_init.sql`，`scripts/pipeline/db.py` 的 `migrate` 建库）。
-- 数据源（2026-08-21 起）：**通达信 tdx-connector 第一优先**（`scripts/adapters/tdx.py`，A 股+港股+指数行情+公告+估值/股本快照，采集规范 `skills/tdx-collect/SKILL.md`）；kimi-datasource 兜底（`stock_finance_data` A 股全量 + `yahoo_finance` 港股/股本/FX，access_token 易失效需 `/login`，公告接口自 8/13 持续 EMPTY_DATA）；tianyancha 公告补采兜底。接口探测记录见 `docs/probe_20260809_stock_finance_data.md`、`docs/probe_20260815_tianyancha.md`、`docs/probe_20260821_tdx.md`。**港股源已通过 tdx 接入**（setcode=31，0700.HK 在 watchlist 待采集）。
+- 数据源（2026-08-21 起）：**通达信 tdx-connector 第一优先**（`scripts/adapters/tdx.py`，A 股+港股+指数行情+公告+估值/股本快照，采集规范 `skills/tdx-collect/SKILL.md`）；kimi-datasource 兜底（`stock_finance_data` A 股全量 + `yahoo_finance` 港股/股本/FX，access_token 易失效需 `/login`，公告接口自 8/13 持续 EMPTY_DATA）；tianyancha 公告补采兜底；**akshare 可选源**（`scripts/collect/akshare_collect.py` + `scripts/adapters/akshare.py`，需 `uv sync --extra akshare`；财联社电报→events、财报披露日 NOTICE_DATE 回填、指数全历史、A/H 行情，字段对齐既有 adapter 约定）。接口探测记录见 `docs/probe_20260809_stock_finance_data.md`、`docs/probe_20260815_tianyancha.md`、`docs/probe_20260821_tdx.md`。**港股源已通过 tdx 接入**（setcode=31，0700.HK 在 watchlist 待采集）。
 
 ## 2. 目录结构
 
@@ -64,6 +64,14 @@ uv run python -m scripts.ui.app                    # http://127.0.0.1:5000/，/h
 uv run python -m scripts.ui.app --port 5001        # 覆盖 host/port
 # 页面：/ /stocks /stock/{symbol} /indicators /signals /compare /cards /runs；筛选条件随 URL 保持。
 # 前端模板 scripts/ui/templates/，JS scripts/ui/static/js/（无构建链，Tailwind/ECharts CDN）。
+
+# akshare 可选源（字段对齐现有 adapter 约定；先 uv sync --extra akshare）
+uv run python -m scripts.collect.akshare_collect \
+    --symbols 603605.SH --indexes 000300.SH,^HSI \
+    --sources price,financials,index,telegraph --date 2026-08-26 --run-id run_ak
+# forward=qfq 前复权（{symbol}_forward.csv，供 adjust 用，ingest 自动跳过）；
+# --price-api sina 切新浪备用源（A 股专用，东财 push2his 不可达时用）
+uv run python -m scripts.pipeline.ingest data/raw/akshare/{financials,telegraph,index}
 ```
 
 ## 4. 关键约定（违反会出错的点）
@@ -80,8 +88,10 @@ uv run python -m scripts.ui.app --port 5001        # 覆盖 host/port
 
 - 进度：D0–D2 全部完成；D3.3 首张真实排期卡已激活（603605.SH 珀莱雅 `603605SH_120ca661`，effective 2026-08-10，next_review 2026-08-31）；**D3.4 数周并行观察期进行中**；D3 消息评价（LLM 事件研究）未做。**UI 第一期全部任务完成（docs/tasks/ 00–11），262 项测试全绿**。
 - watchlist 6 只：603605.SH（唯一有卡，4 笔历史波段已补录 executions #1–#4）、603288.SH、601318.SH、002747.SZ、601899.SH、600029.SH（各 3 年日线+周线+指标+衰竭信号齐全，无卡，日报卡片项 incomplete 属预期）。
-- 已知缺口：① 港股日历未填充、港股源未接；② 公告接口（get_stock_announcement）返回空未验证；③ 财报披露时间缺失，pe_status 带 degraded_available_at 标注；④ 吸筹形态参数待人工核对（珀莱雅近期两次 -5% 以上大跌量比 1.4–1.6 未达 2.0 阈值未触发）；⑤ 换手率/股东人数（筹码集中度间接指标）未采集；⑥ 筹码分布数据无源（数据源无接口，评估见执行日志）。
+- 已知缺口：① 港股日历未填充、港股源未接；② ~~公告接口（get_stock_announcement）返回空未验证~~；③ ~~财报披露时间缺失~~（2026-08-26 起已由 akshare NOTICE_DATE 通道补齐：tdx.parse_financials_csv 内容一致时自动回填 NULL published_at，2023 年以来最新 revision 全齐；平安银行 1990-92 三期远古年报无源保持降级标）；④ 吸筹形态参数待人工核对（珀莱雅近期两次 -5% 以上大跌量比 1.4–1.6 未达 2.0 阈值未触发）；⑤ 换手率/股东人数（筹码集中度间接指标）未采集；⑥ 筹码分布数据无源（数据源无接口，评估见执行日志）；⑦ corporate_actions 12 只空（复权因子由前复权价比值重建，平台切换日未交叉印证）、万华 forecasts 缺、法拉/万华公告簿偏薄。
 - 下一例行事项：2026-08-10（周一）盘后首个正式 daily（先采集增量再 `--raw-dir`）。
+- （2026-08-23 补记）601168.SH 西部矿业已入池（watchlist 14 只）：3 年日线/周线/指标/信号齐全，14 期财报披露日已 pit_backfill 回填（点时口径）；排期卡 draft `601168SH_cc4c2ac7` 待人工激活（next_review 2026-10-31）。详见执行日志 2026-08-23 节。
+- （2026-08-26 补记）akshare 缺口补齐：全池财报全历史入库（期次 2023Q3 起 12 期全覆盖，published_at 66 行回填，16 只转严格点时口径）；法拉/万华头部 23 个交易日补齐（sina 源），因子重建为平台段口径（4/5 段），周线 153/指标 725/信号已重算。测试 389 全绿。详见执行日志 2026-08-26（akshare 缺口补齐）节。
 
 ## 6. 常见任务怎么做
 

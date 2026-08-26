@@ -27,7 +27,8 @@ def _ann(title, date, *, uuid=None, stock_code="603605", source_file="t_p1.csv")
 # ---------------------------------------------------------------- 标题关键词
 
 def test_title_keywords_mapping():
-    assert title_keywords("annual", "2023-12-31", 2023) == ["2023年年度报告"]
+    assert title_keywords("annual", "2023-12-31", 2023) == [
+        "2023年年度报告", "2023年度报告"]
     assert title_keywords("quarterly", "2024-03-31", 2024) == [
         "2024年第一季度报告", "2024年一季度报告"]
     assert title_keywords("interim", "2024-06-30", 2024) == ["2024年半年度报告"]

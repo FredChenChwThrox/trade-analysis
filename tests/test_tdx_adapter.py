@@ -439,6 +439,41 @@ def test_financials_same_content_skipped(conn, tmp_path):
     assert r2.skipped == 1
 
 
+def test_financials_published_at_backfill_on_same_content(conn, tmp_path):
+    """内容一致但已有报告 published_at 为 NULL、本批带来披露日 → 回填不新增 revision。"""
+    p1 = write(tmp_path, "raw/tdx/financials/2026-08-23/run_a/600563.SH_is_20251231.csv", FIN_A)
+    r1 = ingest_file(conn, p1, source="tdx", data_type="financials",
+                     symbol="600563.SH", parse=tdx.parse_financials_csv)
+    assert r1.inserted == 1
+    fin_with_pub = FIN_A.replace(
+        "yuan,1,\n", "yuan,1,2026-08-05\n")
+    assert fin_with_pub != FIN_A
+    p2 = write(tmp_path, "raw/akshare/financials/2026-08-26/run_ak/600563.SH_is_20251231.csv",
+               fin_with_pub)
+    r2 = ingest_file(conn, p2, source="akshare", data_type="financials",
+                     symbol="600563.SH", parse=tdx.parse_financials_csv)
+    assert r2.updated == 1
+    assert r2.inserted == 0 and r2.skipped == 0
+    row = conn.execute(
+        "SELECT revision, published_at, published_tz, available_at "
+        "FROM financial_reports WHERE symbol='600563.SH' AND period_end='2025-12-31'"
+    ).fetchone()
+    assert row["revision"] == 1                      # 事实未变，不新增 revision
+    assert row["published_at"] is not None           # NULL → 已回填
+    assert row["published_tz"] == "Asia/Shanghai"
+    assert row["available_at"] is not None
+    rev = conn.execute(
+        "SELECT reason, run_id FROM data_revisions "
+        "WHERE table_name='financial_reports' ORDER BY rowid DESC LIMIT 1"
+    ).fetchone()
+    assert "披露日回填" in rev["reason"]
+    assert rev["run_id"] == "run_ak"                 # 采集批次目录名
+    # 再次入库同一披露日：published_at 已非 NULL → 普通跳过，不重复回填
+    r3 = ingest_file(conn, p2, source="akshare", data_type="financials",
+                     symbol="600563.SH", parse=tdx.parse_financials_csv)
+    assert r3.skipped == 1 and r3.updated == 0
+
+
 def test_financials_period_end_fallback_from_csv(conn, tmp_path):
     """文件名缺 `_is_YYYYMMDD` → 回退 CSV period_end 列入库（2026-08-23 起不再是 conflict）。"""
     p = write(tmp_path, "raw/tdx/financials/2026-08-23/run_a/600563.SH.csv", FIN_A)

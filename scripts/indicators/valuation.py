@@ -77,15 +77,20 @@ class ShareEventView:
 
 # ---------------------------------------------------------------- TTM（纯函数，golden tests 锁定）
 
-def visible_reports(reports: list[ReportView], as_of: datetime) -> list[ReportView]:
-    """点时过滤：available_at <= as_of；同一报告期只保留最新 revision。"""
-    vis = [r for r in reports if _parse_ts(r.available_at) <= as_of]
+def _latest_revisions(reports: list[ReportView]) -> list[ReportView]:
+    """同一报告期只保留最新 revision（不做时点过滤）。"""
     latest: dict[tuple, ReportView] = {}
-    for r in vis:
+    for r in reports:
         key = (r.period_end, r.period_type, r.is_cumulative)
         if key not in latest or r.revision > latest[key].revision:
             latest[key] = r
     return sorted(latest.values(), key=lambda r: r.period_end)
+
+
+def visible_reports(reports: list[ReportView], as_of: datetime) -> list[ReportView]:
+    """点时过滤：available_at <= as_of；同一报告期只保留最新 revision。"""
+    vis = [r for r in reports if _parse_ts(r.available_at) <= as_of]
+    return _latest_revisions(vis)
 
 
 def ttm_net_profit(reports: list[ReportView]) -> tuple[Decimal | None, str]:
@@ -252,8 +257,9 @@ def compute_pe_series(
     """逐日 PE(TTM)。返回 {trade_date: (pe_ttm|None, pe_status)}。
 
     as_of = 该市场当地日期 23:59:59（转 UTC）。
-    assume_visible：财报 available_at 为入库时间降级时照常使用全部报告
-    （D1.3 记录的已知降级），pe_status 追加 ";degraded_available_at" 标注。
+    assume_visible：财报 available_at 为入库时间降级时照常使用报告
+    （D1.3 记录的已知降级），但同一报告期仍只取最新 revision（旧 revision
+    的占位/NULL 行不参与 TTM），pe_status 追加 ";degraded_available_at" 标注。
     股本按快照豁免混合口径选择（_select_share_event）：所选股本来自
     snapshot_* 单点快照时 pe_status 追加 ";snapshot_share_basis" 标注。
     """
@@ -265,7 +271,7 @@ def compute_pe_series(
     for d in dates:
         as_of = datetime.combine(date.fromisoformat(d), datetime.max.time(), tzinfo=tz)
         as_of_utc = as_of.astimezone(timezone.utc)
-        vis = reports if assume_visible else visible_reports(reports, as_of_utc)
+        vis = _latest_revisions(reports) if assume_visible else visible_reports(reports, as_of_utc)
         ttm, reason = ttm_net_profit(vis)
         share_ev = _select_share_event(share_events, d, as_of_utc)
         shares = share_ev.shares if share_ev is not None else None

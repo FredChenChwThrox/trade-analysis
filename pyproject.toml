@@ -13,3 +13,10 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
 ]
+
+# 可选：akshare 采集器（scripts/collect/akshare_collect.py）
+# 体积大（数十 MB），不进主依赖；需要时 uv sync --extra akshare 或 uv pip install akshare
+[project.optional-dependencies]
+akshare = [
+    "akshare>=1.14.0",
+]

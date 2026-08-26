@@ -138,16 +138,27 @@ def recompute_indicators(
 ) -> ComputeResult:
     """全量重算该股日线/周线指标（调用方负责事务/提交）。
 
-    assume_visible_reports：None（默认）= 自动判定——该股任一财报
-    published_at 为 NULL（available_at 仍是入库时间降级，D1.3）时回退
+    assume_visible_reports：None（默认）= 自动判定——该股任一**最新 revision**
+    财报 published_at 为 NULL（available_at 仍是入库时间降级，D1.3）时回退
     assume_visible 并在 pe_status 标注 ";degraded_available_at"；全部财报
-    回填真实披露日后（pit_backfill）严格按 available_at <= as_of 点时过滤，
-    标注消失（§2.1）。
+    回填真实披露日后（pit_backfill 或 adapter 披露日补齐）严格按
+    available_at <= as_of 点时过滤，标注消失（§2.1）。
     """
     if assume_visible_reports is None:
+        # 只看每期最新 revision：被更高 revision 取代的旧行（D1.3 降级入库的
+        # NULL published_at 行）不再影响口径，不应把该股永久钉在降级模式
         assume_visible_reports = bool(conn.execute(
-            "SELECT 1 FROM financial_reports "
-            "WHERE symbol = ? AND published_at IS NULL LIMIT 1",
+            """
+            SELECT 1 FROM financial_reports r
+            WHERE r.symbol = ? AND r.published_at IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM financial_reports r2
+                  WHERE r2.symbol = r.symbol AND r2.period_end = r.period_end
+                    AND r2.period_type = r.period_type
+                    AND r2.is_cumulative = r.is_cumulative
+                    AND r2.revision > r.revision)
+            LIMIT 1
+            """,
             (symbol,),
         ).fetchone())
     started_at = utc_now()

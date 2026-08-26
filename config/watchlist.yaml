@@ -94,3 +94,33 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
+  - symbol: 601168.SH
+    market: CN
+    name: 西部矿业
+    aliases: [西部矿业, 西矿, Western Mining]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  # 2026-08-23 加入：新入池个股（待采集 3 年日线 + adjust/weekly/compute/weekly_signals）
+  - symbol: 600563.SH
+    market: CN
+    name: 法拉电子
+    aliases: [法拉电子, 法拉, Faratronic]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 600309.SH
+    market: CN
+    name: 万华化学
+    aliases: [万华化学, 万华, Wanhua]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  # 2026-08-24 加入（待采集 3 年日线 + adjust/weekly/compute/weekly_signals）
+  - symbol: 000001.SZ
+    market: CN
+    name: 平安银行
+    aliases: [平安银行, Ping An Bank]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai

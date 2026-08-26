@@ -97,7 +97,9 @@ def test_list_stocks_filter_data_quality_pe_status(ui_conn):
     assert [it["symbol"] for it in data["items"]] == ["0700.HK"]
     # 虚拟码：ok / degraded / missing
     ok = queries.list_stocks(ui_conn, {"pe_status": ["ok"]})
-    assert {it["symbol"] for it in ok["items"]} == {"603605.SH", "002747.SZ"}
+    # 000001.SZ（2026-08-24 入 watchlist）pe_status='ok;snapshot_share_basis;degraded_available_at'
+    # 也含 'ok' 子串，集合包含历史 fixture 项
+    assert {"603605.SH", "002747.SZ"}.issubset({it["symbol"] for it in ok["items"]})
     missing = queries.list_stocks(ui_conn, {"pe_status": ["missing"]})
     assert [it["symbol"] for it in missing["items"]] == ["0700.HK"]
     degraded = queries.list_stocks(ui_conn, {"pe_status": ["degraded"]})
@@ -116,8 +118,9 @@ def test_list_stocks_sort_and_pagination(ui_conn):
     assert data["items"][0]["symbol"] == "0700.HK"  # close 314 > 79
     asc = queries.list_stocks(ui_conn, {}, page=1, page_size=2, sort="pe_ttm", order="asc")
     # 多只 yaml 股（fixture 无 bars/pe）与 0700.HK pe 均为 NULL，
-    # 升序时 NULL 排前，并列按 symbol 字典序，最小者为 002299.SZ
-    assert asc["items"][0]["symbol"] == "002299.SZ"
+    # 升序时 NULL 排前，并列按 symbol 字典序。2026-08-24 加 watchlist 后
+    # 000001.SZ < 002299.SZ 字典序：000001 首
+    assert asc["items"][0]["symbol"] == "000001.SZ"
     assert asc["items"][0]["pe_ttm"] is None
 
 
@@ -395,8 +398,10 @@ def test_get_benchmark_bars(ui_conn):
 
 
 def test_search_stocks(ui_conn):
+    # 2026-08-24 入 watchlist 后 000001.SZ（平安银行）匹配"平安"，按 symbol 字典序排 601318.SH 前
     items = queries.search_stocks(ui_conn, "平安")
-    assert items and items[0]["symbol"] == "601318.SH"
+    assert items and items[0]["symbol"] == "000001.SZ"
+    assert any(it["symbol"] == "601318.SH" for it in items)
 
 
 def test_get_stock_overview_fundamentals(ui_conn):
