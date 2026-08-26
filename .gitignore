@@ -17,3 +17,6 @@ data/market.db.bak_*
 data/backups/
 # 采集落盘原始 CSV（按 §2.2 不可变，但不入 git——大且可由 MCP 重建）
 data/raw/
+# 生成产物（可由 daily pipeline + 排期卡 skill 重生成；不入 git）
+reports/
+cards/
