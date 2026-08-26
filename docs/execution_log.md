@@ -907,3 +907,17 @@
 
 - `config/watchlist.yaml` 末尾新增 603993.SH 洛阳钼业（market CN，aliases [洛阳钼业, 洛钼, CMOC]，benchmark 000300.SH）→ `db seed` 导入 watchlist 全池 18 只。
 - **待办**：3 年历史采集（日线/财报/公告）+ adjust/weekly/compute/weekly_signals 初始化（与 600563/600309/000001 待采集同列）；采集前 daily 对该股输出 incomplete 属设计预期。洛阳钼业主营铜/钴/铌/磷，副产钼，跨基本金属与新能源金属两大主题（铜价、钴价、汇率、地缘等均可能成为消息面映射主题，待 §3.6 行业映射落地后入 themes_json）。
+
+## 2026-08-26（洛阳钼业 603993.SH 3 年初始化采集与管线齐备）
+
+- **采集**：`akshare_collect --symbols 603993.SH --sources price,forward,financials --start 2023-08-27 --end 2026-08-26 --run-id run_lyc`（东财 push2his 域名本次直连与代理均不可达，按 execution_log 08-26 已知降级改 `--price-api sina`）。落盘 70 文件 → `data/raw/akshare/{price,forward,financials}/2026-08-26/run_lyc/`：price 1（726 行 OHLCV + amount，2023-08-28~2026-08-26）、forward 1（同期 qfq 726 行，5 平台段切换日未交叉印证）、financials 66 期（2007-12-31~2026-06-30，published_at 来自 NOTICE_DATE §2.1，下一开市日生效）。
+- **入库**：`uv run python -m scripts.pipeline.ingest data/raw/akshare/{price,financials}/2026-08-26/run_lyc` → **inserted=792 skipped=1 errors=0**（forward CSV 被 `*_forward*` 约定跳过不污染 daily_bars，专供 adjust）。
+- **adjust**：`scripts.pipeline.adjust 603993.SH --forward-csv .../603993.SH_forward.csv` → 4 平台段（2023-08-28~2024-07-05 / 2024-07-08~2025-06-26 / 2025-06-27~2026-05-26 / 2026-05-27~2026-08-26），factor 由 ~0.94 漂移到 1.0；同事务重建 weekly_bars 153 周（最新完成周 2026-08-21，进行时周 2026-08-28 跳过）。`corporate_actions` 仍空（与 600563/600309/000001 已知缺口一致：akshare 不采集）。
+- **指标 + 信号**：`indicators.compute` → indicators_daily 726 / indicators_weekly 153；pe_ttm 0/726 非空（**no_share_capital**：akshare 利润表无 shares_issued_end，share_capital_events 表空；属于设计预期降级，待 tdx/yahoo 补股本快照后转正）。`weekly_signals` 跑通，当前 anchor episode=2025-04-11 起，活跃 5 项（panic 8 / dry_up 1 / no_new_low 10 / divergence 8 / duration 28 行 per type，与 §5.3 一致）。`daily_watch` / `right_side` 写 `incomplete(no_active_card)`（无卡预期），`accumulation` 0 历史转换（当前 idle，condition_not_met）。
+- **报告**：`scripts.pipeline.report --date 2026-08-26 --symbol 603993.SH` → `reports/603993.SH/2026-08-26.md`（degraded P5 revision=1，全池日报同步更新）。当日不复权收 19.59，ma20/60/120/250 略低于现价（具体见报告"指标快照"段）。
+- **测试**：本次仅采集+管线初始化，未改代码，`uv run pytest -q` **389 全绿**（无变更）。
+- **遗留**：
+  - 1. share_capital_events 空 → pe_ttm 0/726 非空，影响估值/排期卡 draft 生成；与 600563/600309/000001 同期待 tdx_quotes hasCwInfo=1 补 group_total 快照，或 yahoo get_stock_info 补 issued 快照。任一即可转正。
+  - 2. corporate_actions 空 → 平台段切换日未交叉印证，复权因子已重建但缺事件流；后续需 akshare 分红接口或 tdx/wenda 公告采集补齐。
+  - 3. 公告（events）未采，本期跳过去重逻辑未触发；待 D3 消息评价落地或按需补 wenda_notice_query。
+  - 4. 排期卡 draft 待人工激活流程（无卡 → degraded P5 持续，本周内可走 `pipeline.card_inputs` + fred-valuation-card-skill）。
