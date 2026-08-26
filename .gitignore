@@ -13,3 +13,7 @@ __pycache__/
 
 # 派生数据库（可由 data/raw 重跑管线重建；raw 源数据入库管理）
 data/market.db
+data/market.db.bak_*
+data/backups/
+# 采集落盘原始 CSV（按 §2.2 不可变，但不入 git——大且可由 MCP 重建）
+data/raw/
