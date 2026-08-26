@@ -247,3 +247,15 @@ def parse_telegraph_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str
             )
         result.inserted += 1
     return result
+
+
+def parse_announcement_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,
+                           result: IngestResult) -> IngestResult:
+    """akshare cninfo 公告 CSV → events + event_symbols。
+
+    列与 tdx wenda_notice_query 一致（title, time, url, source, summary, code,
+    setcode, name），复用 tdx 已验证解析，但 events.source 标 'akshare' 以保证
+    dedup event_id 与不同源采集时隔离。
+    """
+    from scripts.adapters.tdx import parse_announcement_csv as _tdx_parse
+    return _tdx_parse(conn, path, raw_object_id, result, source=SOURCE)

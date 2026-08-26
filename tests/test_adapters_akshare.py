@@ -226,3 +226,38 @@ def test_parse_telegraph_csv_empty_title_row_skipped(conn, tmp_path):
     links = conn.execute(
         "SELECT symbol FROM event_symbols WHERE event_id=?", (ev[0]["event_id"],)).fetchall()
     assert ("603288.SH",) in {tuple(x) for x in links}  # 名称 + 代码 双匹配
+
+
+# ---------------------------------------------------------------- announcement（2026-08-26 起）
+
+def test_parse_announcement_csv_source_akshare(conn, tmp_path):
+    """akshare cninfo 公告 CSV 复用 tdx 解析，但 events.source 标 'akshare'。"""
+    path = tmp_path / "603993.SH.csv"
+    _write_csv(path, ["title", "time", "url", "source", "summary",
+                      "code", "setcode", "name"], [
+        ["洛阳钼业 2026 年第一次临时股东会决议公告",
+         "2026-08-20 16:00:00",
+         "http://www.cninfo.com.cn/new/disclosure/detail?xxx",
+         "巨潮资讯", "公司公告", "603993", "1", "洛阳钼业"],
+        ["洛阳钼业 2026 年半年度报告",
+         "2026-08-19 16:00:00",
+         "http://www.cninfo.com.cn/new/disclosure/detail?yyy",
+         "巨潮资讯", "公司公告", "603993", "1", "洛阳钼业"],
+    ])
+    r = ingest_file(conn, path, source="akshare", data_type="announcement",
+                    symbol="603993.SH", parse=ak_adapter.parse_announcement_csv)
+    assert r.status == "ok"
+    assert r.inserted == 2
+    ev = conn.execute(
+        "SELECT e.source, e.title FROM events e "
+        "JOIN event_symbols es ON e.event_id=es.event_id "
+        "WHERE es.symbol='603993.SH' ORDER BY e.published_at"
+    ).fetchall()
+    assert len(ev) == 2
+    # 关键：source 必须是 akshare 而非 tdx（dedup event_id 命名空间隔离）
+    assert all(row["source"] == "akshare" for row in ev)
+    # 幂等：重跑应跳过
+    r2 = ingest_file(conn, path, source="akshare", data_type="announcement",
+                     symbol="603993.SH", parse=ak_adapter.parse_announcement_csv)
+    assert r2.inserted == 0
+    assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 2
