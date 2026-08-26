@@ -124,3 +124,11 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
+  # 2026-08-26 加入（待采集 3 年日线 + adjust/weekly/compute/weekly_signals）
+  - symbol: 603993.SH
+    market: CN
+    name: 洛阳钼业
+    aliases: [洛阳钼业, 洛钼, CMOC]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
