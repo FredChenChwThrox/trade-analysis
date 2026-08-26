@@ -314,7 +314,7 @@ def _next_open_available_at(calendar: dict, pub_date: str, market: str) -> str:
 
 
 def parse_announcement_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,
-                           result: IngestResult, source: str = SOURCE) -> IngestResult:
+                           result: IngestResult) -> IngestResult:
     """tdx wenda_notice_query 公告 CSV → events + event_symbols。
 
     列：title, time, url, source, summary, code, setcode, name
@@ -322,8 +322,6 @@ def parse_announcement_csv(conn: sqlite3.Connection, path: Path, raw_object_id: 
     去重：通达信公告无 uuid，按 title|pub_date 哈希（§3.6）。
     symbol 关联：优先 CSV 中 code+setcode 推断，回退文件名 stem（含 ticker）。
     available_at：发布日 + 1 开市交易日 00:00 本地（§2.1）。
-    source：events.source 字段；默认 SOURCE='tdx'。akshare 复用本函数时传 'akshare'
-    以保证 dedup event_id 与不同源采集时隔离。
     """
     with open(path, newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
@@ -372,7 +370,7 @@ def parse_announcement_csv(conn: sqlite3.Connection, path: Path, raw_object_id: 
         # 去重：title|pub_date 哈希（通达信无 uuid）
         dedup_key = f"{title}|{pub_date}"
         event_id = "evt_" + hashlib.sha256(
-            f"{source}|{dedup_key}".encode()).hexdigest()[:16]
+            f"{SOURCE}|{dedup_key}".encode()).hexdigest()[:16]
 
         if conn.execute("SELECT 1 FROM events WHERE event_id = ?",
                         (event_id,)).fetchone():
@@ -392,7 +390,7 @@ def parse_announcement_csv(conn: sqlite3.Connection, path: Path, raw_object_id: 
             VALUES (?, 'announcement', NULL, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
             """,
             (event_id, published_at, str(tz), available_at, title, summary, url,
-             source, hashlib.sha256(dedup_key.encode()).hexdigest(),
+             SOURCE, hashlib.sha256(dedup_key.encode()).hexdigest(),
              raw_object_id, now),
         )
         conn.execute(

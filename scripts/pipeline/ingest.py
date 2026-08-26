@@ -47,7 +47,6 @@ _ROUTES = {
     ("akshare", "financials"): ak.parse_financials_csv,
     ("akshare", "index"): ak.parse_index_csv,
     ("akshare", "telegraph"): ak.parse_telegraph_csv,
-    ("akshare", "announcement"): ak.parse_announcement_csv,  # 2026-08-26 起：akshare cninfo 公告，列约定与 tdx 一致
 }
 
 
