@@ -512,3 +512,60 @@ def test_pipeline_signals_and_report_idempotent(conn, tmp_path):
     # PIPE.SH 现价 104 进 T1 → 单股报告含档位触发决策点
     md = (Path(reports) / "PIPE.SH" / f"{RUN_DATE}.md").read_text(encoding="utf-8")
     assert "[档位触发 T1]" in md
+
+
+def test_message_section_llm_render(conn, tmp_path):
+    """r2 Phase 3：### 消息面子节——ok+叙事展示；needs_review/否决不冒充展示；
+    价格位置行（确定性 join）。"""
+    def add_msg_event(event_id, title, status, narrative=None):
+        conn.execute(
+            "INSERT INTO events (event_id, event_type, published_at, published_tz,"
+            " available_at, title, summary, source, content_hash, ingested_at,"
+            " source_tier) VALUES (?, 'news', '2026-08-06T02:00:00+00:00',"
+            " 'Asia/Shanghai', '2026-08-06T02:00:00+00:00', ?, NULL, 'akshare',"
+            " ?, ?, 4)", (event_id, title, event_id, db.utc_now()))
+        conn.execute(
+            "INSERT INTO event_symbols (event_id, symbol) VALUES (?, 'TRIG.SH')",
+            (event_id,))
+        conn.execute(
+            "INSERT INTO event_assessments (event_id, symbol, assessment_version,"
+            " model, prompt_version, assessed_at, event_type, direction,"
+            " materiality, confidence, rationale, status, run_id)"
+            " VALUES (?, '__event__', 'llm_v1', 'fake', 'llm_v1', ?, 'news',"
+            " 'negative', 'medium', 0.7, 'r', ?, 'r')", (event_id, db.utc_now(),
+                                                         status))
+        if narrative:
+            conn.execute(
+                "INSERT INTO event_assessments (event_id, symbol,"
+                " assessment_version, model, prompt_version, assessed_at, status,"
+                " narrative, run_id) VALUES (?, 'TRIG.SH', 'llm_v1', 'fake',"
+                " 'llm_v1', ?, ?, ?, 'r')", (event_id, db.utc_now(), status,
+                                             narrative))
+
+    add_msg_event("evt_show", "铜价大跌事件", "ok", "铜价走弱压制利润")
+    add_msg_event("evt_nr", "未过审事件", "needs_review")
+    conn.commit()
+    res = _run(conn, tmp_path)
+    by_symbol = {s.symbol: s for s in res.symbols}
+    p = Path(by_symbol["TRIG.SH"].file_path)
+    md = p.read_text(encoding="utf-8")
+
+    assert "### 消息面（LLM 初判 + 人审后）" in md
+    assert "铜价大跌事件" in md and "铜价走弱压制利润" in md
+    assert "direction=negative" in md
+    assert "未过审事件" not in md                      # needs_review 不进段
+    assert "价格位置: " in md and "活跃衰竭信号" in md
+    assert by_symbol["TRIG.SH"].snapshot["message_shown"] == 1
+
+    # 人工否决后重跑：不再展示（不冒充）
+    conn.execute(
+        "INSERT INTO event_human_review (event_id, symbol, action, actor,"
+        " reviewed_at) VALUES ('evt_show', '__event__', 'dismiss', 'tester', ?)",
+        (db.utc_now(),))
+    conn.commit()
+    res2 = _run(conn, tmp_path)
+    by2 = {s.symbol: s for s in res2.symbols}
+    p2 = Path(by2["TRIG.SH"].file_path)
+    md2 = p2.read_text(encoding="utf-8")
+    assert "铜价大跌事件" not in md2
+    assert "今日无纳入消息面的事件" in md2

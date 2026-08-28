@@ -42,6 +42,7 @@ from scripts.pipeline.db import DEFAULT_DB_PATH, ROOT, connect, utc_now
 from scripts.signals import cards as card_mod
 from scripts.signals import corporate_action as ca_mod
 from scripts.signals import calendar_due  # r2 Phase 1：日历到期提醒（单股过滤见 relevant_to_symbol）
+from scripts.signals import event_link  # r2 Phase 3：消息面 effective 解析
 from scripts.signals.common import RULE_VERSION as SIGNALS_RULE_VERSION
 from scripts.signals.common import WEEKLY_SIGNALS, load_params
 
@@ -516,7 +517,55 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
     else:
         a("- 今日无新增公告。")
     a("")
-
+    a("### 消息面（LLM 初判 + 人审后）")
+    a("")
+    # r2 Phase 3：触发条件 = effective ok（未撤销 dismiss）+ narrative 非空 +
+    # available_at ≤ as_of；needs_review 不进段；显示值经人审 amend/upgrade 覆盖。
+    msg_events = conn.execute(
+        """
+        SELECT e.event_id, e.title, e.available_at
+        FROM events e
+        JOIN event_symbols es ON es.event_id = e.event_id
+        JOIN event_assessments a ON a.event_id = e.event_id
+             AND a.symbol = '__event__' AND a.assessment_version = 'llm_v1'
+        WHERE es.symbol = ? AND substr(e.available_at, 1, 10) <= ?
+          AND EXISTS (SELECT 1 FROM event_assessments na
+                      WHERE na.event_id = e.event_id AND na.symbol = es.symbol
+                        AND na.assessment_version = 'llm_v1' AND na.narrative IS NOT NULL)
+        ORDER BY e.available_at DESC LIMIT 20
+        """, (symbol, trade_date)).fetchall()
+    shown = 0
+    for r in msg_events:
+        eff = event_link.resolve_effective(conn, r["event_id"])
+        view = eff["symbols"].get(symbol, {})
+        if view.get("hidden") or view.get("status") != "ok":
+            continue
+        shown += 1
+        a(f"- [{r['available_at'][:10]}] {r['title']}")
+        a(f"  标签: direction={view['direction']}，materiality={view['materiality']}，"
+          f"confidence={_f(view['confidence']) if view['confidence'] is not None else '—'}，"
+          f"target={view['target'] or '—'}，half_life={view['half_life'] or '—'}，"
+          f"action_hint={view['action_hint'] or '—'}（LLM 初判，人工复核后）")
+        a(f"  预期差: {view['expectation_gap'] or '待人工补写'}")
+        a(f"  叙事: {view['narrative']}")
+        if view.get("falsification"):
+            a(f"  证伪条件: {view['falsification']}")
+    if shown == 0:
+        a("- 今日无纳入消息面的事件（未评价/未过审/已否决的不冒充展示）")
+    # r2 §8.2 价格位置：确定性 join（LLM 不参与）
+    prox_tiers = (prox or {}).get("details", {}).get("tiers") or []
+    nearest = min((abs(t.get("distance_to_nearest_boundary_pct"))
+                   for t in prox_tiers
+                   if t.get("distance_to_nearest_boundary_pct") is not None),
+                  default=None)
+    active_ex = sorted(s for s, f_ in weekly_facts.items()
+                       if f_ and f_["observed_on"] == week_end
+                       and f_["state"] == "active") if week_end else []
+    a(f"- 价格位置: 距最近档边界 "
+      f"{_f(nearest) + '%' if nearest is not None else '—（无 active 卡或无临近度数据）'}"
+      f"；活跃衰竭信号 {len(active_ex)} 项"
+      f"（确定性 join：signal_facts tier_proximity / weekly，LLM 不参与）")
+    a("")
     # ---- 6. 衰竭信号（⚠️ §5.2 锚点明细必须带出）
     a("## 6. 衰竭信号")
     a("")
@@ -662,8 +711,9 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
         "decision_points": [d[:120] for d in dp],
         "facts_states": {k: (v["state"] if v else None) for k, v in
                          {**facts, **weekly_facts}.items()},
-        # r2 Phase 1：本股相关（含宏观项 + 本股卡片复核）日历到期计数
+        # r2 Phase 1/3：本股日历到期计数 + 消息面展示条数
         "calendar_due": len(cal_here),
+        "message_shown": shown,
         "indicators_config_hash": indicators_config_hash,
     }
     return rep

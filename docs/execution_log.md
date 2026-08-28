@@ -1213,3 +1213,17 @@
 - **测试 463 项全绿**（456→463，净增 7）：新 test_macro_factors.py 3 项 + test_flow_events.py 4 项；test_db 迁移清单断言加 0004。
 - **纪律确认**：flow 事件**不进报告、不进日报、不推送**（r2 §8.4）——本期 report.py/日报零改动；公告/电报的 scope 分类仍留 Phase 3（flow 是唯一本期填充的 scope 值）。
 - **偏差/决定**：①龙虎榜/大宗 source_tier 定 3（聚合加工视图）而非交易所原文 tier 1——净买额/折溢价为计算值，与 r2 §4 flow 3~5 对齐；②宏观因子不设 index_proxy 因子（基准指数已有 index_bars 通道），schema 预留；③两融/热度榜缓办理由如上。
+
+## 2026-08-28（续⑬：消息面 r2 Phase 3——LLM 评价链 + 人审 UI）
+
+- **migration 0005**：①`symbol_industry` 新表（全市场行业归属，季度刷新）；②`event_assessments` 重建——assessment_version 改 TEXT NOT NULL（修 0002 遗留）+ 扩 target/half_life/expectation_gap/action_hint/falsification/narrative 研判字段，历史 event_study_v1 行 11877 条全量平移无损；③`event_human_review` 新表（confirm/dismiss/upgrade_materiality/note/amend，PK 含 reviewed_at 多次留痕，不改写原始行）。真实库迁移前再备份 `data/market.db.bak_20260828_2`。
+- **LLM 模块**（`scripts/llm/`）：client.py（openai-compatible /chat/completions，指数退避重试，严格 JSON 解析剥围栏，api_key 走环境变量不入库）；prompts.py（系统铁律：不产数字/不预测/不建议买卖/只输出 JSON；四道筛子字段口径）；schema.py（事件级/叙事 JSON Schema，非法丢弃不冒充）；eval.py（6b1→6c→6b2 编排 + gate）。**config/llm.yaml 默认 enabled=false**——关闭态 daily 记 success+notes（设计关闭非 degraded），api key 配置后即启用。
+- **gate（r2 §6.3）**：materiality∈{high,critical} ∨ confidence<0.4 ∨ rationale 命中禁用词 ∨ (scope=company ∧ tier≤2) → needs_review；needs_review 不进报告段。
+- **关联层**（`scripts/signals/event_link.py`，L2 确定性）：scope 关键词初分（**macro 词表先于 policy**——"央行降准"归 macro，r2 §5.2 例）；关联候选 ①手工/既有保留（INSERT OR IGNORE）②symbol_industry 行业名命中 ③watchlist themes 词边界（后向排除"周/节"复合词——"黄金周"不误配"黄金"；前向不设挡；precision 局限由 LLM+人工补）。resolve_effective 人审 replay：dismiss 可被 confirm 撤销、amend 覆盖显示值、upgrade 覆盖 materiality，事件级先应用逐股后应用。
+- **symbol_industry 采集**：新 `scripts/collect/industry_collect.py` 走 **push2delay 域**（push2 风控规避），全市场 496 板块成份反查 5641 只（每股最细三级，与 watchlist 回填同口径），ingest 路由 ("akshare","industry")；与 watchlist 23 只交叉核对 0 不一致。
+- **daily 集成**：步骤 6b 池级（照 event_study 模式：`with conn` 池级事务、异常记 degraded 不阻断报告）。**真实跑验证**：llm_eval 阶段 status='disabled'、notes 如实（设计关闭），event_study success，报告照常生成。
+- **报告**：`### 消息面（LLM 初判 + 人审后）` 子节——触发条件 effective ok + narrative 非空 + available_at ≤ as_of；needs_review/否决不冒充展示；预期差待人工补写显式标注；**价格位置行**（距最近档边界 + 活跃衰竭信号数，确定性 join）；snapshot 加 message_shown。
+- **UI**：/message-review 人审页（服务端渲染表格：状态/四道筛子标签/rationale/关联股 + 每行表单：确认/否决/留痕/升级 materiality/补写预期差-证伪-target-half_life，actor 落库）；POST /message-review/<id>/action 写 event_human_review（未知 action 400）；导航新增"消息审"。
+- **测试 474 项全绿**（463→474，净增 11）：test_event_link.py 4 + test_llm_eval.py 4（FakeLLM 全链/gate/disabled/schema）+ UI 2 + 报告段 1（dismiss 前后对比）。
+- **过程坑**：连续快速重写同尺寸文件导致 `.pyc` mtime+size 碰撞复用过期字节码——出现"改了没生效"的灵异现象，清 `__pycache__` 解决（pytest 用户遇怪异结果先清缓存）。
+- **遗留（Phase 4 / 运维）**：①`config/llm.yaml` 需人工填 api key 并 enabled:true 后，LLM 链才真实产出（模型 glm-4-flash 可换）；②message_judgments 判断闭环属 Phase 4；③主题词边界 precision 局限由 LLM+人工补（r2 §3.6 二期）。

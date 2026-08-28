@@ -376,6 +376,36 @@ def _register_routes(app: Flask) -> None:
     def page_runs():
         return render_template("runs.html", cfg=app.config["UI_CONFIG"], active="runs")
 
+    # ---------------------------------------------------------------- 消息面人审（r2 Phase 3）
+    @app.get("/message-review")
+    def page_message_review():
+        rows = queries.list_message_review(get_db())
+        return render_template("message_review.html", cfg=app.config["UI_CONFIG"],
+                               active="message_review", rows=rows)
+
+    @app.post("/message-review/<event_id>/action")
+    def message_review_action(event_id: str):
+        """人审动作落 event_human_review（不改写原始 LLM 行，r2 §3.3）。"""
+        import json
+        from scripts.pipeline.db import utc_now
+
+        action = request.form.get("action") or ""
+        if action not in ("confirm", "dismiss", "upgrade_materiality", "note", "amend"):
+            return jsonify({"error": "unknown action", "code": 400}), 400
+        symbol = request.form.get("symbol") or "__event__"
+        payload = {k: request.form.get(k) for k in
+                   ("materiality", "note", "expectation_gap", "falsification",
+                    "target", "half_life") if request.form.get(k)}
+        conn = get_db()
+        with conn:
+            conn.execute(
+                "INSERT INTO event_human_review (event_id, symbol, action, "
+                "payload_json, actor, reviewed_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (event_id, symbol, action,
+                 json.dumps(payload, ensure_ascii=False) if payload else None,
+                 request.form.get("actor") or "manual", utc_now()))
+        return redirect("/message-review")
+
 
 def _resolve_default_db() -> str:
     return os.environ.get("TRADE_DB_PATH") or str(DEFAULT_DB_PATH)

@@ -155,7 +155,7 @@ UNIQUE(symbol, ex_date, action_type)。字段：ex_date（除权除息生效日�
 
 只存事实字段，不混 LLM 评价（§3.6）。event_id PK；event_type（announcement/news）；三时点（§2.1）：event_at（实际发生，可空）、published_at + published_tz（来源发布）、available_at（系统允许参与计算的最早时间）；title/summary/canonical_url；去重：source_external_id 优先，content_hash 其次。索引 published_at、(source, source_external_id)。
 **0003 扩列（r2 Phase 1，2026-08-28）**：`scope`（macro/policy/industry/company/flow）；`source_tier` 信源分级（r2 §2.1：公告/交易所原文=1——tdx 与 akshare 公告共用 `adapters/announcements.py` 引擎写入；财联社电报=4；**NULL=未分级**，tianyancha/stock_finance_data 等历史公告路径与 0003 之前入库的行保持 NULL，不做回填推断）。
-**0004 起 scope 填充（r2 Phase 2，2026-08-28）**：flow 层事件（龙虎榜/大宗，event_type='flow'，经 `adapters/flow_events.py` 入库）写 `scope='flow'`、`source_tier=3`（交易所公开数据的东财聚合加工视图，对齐 r2 §4 flow 3~5 区间）——**静默入库，不推送不进日报**（r2 §8.4）；公告/电报的 scope 分类仍留 Phase 3。
+**0004 起 scope 填充（r2 Phase 2/3，2026-08-28）**：flow 层事件（龙虎榜/大宗，event_type='flow'，经 `adapters/flow_events.py` 入库）写 `scope='flow'`、`source_tier=3`——**静默入库，不推送不进日报**（r2 §8.4）。Phase 3 起 `scripts/signals/event_link.py` 对公告/电报做关键词初分（announcement→company；宏观词→macro；部委词→policy；留空由 LLM 6b1 复核修正并回写 scope）。
 
 ### event_symbols — 事件-股票关联 [事实]
 
@@ -167,7 +167,15 @@ L0 日历层：财报披露预约、解禁日程、宏观/议息种子。cal_id 
 
 ### event_assessments — LLM 消息评价 [决策]
 
-(event_id, symbol, assessment_version) 版本化，不覆盖（§5.5；0002 迁移起主键含 symbol，多 symbol 事件逐股独立落库）。字段：symbol（该股事件研究结果归属）、model、prompt_version、assessed_at、direction（positive/negative/neutral）、materiality、confidence、rationale、status（ok/needs_review/degraded）、event_study_json（T+1/T+5 事件研究）。**LLM 评价（D3）仍未接入**；2026-08-14 起由 `scripts/signals/event_study.py` 写入确定性事件研究行（assessment_version='event_study_v1'、model='deterministic'，direction/materiality/confidence/rationale 置 NULL 不冒充评价，status 取值 ok/suspended/degraded，event_study_json 含 base/t1/t5 明细与 pending/suspended 标记）。注意：assessment_version 列声明 INTEGER 亲和而 event_study 写入 TEXT 'event_study_v1'（SQLite 亲和容忍，已知不严谨，未修）。
+(event_id, symbol, assessment_version) 版本化，不覆盖（§5.5；0002 迁移起主键含 symbol，多 symbol 事件逐股独立落库）。**0005 重建（r2 Phase 3，2026-08-28）**：assessment_version 改 TEXT NOT NULL（修 0002 INTEGER 亲和遗留）；扩研判字段 target（eps/pe/sentiment）、half_life（day/week/month/quarter）、expectation_gap（LLM 可空人补）、action_hint（none/swing/schedule/redraw_anchor 仅提示）、falsification（人定稿/LLM 建议稿）、narrative（逐股叙事 ≤150 字，仅 symbol 行）；历史 event_study_v1 行全量平移（11877 行无损）。写入方：①`scripts/signals/event_study.py`（event_study_v1，确定性）；②`scripts/llm/eval.py`（llm_v1：__event__ 事件级行 direction/materiality/confidence/rationale/target/half_life/expectation_gap/action_hint/falsification/status + 逐股 narrative 行），gate 按 r2 §6.3（materiality high/critical、confidence<0.4、rationale 禁用词、company+tier≤2 → needs_review）。
+
+### event_human_review — 人工复核 [决策]（0005，r2 §3.3）
+
+PK (event_id, symbol, reviewed_at)，多次操作留痕，**不改写原始 LLM 行**。action：confirm（确认→ok，可撤销 dismiss）/ dismiss（否决→隐藏）/ upgrade_materiality（payload.materiality 覆盖显示）/ note（留痕）/ amend（payload 覆盖 expectation_gap/falsification/target/half_life 显示值）。actor 为人工标识。effective_status 解析在 `scripts/signals/event_link.py::resolve_effective`（事件级先应用、逐股后应用）；UI：/message-review。
+
+### symbol_industry — 全市场行业归属 [事实]（0005，r2 §3.3）
+
+PK (symbol, source, classification_date)：东财细分行业 BK 码（与 watchlist.industry_code 同口径——每股最细三级板块）。采集 `scripts/collect/industry_collect.py`（push2delay 域，**季度刷新、不进 daily**），ingest 路由 ("akshare","industry")。消费：关联层 ②（事件文本命中行业名 → 该行业 watchlist 股，r2 §5.3）。2026-08-28 首采 5641 只。
 
 ### macro_factors — 宏观因子快照 [事实]（0004，r2 §3.2）
 

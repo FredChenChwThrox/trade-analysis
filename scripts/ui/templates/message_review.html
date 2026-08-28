@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}消息面人审 - 股票监测系统{% endblock %}
+{% block content %}
+<div class="card overflow-x-auto text-sm">
+  <table class="data-table">
+    <thead><tr>
+      <th>事件</th><th>scope/tier</th><th>状态</th><th>标签（四道筛子）</th>
+      <th>rationale</th><th>预期差</th><th>证伪建议</th><th>关联股</th><th>人工复核</th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+    <tr class="{{ 'opacity-50' if r.hidden }}">
+      <td class="align-top max-w-xs">
+        <div class="font-medium">{{ r.title }}</div>
+        <div class="text-xs text-gray-500">{{ r.published_at[:10] }} · {{ r.event_id }}</div>
+        <div class="text-xs text-gray-500 mt-1">{{ r.summary or '' }}</div>
+      </td>
+      <td class="align-top text-xs">{{ r.scope or '—' }} / T{{ r.source_tier if r.source_tier is not none else '—' }}</td>
+      <td class="align-top text-xs whitespace-nowrap">
+        {% if r.hidden %}<span class="text-red-600 font-semibold">已否决</span>
+        {% elif r.status == 'needs_review' %}<span class="text-amber-600 font-semibold">待人审</span>
+        {% else %}<span class="text-green-700 font-semibold">ok</span>{% endif %}
+      </td>
+      <td class="align-top text-xs whitespace-nowrap">
+        {{ r.direction or '—' }} / {{ r.materiality or '—' }} /
+        C{{ '%.2f'|format(r.confidence) if r.confidence is not none else '—' }}
+        <br>target={{ r.target or '—' }}
+        <br>half_life={{ r.half_life or '—' }}
+        <br>hint={{ r.action_hint or '—' }}
+      </td>
+      <td class="align-top text-xs max-w-[16rem]">{{ r.rationale or '—' }}</td>
+      <td class="align-top text-xs max-w-[10rem]">{{ r.expectation_gap or '—' }}</td>
+      <td class="align-top text-xs max-w-[10rem]">{{ r.falsification or '—' }}</td>
+      <td class="align-top text-xs">{{ r.symbols|join(', ') or '—' }}</td>
+      <td class="align-top">
+        <form method="post" action="/message-review/{{ r.event_id }}/action" class="space-y-1 text-xs min-w-[13rem]">
+          <input type="hidden" name="symbol" value="__event__">
+          <input name="actor" placeholder="复核人" class="w-full px-1 py-0.5 border rounded">
+          <div class="flex flex-wrap gap-1">
+            <button name="action" value="confirm" class="px-2 py-0.5 rounded bg-green-600 text-white">确认</button>
+            <button name="action" value="dismiss" class="px-2 py-0.5 rounded bg-red-600 text-white">否决</button>
+            <button name="action" value="note" class="px-2 py-0.5 rounded border bg-white">留痕</button>
+          </div>
+          <div class="flex gap-1 items-center">
+            <select name="materiality" class="border rounded px-1 py-0.5 flex-1">
+              <option value="">materiality</option>
+              {% for m in ['low', 'medium', 'high', 'critical'] %}
+              <option value="{{ m }}">{{ m }}</option>
+              {% endfor %}
+            </select>
+            <button name="action" value="upgrade_materiality" class="px-2 py-0.5 rounded border bg-white">升级</button>
+          </div>
+          <input name="expectation_gap" placeholder="预期差（人工补写）" class="w-full px-1 py-0.5 border rounded">
+          <input name="falsification" placeholder="证伪条件（人工定稿）" class="w-full px-1 py-0.5 border rounded">
+          <div class="flex gap-1 items-center">
+            <select name="target" class="border rounded px-1 py-0.5 flex-1">
+              <option value="">target</option>
+              {% for t in ['eps', 'pe', 'sentiment'] %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+            </select>
+            <select name="half_life" class="border rounded px-1 py-0.5 flex-1">
+              <option value="">half_life</option>
+              {% for h in ['day', 'week', 'month', 'quarter'] %}<option value="{{ h }}">{{ h }}</option>{% endfor %}
+            </select>
+            <button name="action" value="amend" class="px-2 py-0.5 rounded bg-blue-600 text-white">补写</button>
+          </div>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9" class="py-6 text-center text-gray-400">
+      暂无 LLM 评价事件——启用 config/llm.yaml（enabled: true + api key）后由 daily 生成
+    </td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

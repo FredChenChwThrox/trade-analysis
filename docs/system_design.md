@@ -193,6 +193,7 @@ adjusted_volume_t = raw_volume_t / share_factor_t
 | 财报披露预约 / 解禁日程 | akshare `stock_report_disclosure` / `stock_restricted_release_queue_em` → `event_calendar`（`--sources calendar` 手触发） | 日历层 | ●（r2 Phase 1，2026-08-28） |
 | 宏观因子（商品/外汇） | akshare sina 期货接口 + 中行牌价（清单 config/macro_factors.yaml） | 宏观 | ●（r2 Phase 2，2026-08-28：macro_factors 每日快照，进默认 sources） |
 | 龙虎榜 / 大宗交易 | akshare（data.eastmoney.com/datacenter-web，不踩 push2） | 资金/情绪（flow） | ●（r2 Phase 2，2026-08-28：events scope='flow' tier=3 静默入库，不推送不进日报） |
+| 全市场行业归属 | `scripts/collect/industry_collect.py`（push2delay 域，季度刷新手触发）→ symbol_industry | 关联层 | ●（r2 Phase 3，2026-08-28，5641 只；与 watchlist.industry_code 同口径） |
 
 - 每个来源接入时必须在报告中标注覆盖区间；快讯/行业源缺数时消息面标 `degraded`，不阻断确定性价格信号（§5.5 既有原则）。
 
@@ -565,9 +566,12 @@ tests/                        # 单元、集成和 golden tests
 6. 抓取新增公告、新闻并运行版本化评价；失败时标记消息阶段 degraded。
    （当前实现：确定性部分——池级事件研究 event_study（§5.5，event_study_v1）
    已接入 daily，位于逐股信号之后、报告之前，池级事务，失败记 degraded 不阻断
-   报告；LLM 消息评价（D3）仍不含。公告（cninfo/tdx，source_tier=1）与电报
-   （source_tier=4）已随采集落盘入库；`event_calendar` 到期项（披露预约/解禁/
-   宏观种子）在报告"日历提醒"与 /cards 横幅展示——r2 Phase 1，2026-08-28。）
+   报告；**r2 Phase 3 LLM 评价链已接入 daily 步骤 6b**（6b1 事件级初判 → 6c
+   关联层 → 6b2 逐股叙事，`scripts/llm/eval.py`，gate 按 §6.3），默认
+   `config/llm.yaml enabled=false`——关闭态记 success+notes（设计关闭非
+   degraded），配置 api key 后启用；公告/电报 source_tier 已随采集写入；flow
+   （龙虎榜/大宗 tier=3）静默入库不推送不进日报；event_calendar 到期项在报告
+   "日历提醒"与 /cards 横幅展示。）
 7. 生成单股报告，再汇总全池日报。
 8. 保存报告输入快照和各阶段状态，结束 pipeline run。
 

@@ -79,3 +79,44 @@ def test_cards_page_no_banner_when_nothing_due(tmp_path):
     rv = app.test_client().get("/cards")
     assert rv.status_code == 200
     assert "日历提醒（默认 3 日内" not in rv.get_data(as_text=True)
+
+
+def test_message_review_page_and_action(client, ui_conn):
+    """r2 Phase 3：/message-review 渲染 LLM 评价 + 人审动作落 event_human_review。"""
+    now = "2026-08-28T10:00:00+00:00"
+    ui_conn.execute(
+        "INSERT INTO events (event_id, event_type, published_at, published_tz,"
+        " available_at, title, summary, source, content_hash, ingested_at,"
+        " source_tier) VALUES ('evt_ui', 'news', ?, 'Asia/Shanghai', ?,"
+        " 'LME铜 大跌', NULL, 'akshare', 'h', ?, 4)", (now, now, now))
+    ui_conn.execute(
+        "INSERT INTO event_symbols (event_id, symbol) VALUES ('evt_ui', '000001.SZ')")
+    ui_conn.execute(
+        "INSERT INTO event_assessments (event_id, symbol, assessment_version,"
+        " model, prompt_version, assessed_at, event_type, direction, materiality,"
+        " confidence, rationale, status, run_id)"
+        " VALUES ('evt_ui', '__event__', 'llm_v1', 'fake', 'llm_v1', ?, 'news',"
+        " 'negative', 'medium', 0.7, '库存上升', 'needs_review', 'r')", (now,))
+    ui_conn.commit()
+
+    rv = client.get("/message-review")
+    assert rv.status_code == 200
+    html = rv.get_data(as_text=True)
+    assert "LME铜 大跌" in html and "待人审" in html
+
+    rv = client.post("/message-review/evt_ui/action",
+                     data={"action": "confirm", "symbol": "__event__",
+                           "actor": "fred"}, follow_redirects=True)
+    assert rv.status_code == 200
+    row = ui_conn.execute(
+        "SELECT action, actor FROM event_human_review WHERE event_id='evt_ui'"
+        ).fetchone()
+    assert row["action"] == "confirm" and row["actor"] == "fred"
+    # confirm 后 effective 翻 ok（needs_review → ok 显示）
+    assert "ok" in client.get("/message-review").get_data(as_text=True)
+
+
+def test_message_review_unknown_action_rejected(client):
+    rv = client.post("/message-review/evt_x/action",
+                     data={"action": "hack"})
+    assert rv.status_code == 400

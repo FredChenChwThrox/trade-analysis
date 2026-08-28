@@ -13,6 +13,7 @@ import sqlite3
 from datetime import date, datetime, timedelta
 
 from scripts.signals import calendar_due  # r2 Phase 1：日历到期提醒（只读查询复用）
+from scripts.signals import event_link    # r2 Phase 3：effective_status 解析复用
 # 价格刻度类指标：与价格轴同量纲，不复权展示时需要 ÷ 当日因子折回（§5.1）
 PRICE_SCALE_FIELDS = {
     "ma5", "ma10", "ma20", "ma60", "ma120", "ma250",
@@ -1437,3 +1438,39 @@ def _safe_json(s: str | None):
         return json.loads(s)
     except json.JSONDecodeError:
         return {"_raw": s}
+
+
+# ---------------------------------------------------------------- 消息面人审（r2 Phase 3）
+
+def list_message_review(conn: sqlite3.Connection, limit: int = 200) -> list[dict]:
+    """LLM 事件级评价列表（llm_v1）+ 人审后 effective 状态 + 关联股。"""
+    rows = conn.execute(
+        """
+        SELECT e.event_id, e.title, e.summary, e.published_at, e.available_at,
+               e.source, e.source_tier, e.scope, a.status, a.direction,
+               a.materiality, a.confidence, a.rationale, a.target, a.half_life,
+               a.expectation_gap, a.action_hint, a.falsification, a.assessed_at
+        FROM events e
+        JOIN event_assessments a ON a.event_id = e.event_id
+             AND a.symbol = '__event__' AND a.assessment_version = 'llm_v1'
+        ORDER BY a.assessed_at DESC LIMIT ?
+        """, (limit,)).fetchall()
+    out = []
+    for r in rows:
+        eff = event_link.resolve_effective(conn, r["event_id"])
+        symbols = [x["symbol"] for x in conn.execute(
+            "SELECT symbol FROM event_symbols WHERE event_id = ? ORDER BY symbol",
+            (r["event_id"],))]
+        out.append({
+            "event_id": r["event_id"], "title": r["title"], "summary": r["summary"],
+            "published_at": r["published_at"], "scope": r["scope"],
+            "source_tier": r["source_tier"], "assessed_at": r["assessed_at"],
+            "status": eff["status"], "hidden": eff["hidden"],
+            "direction": eff["direction"], "materiality": eff["materiality"],
+            "confidence": eff["confidence"], "rationale": eff["rationale"],
+            "target": eff["target"], "half_life": eff["half_life"],
+            "expectation_gap": eff["expectation_gap"],
+            "falsification": eff["falsification"], "action_hint": eff["action_hint"],
+            "symbols": symbols,
+        })
+    return out
