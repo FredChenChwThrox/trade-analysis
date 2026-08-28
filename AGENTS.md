@@ -7,3 +7,5 @@
 - **硬性约定**：复权/不复权口径不得跨尺度直接比较（§5.4，比较前 ÷ 当日因子折回）；数据缺失输出 incomplete/degraded 不猜（§2.5）；信号无未来函数；LLM 不产生规范化数字；排期卡 activate/reject 必须人工。
 - **文档纪律**：每次改动追加 `docs/execution_log.md`；设计变更同步 `docs/system_design.md`；config/signals.yaml 中带 ⚠️ 的参数在人工核对期内不得擅自调整。
 - **每日例行**：采集增量 CSV 后 `uv run python -m scripts.pipeline.daily --date <交易日> --raw-dir <目录>`。
+- 智能体编码和行为规则`AIAgentCoding.md`
+
