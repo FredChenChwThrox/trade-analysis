@@ -10,6 +10,7 @@
 - time 取前 10 位为发布日期（来源当地日）；
 - symbol 推断：文件名 stem 的 ticker 优先，回退行内 code+setcode（SETCODE_SUFFIX）；
 - 去重：event_id = sha256(f"{source}|{title}|{pub_date}")[:16]，同内容重跑幂等跳过；
+- source_tier：信源分级（r2 §2.1），公告原文一律 SOURCE_TIER_ANNOUNCEMENT=1；
 - published_at = 发布日 00:00 当地 → UTC；available_at = 发布日 +1 开市交易日
   00:00 当地 → UTC（§2.1）；calendar 缺失降级为 +1 自然日并记 incomplete。
 
@@ -38,6 +39,12 @@ from scripts.adapters.common import (
 
 # 文件名 stem 中 ticker 形如 603605.SH_p1 / 00700.HK_p1（A 股 6 位、港股 4-5 位）
 _STEM_TICKER = re.compile(r"(\d{6})\.(SH|SZ|BJ)|(\d{4,5})\.HK")
+
+# r2 Phase 1：信源分级常量（r2 §2.1）。本引擎覆盖 tdx/akshare 公告（=1）；
+# 财联社电报（=4）在 akshare.py 薄壳中引用；tianyancha/stock_finance_data 等
+# 历史公告路径不写 tier（NULL=未分级，语义见 docs/database_schema.md §6）。
+SOURCE_TIER_ANNOUNCEMENT = 1
+SOURCE_TIER_TELEGRAPH = 4
 
 
 def _ticker_from_stem(path: Path) -> str | None:
@@ -121,12 +128,13 @@ def parse_disclosure_csv(conn: sqlite3.Connection, path: Path, raw_object_id: st
             """
             INSERT INTO events (event_id, event_type, event_at, published_at,
                 published_tz, available_at, title, summary, canonical_url,
-                source, source_external_id, content_hash, raw_object_id, ingested_at)
-            VALUES (?, 'announcement', NULL, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+                source, source_external_id, content_hash, raw_object_id, ingested_at,
+                source_tier)
+            VALUES (?, 'announcement', NULL, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
             """,
             (event_id, published_at, str(tz), available_at, title, summary, url,
              source, hashlib.sha256(dedup_key.encode()).hexdigest(),
-             raw_object_id, now),
+             raw_object_id, now, SOURCE_TIER_ANNOUNCEMENT),
         )
         conn.execute(
             "INSERT OR IGNORE INTO event_symbols (event_id, symbol) VALUES (?, ?)",

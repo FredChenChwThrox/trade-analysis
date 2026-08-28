@@ -1,6 +1,18 @@
 {% extends "base.html" %}
 {% block title %}卡片列表 - 股票监测系统{% endblock %}
 {% block content %}
+{% if calendar_alerts %}
+<div class="card mb-4 px-4 py-3 text-sm border-l-4 border-amber-500 bg-amber-50 text-amber-900">
+  <span class="font-semibold">日历提醒（默认 3 日内 / 复核到期）：</span>
+  {% for a in calendar_alerts %}
+  <span class="inline-block mr-4">
+    {% if a.symbol %}<a class="text-blue-700 hover:underline" href="/stock/{{ a.symbol }}">{{ a.symbol }}</a> · {% endif %}
+    {% if a.date %}[{{ a.date }}] {% endif %}{{ a.message }}
+  </span>
+  {% endfor %}
+</div>
+{% endif %}
+
 <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
   <aside class="lg:col-span-3 card space-y-3 text-sm">
     <h3 class="card-title">卡片筛选</h3>

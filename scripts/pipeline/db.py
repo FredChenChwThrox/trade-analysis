@@ -2,7 +2,7 @@
 
 CLI：
     uv run python -m scripts.pipeline.db migrate
-    uv run python -m scripts.pipeline.db seed      # 导入 watchlist 与日历种子（自动先 migrate）
+    uv run python -m scripts.pipeline.db seed      # 导入 watchlist/交易日历/event_calendar 种子
 
 数据库文件默认 data/market.db，可用 --db 覆盖。
 """
@@ -15,6 +15,7 @@ import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import jsonschema
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -74,22 +75,94 @@ def seed_watchlist(conn: sqlite3.Connection, path: Path | None = None) -> int:
         conn.execute(
             """
             INSERT INTO watchlist (symbol, market, name, aliases_json, benchmark_code,
-                                   currency, timezone, active, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                                   currency, timezone, industry_code, themes_json,
+                                   active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
             ON CONFLICT(symbol) DO UPDATE SET
                 market=excluded.market, name=excluded.name,
                 aliases_json=excluded.aliases_json,
                 benchmark_code=excluded.benchmark_code,
                 currency=excluded.currency, timezone=excluded.timezone,
+                industry_code=excluded.industry_code,
+                themes_json=excluded.themes_json,
                 active=1, updated_at=excluded.updated_at
             """,
             (
                 s["symbol"], s["market"], s["name"],
                 json.dumps(s.get("aliases") or [], ensure_ascii=False),
-                s["benchmark_code"], s["currency"], s["timezone"], now, now,
+                s["benchmark_code"], s["currency"], s["timezone"],
+                # r2 Phase 1：industry_code（东财 BK 码，无源留 NULL）/ themes（JSON 数组）
+                s.get("industry_code") or None,
+                json.dumps(s.get("themes") or [], ensure_ascii=False),
+                now, now,
             ),
         )
     return len(doc["stocks"])
+
+
+# r2 Phase 1：event_calendar 手工种子 schema（config/event_calendar.yaml）。
+# 人工宏观/议息日历，编辑 yaml 后重跑 seed 即生效（upsert by cal_id）。
+_EVENT_CALENDAR_SCHEMA = {
+    "type": "object",
+    "required": ["status", "events"],
+    "additionalProperties": False,
+    "properties": {
+        "status": {"enum": ["ok", "incomplete_todo"]},
+        "events": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["cal_id", "kind", "scheduled_date"],
+                "additionalProperties": False,
+                "properties": {
+                    "cal_id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+                    "kind": {"enum": ["report_disclosure", "unlock",
+                                      "macro_release", "fomc"]},
+                    "symbol": {"type": ["string", "null"]},
+                    "scheduled_date": {"type": "string",
+                                       "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+                    "remind_before_days": {"type": "integer", "minimum": 0},
+                    "note": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
+
+def seed_event_calendar(conn: sqlite3.Connection, path: Path | None = None) -> int:
+    """导入 config/event_calendar.yaml 手工宏观/议息日历（r2 §3.1，Phase 1）。
+
+    status: incomplete_todo 时跳过（§2.5，仿 seed_calendar）；按 cal_id upsert，
+    source 固定 'manual'（akshare 采集行走 adapters/event_calendar.py 入库）。
+    返回导入行数；跳过/文件缺失返回 0。
+    """
+    path = path or CONFIG_DIR / "event_calendar.yaml"
+    if not path.exists():
+        return 0
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if doc.get("status") == "incomplete_todo":
+        print(f"[seed] 跳过 {path.name}：status=incomplete_todo（日历未填充）")
+        return 0
+    jsonschema.validate(doc, _EVENT_CALENDAR_SCHEMA)
+    now = utc_now()
+    for e in doc["events"]:
+        conn.execute(
+            """
+            INSERT INTO event_calendar (cal_id, kind, symbol, scheduled_date,
+                                        source, remind_before_days, note,
+                                        raw_object_id, ingested_at)
+            VALUES (?, ?, ?, ?, 'manual', ?, ?, NULL, ?)
+            ON CONFLICT(cal_id) DO UPDATE SET
+                kind=excluded.kind, symbol=excluded.symbol,
+                scheduled_date=excluded.scheduled_date,
+                remind_before_days=excluded.remind_before_days,
+                note=excluded.note, ingested_at=excluded.ingested_at
+            """,
+            (e["cal_id"], e["kind"], e.get("symbol"), e["scheduled_date"],
+             e.get("remind_before_days", 3), e.get("note"), now),
+        )
+    return len(doc["events"])
 
 
 def seed_calendar(conn: sqlite3.Connection, path: Path) -> int:
@@ -162,10 +235,14 @@ def seed_calendar(conn: sqlite3.Connection, path: Path) -> int:
 
 
 def seed(conn: sqlite3.Connection) -> None:
-    """导入全部种子：watchlist + config/calendar_*.yaml（先确保 schema 就绪）。"""
+    """导入全部种子：watchlist + event_calendar + config/calendar_*.yaml（先确保 schema 就绪）。"""
     migrate(conn)
     n = seed_watchlist(conn)
     print(f"[seed] watchlist 导入 {n} 只股票")
+    # r2 Phase 1：手工宏观日历种子（event_calendar.yaml，glob 不会与 calendar_*.yaml 撞）
+    n = seed_event_calendar(conn)
+    if n:
+        print(f"[seed] event_calendar 导入 {n} 条")
     for path in sorted(CONFIG_DIR.glob("calendar_*.yaml")):
         n = seed_calendar(conn, path)
         if n:

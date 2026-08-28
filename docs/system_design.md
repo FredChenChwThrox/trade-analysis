@@ -184,12 +184,13 @@ adjusted_volume_t = raw_volume_t / share_factor_t
 
 | 来源 | 渠道 | 覆盖层面 | 状态 |
 |---|---|---|---|
-| A 股公告 | `stock_finance_data_get_stock_announcement` | 公司 | ● |
+| A 股公告 | tdx wenda + 巨潮 cninfo（`stock_zh_a_disclosure_report_cninfo`，akshare 采集器 `--sources` 默认含 announcement） | 公司 | ●（已接 daily，2026-08-28；事件带 source_tier=1，r2 §2.1） |
 | 港股公告 | 港交所披露易 | 公司 | ◐ |
 | A 股个股新闻 | 历史：新浪个股新闻页；增量：东财搜索 API | 公司 | ◐ |
 | 港股新闻 | 东财搜索，接受历史深度有限并在报告中标注覆盖区间 | 公司 | ◐ |
-| 全市场快讯 | 财联社（政策/宏观主渠道） | 政策、宏观 | ○ |
+| 全市场快讯 | 财联社（政策/宏观主渠道，`--sources telegraph`） | 政策、宏观 | ●（采集/入库通道已备，事件带 source_tier=4；持续采集编排属 r2 Phase 2） |
 | 行业新闻 | 东财行业频道 | 行业 | ○ |
+| 财报披露预约 / 解禁日程 | akshare `stock_report_disclosure` / `stock_restricted_release_queue_em` → `event_calendar`（`--sources calendar` 手触发） | 日历层 | ●（r2 Phase 1，2026-08-28） |
 
 - 每个来源接入时必须在报告中标注覆盖区间；快讯/行业源缺数时消息面标 `degraded`，不阻断确定性价格信号（§5.5 既有原则）。
 
@@ -473,9 +474,14 @@ reverses_execution_id, created_at
 2. **当前定位**：现价、所处档位、距下一边界百分比、箱体位置。
 3. **决策点**：已触发的证伪、档位、右侧确认、箱体边界和锚复核。没有触发时明确写“今日无决策点”。
 4. **观察点**：下一交易日的临近度、尚缺哪个条件、财报或公告窗口及新消息摘要。
-5. **衰竭信号**：当前 `anchor_id`、各信号状态、失效时间和计数。
-6. **指标快照**：关键日线、周线、量能和估值值。
-7. **来源与异常**：数字来源、截止日期、缺失字段和过期评价。
+5. **日历与消息面**（r2 Phase 1，2026-08-28）：`### 日历提醒（默认 3 日内）`——
+   `event_calendar` 到期项（披露预约/解禁/宏观种子，窗口按每行 `remind_before_days`
+   含两端边界）union 该股 active 卡 `next_review` 到期；`### 公司公告`——当日
+   `available_at` 日期 == 报告日的公司公告，置顶标"需读原文"，无公告写
+   "今日无新增公告"。"消息面"（LLM 初判+人审）子节属 r2 Phase 3，暂不占位。
+6. **衰竭信号**：当前 `anchor_id`、各信号状态、失效时间和计数。
+7. **指标快照**：关键日线、周线、量能和估值值。
+8. **来源与异常**：数字来源、截止日期、缺失字段和过期评价。
 
 ### 6.3 全池排序
 
@@ -555,9 +561,11 @@ tests/                        # 单元、集成和 golden tests
 4. 在单一事务中发布规范化行情和因子版本。
 5. 重算受影响股票的周线、指标、信号和状态机。
 6. 抓取新增公告、新闻并运行版本化评价；失败时标记消息阶段 degraded。
-   （当前实现：仅确定性部分——池级事件研究 event_study（§5.5，event_study_v1）
+   （当前实现：确定性部分——池级事件研究 event_study（§5.5，event_study_v1）
    已接入 daily，位于逐股信号之后、报告之前，池级事务，失败记 degraded 不阻断
-   报告；LLM 消息评价（D3）仍不含。）
+   报告；LLM 消息评价（D3）仍不含。公告（cninfo/tdx，source_tier=1）与电报
+   （source_tier=4）已随采集落盘入库；`event_calendar` 到期项（披露预约/解禁/
+   宏观种子）在报告"日历提醒"与 /cards 横幅展示——r2 Phase 1，2026-08-28。）
 7. 生成单股报告，再汇总全池日报。
 8. 保存报告输入快照和各阶段状态，结束 pipeline run。
 

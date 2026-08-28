@@ -1,7 +1,7 @@
 """报告生成器（D2.6，设计 §6.1-6.4、§9.5、§8.1 步骤 7）。
 
 对 watchlist 每只股票生成单股报告 `reports/{symbol}/{trade_date}.md`
-（§6.2 七段结构），再汇总全池日报 `reports/daily/{trade_date}.md`
+（§6.2 八段结构，r2 Phase 1 增"5. 日历与消息面"），再汇总全池日报 `reports/daily/{trade_date}.md`
 （§6.3 五级确定性排序，不由 LLM 排序）。
 
 契约：
@@ -41,6 +41,7 @@ from scripts.pipeline.calendar_check import (
 from scripts.pipeline.db import DEFAULT_DB_PATH, ROOT, connect, utc_now
 from scripts.signals import cards as card_mod
 from scripts.signals import corporate_action as ca_mod
+from scripts.signals import calendar_due  # r2 Phase 1：日历到期提醒（单股过滤见 relevant_to_symbol）
 from scripts.signals.common import RULE_VERSION as SIGNALS_RULE_VERSION
 from scripts.signals.common import WEEKLY_SIGNALS, load_params
 
@@ -175,7 +176,7 @@ def _f(v, digits: int = 2) -> str:
     return "—" if v is None else f"{v:.{digits}f}"
 
 
-# ---------------------------------------------------------------- 单股报告（§6.2 七段）
+# ---------------------------------------------------------------- 单股报告（§6.2 八段）
 
 def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
                         *, params: dict, config_hash: str,
@@ -329,7 +330,7 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
         rep.headline = "普通状态更新"
         rep.sort_reason = "同级按 symbol"
 
-    # ================= 渲染七段 =================
+    # ================= 渲染八段 =================
     L: list[str] = []
     a = L.append
     wl = conn.execute("SELECT name FROM watchlist WHERE symbol = ?",
@@ -474,8 +475,50 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
       f"消息面按缺失标注（§2.5，截止 {trade_date}）")
     a("")
 
-    # ---- 5. 衰竭信号（⚠️ §5.2 锚点明细必须带出）
-    a("## 5. 衰竭信号")
+    # ---- 5. 日历与消息面（r2 Phase 1：日历提醒 + 公司公告；LLM"消息面"子节属 Phase 3）
+    a("## 5. 日历与消息面")
+    a("")
+    cal_all = calendar_due.due_items(conn, trade_date)
+    cal_here = calendar_due.relevant_to_symbol(cal_all, symbol)
+    a("### 日历提醒（默认 3 日内）")
+    a("")
+    if cal_here:
+        for it in cal_here:
+            tail = "——检查头寸是否落在计划档位内"
+            if it["kind"] == calendar_due.KIND_CARD_REVIEW:
+                a(f"- [{it['date']}] {it['note']}（{it['symbol']}，"
+                  f"来源 strategy_card_versions）" + tail)
+            else:
+                # note 在来源端已自描述（含"财报披露预约/解禁/CPI"等词），不再加 kind 标签
+                a(f"- [{it['date']}] {it['note'] or it['kind']}"
+                  f"（{it['symbol'] or '宏观'}，来源 event_calendar）" + tail)
+    else:
+        a("- 默认 3 日内无到期项。")
+    a("")
+    a("### 公司公告")
+    a("")
+    # r2 Phase 1：available_at 是 UTC ISO datetime，trade_date 是日期字符串——
+    # 必须 substr 日期化比较（直接 available_at <= as_of 按字符串比较恒 False）
+    ann = conn.execute(
+        """
+        SELECT e.title, e.available_at, e.canonical_url
+        FROM events e
+        JOIN event_symbols es ON e.event_id = es.event_id
+        WHERE es.symbol = ? AND e.event_type = 'announcement'
+          AND substr(e.available_at, 1, 10) = ?
+        ORDER BY e.available_at, e.title
+        """, (symbol, trade_date)).fetchall()
+    if ann:
+        for r in ann:
+            a(f"- [{r['available_at'][:10]}] {r['title']} ※ 需读原文"
+              f"（成色词以巨潮/交易所 PDF 为准）"
+              + (f"（{r['canonical_url']}）" if r["canonical_url"] else ""))
+    else:
+        a("- 今日无新增公告。")
+    a("")
+
+    # ---- 6. 衰竭信号（⚠️ §5.2 锚点明细必须带出）
+    a("## 6. 衰竭信号")
     a("")
     if week_end and weekly_facts.get("panic"):
         pa, ds = anchors.get("panic_low"), anchors.get("decline_start")
@@ -506,8 +549,8 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
         a(f"- 无周线信号数据（weekly_bars/signal_facts 缺失，截止 {trade_date}，§2.5）")
         a("")
 
-    # ---- 6. 指标快照
-    a("## 6. 指标快照")
+    # ---- 7. 指标快照
+    a("## 7. 指标快照")
     a("")
     if ind is not None:
         a(f"日线（来源 indicators_daily，截止 {ind['trade_date']}，复权口径）：")
@@ -576,8 +619,8 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
             a("- " + "；".join(parts))
     a("")
 
-    # ---- 7. 来源与异常
-    a("## 7. 来源与异常")
+    # ---- 8. 来源与异常
+    a("## 8. 来源与异常")
     a("")
     src = (bar["source"] if bar else None) or "—"
     a(f"- 行情: {src}，截止 {cutoff or '无'}；"
@@ -619,6 +662,8 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
         "decision_points": [d[:120] for d in dp],
         "facts_states": {k: (v["state"] if v else None) for k, v in
                          {**facts, **weekly_facts}.items()},
+        # r2 Phase 1：本股相关（含宏观项 + 本股卡片复核）日历到期计数
+        "calendar_due": len(cal_here),
         "indicators_config_hash": indicators_config_hash,
     }
     return rep

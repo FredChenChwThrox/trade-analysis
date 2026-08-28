@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from scripts.adapters import akshare as ak
+from scripts.adapters import event_calendar as event_calendar_adapter  # r2 Phase 1
 from scripts.adapters import stock_finance_data as sfd
 from scripts.adapters import tdx
 from scripts.adapters import tianyancha as tyc
@@ -50,6 +51,7 @@ _ROUTES = {
     ("akshare", "announcement"): ak.parse_announcement_csv,  # 标准公告线格式（公共引擎）
     ("akshare", "forecast"): ak.parse_forecast_csv,      # 一致预期（转发 sfd 解析）
     ("akshare", "stock_info"): ak.parse_stock_info_csv,  # 股本快照 → share_capital_events
+    ("akshare", "calendar"): event_calendar_adapter.parse_calendar_csv,  # r2 Phase 1：披露预约/解禁 → event_calendar
 }
 
 

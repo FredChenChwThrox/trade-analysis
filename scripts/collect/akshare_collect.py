@@ -26,6 +26,12 @@
   标准公告线格式（title,time,url,source,summary,code,setcode,name；接口日期参数
   必须紧凑 YYYYMMDD，带 - 格式静默返回空，实测）→ announcements.parse_disclosure_csv 公共引擎薄壳
   akshare.parse_announcement_csv（events.source='akshare'，与 tdx dedup 隔离）
+- calendar（r2 Phase 1，手触发不进 daily）：财报披露预约（stock_report_disclosure，
+  沪深京全市场拉取后仅留 watchlist 行，scheduled_date 取"当前预约"=最后一次变更）
+  + 解禁日程（stock_restricted_release_queue_em 逐股，仅留采集日之后未来行）→
+  calendar/{date}/{run_id}/{report_disclosure,unlock}.csv
+  → adapters/event_calendar.parse_calendar_csv（ingest 路由 akshare/calendar）；
+  期次必须显式 --calendar-period（如 2026半年报），不做默认推断（--end 硬编码教训）
 
 口径换算（与库 schema 对齐，§3.2/§9.5）：
 - 成交量：东财接口单位「手」，落盘前 ×100 换算为项目 volume_raw 口径「股」（指数不换算）；
@@ -439,6 +445,90 @@ def collect_announcement(ak, symbol: str, start: str, end: str, out_dir: Path,
     return fp
 
 
+# ---------------------------------------------------------------- calendar（披露预约 + 解禁日程，r2 Phase 1）
+
+def _date_str(v) -> str:
+    """pandas Timestamp / NaT / str → 'YYYY-MM-DD'；空/NaT 返回 ''。
+
+    注意 NaT 也有 strftime 属性但调用即抛 ValueError（真实采集踩过），需吞掉。
+    """
+    if v is None:
+        return ""
+    try:
+        s = v.strftime("%Y-%m-%d") if hasattr(v, "strftime") else str(v).strip()[:10]
+    except (ValueError, TypeError):
+        return ""
+    if not s or s.startswith("NaT") or s.lower().startswith("nan"):
+        return ""
+    return s
+
+
+def collect_calendar_disclosure(ak, symbols: list[str], period: str,
+                                out_dir: Path, date: str, run_id: str) -> Path | None:
+    """财报披露预约（stock_report_disclosure，沪深京）→ report_disclosure.csv。
+
+    全市场拉取后仅留 watchlist 行；scheduled_date 取"当前预约"（三次变更依次
+    覆盖），首次预约/实际披露原样留档供 adapter 拼 note。
+    """
+    watch = {s.split(".")[0].zfill(6): s for s in symbols
+             if s.endswith((".SH", ".SZ", ".BJ"))}
+    df = ak.stock_report_disclosure(market="沪深京", period=period)
+    if df is None or df.empty:
+        return None
+    out = out_dir / "calendar" / date / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    fp = out / "report_disclosure.csv"
+    n = 0
+    with open(fp, "w", newline="", encoding="utf-8") as f:
+        f.write("symbol,name,period,scheduled_date,first_scheduled,actual_disclosed\n")
+        for _, r in df.iterrows():
+            sym = watch.get(str(r["股票代码"]).split(".")[0].zfill(6))
+            if sym is None:
+                continue
+            sched = (_date_str(r["三次变更"]) or _date_str(r["二次变更"])
+                     or _date_str(r["初次变更"]) or _date_str(r["首次预约"]))
+            f.write(",".join([
+                sym, _csv_escape(str(r["股票简称"])), period, sched,
+                _date_str(r["首次预约"]), _date_str(r["实际披露"]),
+            ]) + "\n")
+            n += 1
+    return fp if n else None
+
+
+def collect_calendar_unlock(ak, symbols: list[str], since: str,
+                            out_dir: Path, date: str, run_id: str) -> Path | None:
+    """解禁日程（stock_restricted_release_queue_em 逐股，仅留 >= since 未来行）→ unlock.csv。
+
+    接口无简称列，CSV 不含 name；个股拉取失败记 stderr 后继续，不整批中止。
+    """
+    out = out_dir / "calendar" / date / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    fp = out / "unlock.csv"
+    n = 0
+    with open(fp, "w", newline="", encoding="utf-8") as f:
+        f.write("symbol,unlock_date,shares_free,ratio_total,share_type\n")
+        for sym in symbols:
+            if not sym.endswith((".SH", ".SZ", ".BJ")):
+                continue
+            try:
+                df = ak.stock_restricted_release_queue_em(symbol=sym.split(".")[0])
+            except Exception as e:  # noqa: BLE001
+                print(f"[calendar] unlock {sym}: ERROR {e}")
+                continue
+            if df is None or df.empty:
+                continue
+            for _, r in df.iterrows():
+                d = _date_str(r["解禁时间"])
+                if not d or d < since:
+                    continue
+                f.write(",".join([
+                    sym, d, _num(r["解禁数量"]) or "", _num(r["占总市值比例"]) or "",
+                    _csv_escape(str(r.get("限售股类型") or "")),
+                ]) + "\n")
+                n += 1
+    return fp if n else None
+
+
 # ---------------------------------------------------------------- meta / CLI
 
 def write_meta(out_dir: Path, data_type: str, date: str, run_id: str,
@@ -461,7 +551,7 @@ def _watchlist_symbols() -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scripts.collect.akshare_collect")
-    parser.add_argument("--sources", default="price,financials,index,telegraph")
+    parser.add_argument("--sources", default="price,financials,index,telegraph,announcement")
     parser.add_argument("--symbols", default="",
                         help="逗号分隔；默认取 config/watchlist.yaml 全部 active 股票")
     parser.add_argument("--indexes", default="000300.SH,^HSI")
@@ -473,6 +563,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-id", default="run_ak")
     parser.add_argument("--out-root", default=str(DEFAULT_OUT))
     parser.add_argument("--purpose", default="akshare 采集器（可选数据源，字段对齐现有 adapter）")
+    parser.add_argument("--calendar-period", default=None,
+                        help="calendar 源必填：财报披露预约期次（如 2026半年报/2026三季/2026年报）")
     args = parser.parse_args(argv)
 
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()] or _watchlist_symbols()
@@ -592,9 +684,47 @@ def main(argv: list[str] | None = None) -> int:
                                      "params": {"symbol": sym}, "file": None,
                                      "status": "error", "error": f"{type(e).__name__}: {e}"})
                     print(f"[{source}] {sym}: ERROR {e}")
+        elif source == "calendar":  # r2 Phase 1：日历源（手触发，不进 daily 惯例）
+            if not args.calendar_period:
+                requests.append({"api": "stock_report_disclosure", "params": {},
+                                 "file": None, "status": "error",
+                                 "error": "缺少 --calendar-period（如 2026半年报）"})
+                print("[calendar] ERROR 缺少 --calendar-period（如 2026半年报）")
+            else:
+                try:
+                    fp = collect_calendar_disclosure(ak, symbols, args.calendar_period,
+                                                     out_dir, args.date, args.run_id)
+                    requests.append({"api": "stock_report_disclosure",
+                                     "params": {"market": "沪深京",
+                                                "period": args.calendar_period},
+                                     "file": fp.name if fp else None,
+                                     "status": "ok" if fp else "empty",
+                                     "error": None if fp else "EMPTY_DATA"})
+                    print(f"[calendar] disclosure({args.calendar_period}): "
+                          f"{'ok' if fp else 'EMPTY'}")
+                except Exception as e:  # noqa: BLE001
+                    requests.append({"api": "stock_report_disclosure", "params": {},
+                                     "file": None, "status": "error",
+                                     "error": f"{type(e).__name__}: {e}"})
+                    print(f"[calendar] disclosure ERROR {e}")
+                try:
+                    fp = collect_calendar_unlock(ak, symbols, args.date,
+                                                 out_dir, args.date, args.run_id)
+                    requests.append({"api": "stock_restricted_release_queue_em",
+                                     "params": {"symbols": len(symbols),
+                                                "since": args.date},
+                                     "file": fp.name if fp else None,
+                                     "status": "ok" if fp else "empty",
+                                     "error": None if fp else "EMPTY_DATA"})
+                    print(f"[calendar] unlock: {'ok' if fp else 'EMPTY'}")
+                except Exception as e:  # noqa: BLE001
+                    requests.append({"api": "stock_restricted_release_queue_em",
+                                     "params": {}, "file": None, "status": "error",
+                                     "error": f"{type(e).__name__}: {e}"})
+                    print(f"[calendar] unlock ERROR {e}")
         else:
             print(f"[skip] 未知 source: {source}（可选 price,forward,financials,index,"
-                  f"telegraph,forecast,stock_info,announcement）")
+                  f"telegraph,forecast,stock_info,announcement,calendar）")
             continue
         write_meta(out_dir, source, args.date, args.run_id, requests, args.purpose)
         errs = [r for r in requests if r["status"] == "error"]

@@ -41,3 +41,41 @@ def test_ui_config_loads():
     assert cfg["app"]["port"] == 5000
     assert cfg["defaults"]["page_size"] == 50
     assert cfg["charts"]["library"] == "echarts"
+
+
+# ---------------------------------------------------------------- 日历横幅（r2 Phase 1）
+
+def test_cards_page_calendar_banner(client, ui_conn):
+    """/cards 顶部横幅渲染 event_calendar 到期项（与复核到期并列）。"""
+    ui_conn.execute(
+        """
+        INSERT INTO event_calendar (cal_id, kind, symbol, scheduled_date, source,
+                                    remind_before_days, note, raw_object_id, ingested_at)
+        VALUES ('cal_test_ui', 'unlock', '000001.SZ', date('now', '+1 day'),
+                'manual', 3, '解禁 1.00 亿股', NULL, 'test')
+        """)
+    ui_conn.commit()
+    rv = client.get("/cards")
+    assert rv.status_code == 200
+    html = rv.get_data(as_text=True)
+    assert "日历提醒" in html
+    assert "解禁 1.00 亿股" in html
+
+
+def test_cards_page_no_banner_when_nothing_due(tmp_path):
+    """空态：无任何到期项时横幅不渲染（不占位）。"""
+    from scripts.pipeline import db as pipeline_db
+    from scripts.ui.app import create_app
+
+    path = tmp_path / "empty.db"
+    conn = pipeline_db.connect(path)
+    pipeline_db.migrate(conn)
+    pipeline_db.seed(conn)
+    conn.execute("DELETE FROM event_calendar")  # 消除种子日期对"今天"的依赖
+    conn.commit()
+    conn.close()
+    app = create_app(db_path=path)
+    app.config["TESTING"] = True
+    rv = app.test_client().get("/cards")
+    assert rv.status_code == 200
+    assert "日历提醒（默认 3 日内" not in rv.get_data(as_text=True)

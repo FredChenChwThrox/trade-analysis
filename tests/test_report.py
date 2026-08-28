@@ -1,7 +1,7 @@
 """D2.6 报告生成器测试（设计 §6.1-6.4、§9.5、§8.1）。
 
 锁定：
-- 单股报告七段结构齐全（§6.2）；无触发明写"今日无决策点"；
+- 单股报告八段结构齐全（§6.2，r2 Phase 1 增"5. 日历与消息面"）；无触发明写"今日无决策点"；
 - 衰竭信号段带锚点明细（§5.2 ⚠️）；观察点带临近度（距边界/干涸阈值差值）；
 - 全池日报五级确定性排序：数据异常股排在触发股之前（§6.3），排序原因显示；
 - 语言纪律：报告不含"看涨/看跌/建议买入"等词（§6.4）；
@@ -11,7 +11,7 @@
 """
 
 from __future__ import annotations
-
+import hashlib
 import json
 import sqlite3
 from datetime import date, timedelta
@@ -85,20 +85,22 @@ def _add_indicator(conn, symbol, day, **kw):
     )
 
 
-def _add_card(conn, symbol, card_id, tiers, eff_from="2026-08-03"):
+def _add_card(conn, symbol, card_id, tiers, eff_from="2026-08-03",
+              next_review="2026-09-01"):
     conn.execute(
         """
         INSERT INTO strategy_card_versions (card_version_id, symbol, status,
             schema_version, created_at, effective_from, currency, price_basis,
             price_tiers_json, invalidation_json, right_side_trigger_json,
             next_review_at, run_id)
-        VALUES (?, ?, 'active', 'card_v1', ?, ?, 'CNY', 'raw', ?, ?, ?, '2026-09-01',
+        VALUES (?, ?, 'active', 'card_v1', ?, ?, 'CNY', 'raw', ?, ?, ?, ?,
                 'test')
         """,
         (card_id, symbol, db.utc_now(), eff_from,
          json.dumps({"tiers": tiers}, sort_keys=True),
          json.dumps({"line": "90.00"}),
-         json.dumps({"trigger_level": "120.00", "stop_level": "110.00"})),
+         json.dumps({"trigger_level": "120.00", "stop_level": "110.00"}),
+         next_review),
     )
 
 
@@ -219,18 +221,20 @@ def _run(conn, tmp_path):
                                   reports_root=str(tmp_path / "reports"))
 
 
-# ---------------------------------------------------------------- 七段结构
+# ---------------------------------------------------------------- 八段结构
 
-def test_single_report_seven_sections(conn, tmp_path):
+def test_single_report_eight_sections(conn, tmp_path):
     res = _run(conn, tmp_path)
     by_symbol = {s.symbol: s for s in res.symbols}
     text = Path(by_symbol["TRIG.SH"].file_path).read_text(encoding="utf-8") \
         if Path(by_symbol["TRIG.SH"].file_path).is_absolute() else \
         (tmp_path / "reports" / "TRIG.SH" / f"{RUN_DATE}.md").read_text(encoding="utf-8")
     for section in ("## 1. 运行状态", "## 2. 当前定位", "## 3. 决策点",
-                    "## 4. 观察点", "## 5. 衰竭信号", "## 6. 指标快照",
-                    "## 7. 来源与异常"):
+                    "## 4. 观察点", "## 5. 日历与消息面", "## 6. 衰竭信号",
+                    "## 7. 指标快照", "## 8. 来源与异常"):
         assert section in text
+    # r2 Phase 1：fixture 无日历/公告数据 → 计数为 0，空态文案在渲染
+    assert by_symbol["TRIG.SH"].snapshot["calendar_due"] == 0
     # 关键数字带来源与截止（§6.4）
     assert "来源 daily_bars" in text and "截止 2026-08-07" in text
     assert "config_hash" in text and "signals_v1" in text
@@ -238,6 +242,86 @@ def test_single_report_seven_sections(conn, tmp_path):
     assert "LLM 消息评价（D3）未接入" in text
     assert "确定性事件研究 event_study_v1 已接入" in text
     assert "event_assessments 未接入" not in text
+
+
+# ---------------------------------------------------------------- 日历与消息面（r2 Phase 1）
+
+def _add_calendar_event(conn, cal_id, kind, symbol, scheduled_date, *,
+                        remind=3, note=None):
+    conn.execute(
+        """
+        INSERT INTO event_calendar (cal_id, kind, symbol, scheduled_date, source,
+                                    remind_before_days, note, raw_object_id, ingested_at)
+        VALUES (?, ?, ?, ?, 'manual', ?, ?, NULL, ?)
+        """,
+        (cal_id, kind, symbol, scheduled_date, remind, note, db.utc_now()),
+    )
+
+
+def _add_announcement(conn, symbol, event_id, *, available, title,
+                      published="2026-08-06T16:00:00+00:00"):
+    """手工预埋公告事件（点时口径：available_at 控制何时可见）。"""
+    conn.execute(
+        """
+        INSERT INTO events (event_id, event_type, event_at, published_at,
+            published_tz, available_at, title, summary, canonical_url, source,
+            source_external_id, content_hash, raw_object_id, ingested_at, source_tier)
+        VALUES (?, 'announcement', NULL, ?, 'Asia/Shanghai', ?, ?, ?, NULL,
+                'akshare', NULL, ?, NULL, ?, 1)
+        """,
+        (event_id, published, available, title, title + "（测试摘要）",
+         hashlib.sha256(event_id.encode()).hexdigest(), db.utc_now()),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO event_symbols (event_id, symbol) VALUES (?, ?)",
+        (event_id, symbol))
+
+
+def test_calendar_and_announcements_section(conn, tmp_path):
+    """r2 Phase 1：日历提醒（窗口边界/宏观项/卡片复核）+ 公司公告（当日可见/
+    available_at 未来隐藏/无公告空态）；calendar_due 快照计数。"""
+    _add_calendar_event(conn, "macro_cpi", "macro_release", None, "2026-08-09",
+                        note="8 月 CPI")
+    _add_calendar_event(conn, "unl_near", "unlock", "TRIG.SH", "2026-08-08",
+                        note="解禁 1.00 亿股")
+    _add_calendar_event(conn, "unl_far", "unlock", "TRIG.SH", "2026-08-20")  # 窗口外
+    _add_announcement(conn, "TRIG.SH", "evt_today",
+                      available="2026-08-07T00:30:00+00:00", title="2026 年半年度报告")
+    _add_announcement(conn, "TRIG.SH", "evt_future",
+                      available="2026-08-10T00:00:00+00:00",
+                      title="重大合同公告（未来可见）")
+    # CALM 既有卡复核到期提前到 RUN_DATE（卡表 symbol 唯一，直接更新而非新增）
+    conn.execute(
+        "UPDATE strategy_card_versions SET next_review_at = ? WHERE symbol = 'CALM.SH'",
+        (RUN_DATE,))
+    conn.commit()
+
+    res = _run(conn, tmp_path)
+    by_symbol = {s.symbol: s for s in res.symbols}
+
+    def _md(s):
+        p = Path(s.file_path)
+        return p.read_text(encoding="utf-8") if p.is_absolute() else \
+            (tmp_path / "reports" / s.symbol / f"{RUN_DATE}.md").read_text(encoding="utf-8")
+
+    trig, calm = _md(by_symbol["TRIG.SH"]), _md(by_symbol["CALM.SH"])
+
+    assert "## 5. 日历与消息面" in trig
+    assert "### 日历提醒（默认 3 日内）" in trig
+    assert "### 公司公告" in trig
+    # 宏观项 + 本股窗口内解禁出现；窗口外解禁不出现
+    assert "8 月 CPI（宏观，来源 event_calendar）" in trig
+    assert "解禁 1.00 亿股（TRIG.SH，来源 event_calendar）" in trig
+    assert "2026-08-20" not in trig
+    # 公告：当日可见标"需读原文"；available_at 未来不显示（点时口径 §2.1）
+    assert "2026 年半年度报告" in trig and "需读原文" in trig
+    assert "重大合同公告（未来可见）" not in trig
+    # 快照计数：TRIG = 宏观 1 + 解禁 1（公告不计入）；CALM = 宏观 1 + 卡片复核 1
+    assert by_symbol["TRIG.SH"].snapshot["calendar_due"] == 2
+    assert by_symbol["CALM.SH"].snapshot["calendar_due"] == 2
+    # CALM：无公告空态 + 卡片复核到期并入
+    assert "今日无新增公告" in calm
+    assert "排期卡复核到期" in calm and "cv_calm" in calm
 
 
 def test_decision_point_and_no_decision(conn, tmp_path):

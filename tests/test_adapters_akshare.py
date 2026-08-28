@@ -448,3 +448,43 @@ def test_akshare_announcement_route_registered():
     import inspect
     src = inspect.getsource(ak_adapter.parse_announcement_csv)
     assert "parse_disclosure_csv" in src and "SOURCE" in src
+
+
+# ---------------------------------------------------------------- source_tier（r2 Phase 1）
+
+def test_announcement_source_tier_one(conn, tmp_path):
+    """r2 Phase 1 信源分级：公告原文入库 events.source_tier=1（tdx/akshare 共用引擎）。"""
+    path = tmp_path / "raw" / "akshare" / "announcement" / "2026-08-26" / "run_ak" / "603605.SH.csv"
+    path.parent.mkdir(parents=True)
+    _write_announcement(path)
+    r = ingest_file(conn, path, source="akshare", data_type="announcement",
+                    symbol="603605.SH", parse=ak_adapter.parse_announcement_csv)
+    assert r.status == "ok", r.summary()
+    ev = conn.execute(
+        "SELECT source_tier FROM events WHERE source='akshare'").fetchone()
+    assert ev["source_tier"] == 1
+
+
+def test_telegraph_source_tier_four(conn, tmp_path):
+    """r2 Phase 1 信源分级：财联社电报入库 events.source_tier=4（财经媒体）。"""
+    path = tmp_path / "telegraph_tier.csv"
+    ch = hashlib.sha256("珀莱雅：上半年净利同比增长".encode()).hexdigest()
+    _telegraph_csv(path, [
+        ["news", "2026-08-25T02:00:00+00:00", "Asia/Shanghai",
+         "珀莱雅：上半年净利同比增长", "", "内容", "cls_2026082510", ch],
+    ])
+    r = ingest_file(conn, path, source="akshare", data_type="telegraph",
+                    symbol=None, parse=ak_adapter.parse_telegraph_csv)
+    assert r.status == "ok", r.summary()
+    ev = conn.execute(
+        "SELECT source_tier FROM events WHERE source='akshare' "
+        "AND event_type='news'").fetchone()
+    assert ev["source_tier"] == 4
+
+
+def test_calendar_route_registered_r2():
+    """ingest 路由表锁定：(akshare, calendar) → adapters/event_calendar.parse_calendar_csv。"""
+    from scripts.adapters import event_calendar as ec
+    from scripts.pipeline.ingest import _ROUTES
+
+    assert _ROUTES[("akshare", "calendar")] is ec.parse_calendar_csv

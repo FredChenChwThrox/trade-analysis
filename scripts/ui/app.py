@@ -366,7 +366,11 @@ def _register_routes(app: Flask) -> None:
 
     @app.get("/cards")
     def page_cards():
-        return render_template("cards.html", cfg=app.config["UI_CONFIG"], active="cards")
+        # r2 Phase 1：日历提醒横幅（卡片复核到期 + event_calendar 到期项，全池级）
+        calendar_alerts = [a for a in queries.get_dashboard_alerts(get_db())
+                           if a.get("type") in ("review_due", "calendar")]
+        return render_template("cards.html", cfg=app.config["UI_CONFIG"],
+                               active="cards", calendar_alerts=calendar_alerts)
 
     @app.get("/runs")
     def page_runs():

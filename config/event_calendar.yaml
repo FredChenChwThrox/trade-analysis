@@ -1,0 +1,43 @@
+# 手工宏观/议息日历种子（消息面 r2 Phase 1，设计 r2 §3.1）
+# 解析：scripts/pipeline/db.py::seed_event_calendar（jsonschema 校验，status: incomplete_todo 跳过）
+# 口径：
+# - 只种已知时点事件；FOMC 日期来自美联储官网 2026 日历（精确）；
+#   国内 CPI/社融/LPR 按发布惯例预填，具体以国家统计局/央行官网发布安排为准（note 内标注）。
+# - 不编造完整年表；后续由人工按季补充（§2.5 不猜）。
+# - 编辑本文件后重跑 `uv run python -m scripts.pipeline.db seed` 即生效（按 cal_id upsert）。
+
+status: ok
+events:
+  # ---- FOMC 2026 剩余议息（来源 federalreserve.gov，声明于第二日美东 14:00） ----
+  - cal_id: fomc_20260916
+    kind: fomc
+    symbol: null
+    scheduled_date: "2026-09-16"
+    note: "FOMC 议息（9/15-16），声明美东 9/16 14:00（北京时间 9/17 凌晨）"
+  - cal_id: fomc_20261028
+    kind: fomc
+    symbol: null
+    scheduled_date: "2026-10-28"
+    note: "FOMC 议息（10/27-28），声明美东 10/28 14:00（北京时间 10/29 凌晨）"
+  - cal_id: fomc_20261209
+    kind: fomc
+    symbol: null
+    scheduled_date: "2026-12-09"
+    note: "FOMC 议息（12/8-9，含 SEP 点阵图），声明美东 12/9 14:00（北京时间 12/10 凌晨）"
+
+  # ---- 国内月度数据（惯例预填，以官方发布安排为准） ----
+  - cal_id: macro_cpi_202609
+    kind: macro_release
+    symbol: null
+    scheduled_date: "2026-09-09"
+    note: "中国 8 月 CPI/PPI（国家统计局，惯例每月 9 日左右 9:30 发布，以官网为准）"
+  - cal_id: macro_tsfl_202609
+    kind: macro_release
+    symbol: null
+    scheduled_date: "2026-09-11"
+    note: "中国 8 月社融/信贷（央行，惯例每月 10-15 日间发布，暂记 11 日，以官网为准）"
+  - cal_id: macro_lpr_202609
+    kind: macro_release
+    symbol: null
+    scheduled_date: "2026-09-21"
+    note: "LPR 报价（央行，惯例每月 20 日 9:00，节假日顺延，以官网为准）"

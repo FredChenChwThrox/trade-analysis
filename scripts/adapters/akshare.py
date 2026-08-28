@@ -13,7 +13,7 @@ akshare 采集器（scripts/collect/akshare_collect.py）落盘列与既有 adap
   indicators.valuation.load_group_total_snapshot；与 kimi 源可切换：同 effective_at
   已有其他来源同股本快照幂等跳过，股本不一致记 conflict）
 - telegraph → events + event_symbols（source_external_id/content_hash 去重，§3.6；
-  股票关联按 watchlist 名称/别名/symbol 匹配）
+  股票关联按 watchlist 名称/别名/symbol 匹配；source_tier=4 财经媒体，r2 §2.1）
 
 口径（对齐库 schema，§3.2/§9.5）：
 - 成交量已在采集器层 ×100 换为「股」；成交额「元」直接入库；
@@ -330,12 +330,13 @@ def parse_telegraph_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str
             """
             INSERT INTO events (event_id, event_type, event_at, published_at,
                 published_tz, available_at, title, summary, canonical_url,
-                source, source_external_id, content_hash, raw_object_id, ingested_at)
-            VALUES (?, 'news', NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+                source, source_external_id, content_hash, raw_object_id, ingested_at,
+                source_tier)
+            VALUES (?, 'news', NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
             """,
             (event_id, published_at, published_tz, published_at,
              title, summary, SOURCE, ext_id or None, content_hash or None,
-             raw_object_id, now),
+             raw_object_id, now, announcements.SOURCE_TIER_TELEGRAPH),
         )
         # 股票关联
         text = f"{title} {content}"

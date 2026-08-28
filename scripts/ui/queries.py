@@ -12,6 +12,7 @@ import json
 import sqlite3
 from datetime import date, datetime, timedelta
 
+from scripts.signals import calendar_due  # r2 Phase 1：日历到期提醒（只读查询复用）
 # 价格刻度类指标：与价格轴同量纲，不复权展示时需要 ÷ 当日因子折回（§5.1）
 PRICE_SCALE_FIELDS = {
     "ma5", "ma10", "ma20", "ma60", "ma120", "ma250",
@@ -1392,6 +1393,15 @@ def get_dashboard_alerts(conn: sqlite3.Connection) -> list[dict]:
         alerts.append({"symbol": r["symbol"], "type": "review_due",
                        "message": f"复核到期 {r['next_review_at']}",
                        "card_version_id": r["card_version_id"]})
+
+    # r2 Phase 1：event_calendar 到期项并入（窗口按每行 remind_before_days，
+    # 含两端边界；card_review 派生项已由上方 review_due 覆盖，跳过避免重复）
+    for it in calendar_due.due_items(conn, now):
+        if it["kind"] == calendar_due.KIND_CARD_REVIEW:
+            continue
+        who = it["symbol"] or "宏观"
+        alerts.append({"symbol": it["symbol"], "type": "calendar", "date": it["date"],
+                       "message": f"{it['note'] or it['kind']}（{who}）"})
 
     return alerts
 

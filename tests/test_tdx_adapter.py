@@ -536,3 +536,14 @@ def test_ingest_cli_routes_tdx_quotes(conn, tmp_path):
     assert total.status == "ok"
     assert total.inserted == 1
     assert _count(conn, "share_capital_events") == 1
+
+
+def test_announcement_source_tier_one(conn, tmp_path):
+    """r2 Phase 1 信源分级：tdx 公告经公共引擎入库 events.source_tier=1。"""
+    p = write(tmp_path, "raw/tdx/announcement/2026-08-07/run_t2/603605.SH_p1.csv", ANN)
+    r = ingest_file(conn, p, source="tdx", data_type="announcement",
+                    symbol="603605.SH", parse=tdx.parse_announcement_csv)
+    assert r.status == "ok", r.summary()
+    rows = conn.execute(
+        "SELECT source_tier FROM events WHERE event_type='announcement'").fetchall()
+    assert rows and all(row["source_tier"] == 1 for row in rows)

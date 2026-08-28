@@ -1167,3 +1167,19 @@
 - **范围圈定**：只做 Phase 1，做完即停等人工 review；Phase 2–4（macro_factors/flow 采集/LLM 评价链/judgments）明令禁止夹带。
 - **落点核实**（explore 代理只读核查）：迁移由 `db.py:41 migrate()` 按文件名自动发现；公告入库链路已通（akshare_collect 有 announcement 源但不在默认 --sources；ingest._ROUTES 已路由至 announcements.py 公共引擎）；报告七段结构锁在 `test_report.py:224`，新段插"观察点"与"衰竭信号"之间需同步改断言；卡片复核到期提醒（queries.py get_dashboard_alerts review_due）为日历横幅现成复用模板；项目此前无任何事件日历实现。
 - 无代码/库变更。
+
+## 2026-08-28（续⑩：消息面 r2 Phase 1 实现——日历层 + 公司公告）
+
+- **基线**：先提交存量未提交工作（`6ddf849`：公告公共引擎/backtest/23 股扩池/r1-r2 设计稿），Phase 1 全部改动单独成提交。
+- **migration 0003**（`0003_message_calendar.sql`）：新表 `event_calendar`（cal_id PK + idx_event_calendar_date）；`events` 扩 `scope`/`source_tier`；`watchlist` 扩 `industry_code`/`themes_json`。真实库已迁移（备份 `data/market.db.bak_20260828`），重跑幂等验证通过。测试 `test_db.py` 迁移清单断言同步 +`test_event_calendar.py` 建表/幂等用例。
+- **信源分级**：常量收敛在 `adapters/announcements.py`（`SOURCE_TIER_ANNOUNCEMENT=1`/`SOURCE_TIER_TELEGRAPH=4`）；公告走公共引擎（tdx+akshare 两源同时覆盖），电报在 akshare 薄壳写 4；tyc/kimi 历史公告路径保持 NULL（=未分级，不回填推断，database_schema §6 已写明语义）。
+- **采集**：akshare_collect 默认 `--sources` 加 `announcement`（文档命令示例同步）；新增 `calendar` 源（`--calendar-period` 必填，不做默认推断——`--end` 硬编码教训）：`stock_report_disclosure`（全市场拉取仅留 watchlist 行，scheduled_date 取"当前预约"=三次变更依次覆盖）+ `stock_restricted_release_queue_em`（逐股，仅留采集日后未来行）→ `calendar/{date}/{run_id}/{report_disclosure,unlock}.csv`。新增 adapter `scripts/adapters/event_calendar.py`（stem 分派；cal_id 确定性哈希 `INSERT ON CONFLICT DO NOTHING` 幂等；ingest 路由 `("akshare","calendar")`）。**真实采集已验证**：半年报期次 23 只披露预约（神华/美的/南航 08-29、长电 08-31 落入提醒窗）+ 解禁 7 行落盘。
+- **采集踩坑**：`pandas.NaT` 也有 `strftime` 属性但调用即抛 ValueError——`_date_str` 需 try/except 吞掉（首采 disclosure 全体 ERROR 后修复重采）。
+- **手工种子**：`config/event_calendar.yaml`（FOMC 2026-09-16/10-28/12-09 精确值，来源 federalreserve.gov 官网核对；国内 CPI 9/9、社融 11、LPR 20 按惯例预填，note 注明以官方为准）；`db.py::seed_event_calendar` jsonschema 校验 + incomplete_todo 跳过 + cal_id upsert，挂入 `seed()`。watchlist.yaml 23 只补 `themes`（人工判读行业词）；`industry_code` 全部留 NULL（无可靠东财 BK 码来源，§2.5 不猜，待人工补）。
+- **到期查询**：新模块 `scripts/signals/calendar_due.py::due_items`——event_calendar 行（窗口按每行 remind_before_days，**含两端边界日**）union active 卡 `next_review_at <= as_of`（card_review 派生项）；`relevant_to_symbol` 单股过滤（本股+宏观+本股卡）。报告与 UI 共用。
+- **报告新段**：`## 5. 日历与消息面` 插入观察点与衰竭信号之间（**原 5/6/7 段顺延为 6/7/8**，标题/注释/docstring/test 八段断言同步）：`### 日历提醒（默认 3 日内）` + `### 公司公告`（`substr(available_at,1,10) = as_of` 日期化比较——直接 `available_at <= as_of` 对 datetime/日期字符串恒 False，r2 简写不可照抄；置顶"需读原文"，无公告写"今日无新增公告"）；`input_snapshot_json` 加 `calendar_due` 计数。
+- **UI**：`get_dashboard_alerts` 并入 event_calendar 到期项（card_review 由原 review_due 覆盖不重复）；`page_cards` 过滤 review_due+calendar 传模板，`cards.html` 顶部横幅（Tailwind 琥珀色，无到期不渲染）。
+- **测试 456 项全绿**（443→456，净增 13）：新 `tests/test_event_calendar.py` 6 项（迁移/种子校验与 upsert/窗口边界/CSV 幂等/路由锁定）+ source_tier 3 项（akshare 公告=1、电报=4、tdx 公告=1）+ UI 横幅 2 项（有到期渲染/空态不渲染）+ 报告段 1 项（窗口边界/公告点时可见性/空态/快照计数）+ 测试文件内既有用例更新（八段断言、_add_card next_review 参数化、迁移清单）。
+- **端到端冒烟**（临时库副本，真实库除 migration 外未写）：真实日历 CSV ingest 30 行 → 601088.SH 报告"日历提醒"正确给出 08-29 披露预约（首次预约 08-31 已变更）；Flask 实起 `/cards` 横幅渲染 5 条披露提醒（curl 验证）后即停。
+- **真实库状态**：event_calendar 表已建但**数据为空**——种子与采集行待人工核对后按 handoff §3 命令入库（r2 §3.1"批量拉取后人工核对入库"纪律）。
+- **偏差/决定**：①报告与横幅不再叠加 kind 中文标签（note 在来源端自描述，消除"财报披露预约：财报披露预约"式重复）；②报告日历提醒行固定附"检查头寸是否落在计划档位内"尾注（r2 §3.1 提醒语义）；③事件日历行不做时点校验降级（非 §2.1 计算输入，仅提醒用途）。

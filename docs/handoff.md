@@ -7,7 +7,7 @@
 
 - Python ≥3.12，用 **uv** 管理：依赖 `pyproject.toml`（pandas/pyyaml/jsonschema/flask，dev: pytest），锁文件 `uv.lock`。
 - 所有命令前缀 `uv run`；包下载失败时走系统代理。
-- 测试：`uv run pytest -q`（当前 389 项，全绿才算完成）。
+- 测试：`uv run pytest -q`（当前 456 项，全绿才算完成）。
 - 数据库：SQLite `data/market.db`（schema `scripts/pipeline/migrations/0001_init.sql`，`scripts/pipeline/db.py` 的 `migrate` 建库）。
 - 数据源（2026-08-21 起）：**通达信 tdx-connector 第一优先**（`scripts/adapters/tdx.py`，A 股+港股+指数行情+公告+估值/股本快照，采集规范 `skills/tdx-collect/SKILL.md`）；kimi-datasource 兜底（`stock_finance_data` A 股全量 + `yahoo_finance` 港股/股本/FX，access_token 易失效需 `/login`，公告接口自 8/13 持续 EMPTY_DATA）；tianyancha 公告补采兜底；- **akshare 采集器**（可选数据源，字段对齐现有 adapter 约定，实测通过）：`scripts/collect/akshare_collect.py` + `scripts/adapters/akshare.py`，sources = price/forward/financials/index/telegraph/**forecast/stock_info/announcement**（后三者 2026-08-26 新增：forecast=同花顺盈利预测，stock_info=东财股本结构集团总股本快照，均仅 A 股；announcement=巨潮 cninfo 公告，2026-08-27 补齐采集侧：接口日期参数须紧凑 YYYYMMDD，采集落盘标准公告线格式后经公共引擎薄壳入库，events.source='akshare' 与 tdx dedup 命名空间隔离；与 kimi 源可切换，stock_info 跨源同股本幂等跳过/异股本冲突）；需 `uv sync --extra akshare`；财联社电报→events、财报披露日 NOTICE_DATE 回填、指数全历史、A/H 行情，字段对齐既有 adapter 约定）。接口探测记录见 `docs/probe_20260809_stock_finance_data.md`、`docs/probe_20260815_tianyancha.md`、`docs/probe_20260821_tdx.md`。**港股源已通过 tdx 接入**（setcode=31，0700.HK 在 watchlist 待采集）。
 
@@ -80,7 +80,12 @@ uv run python -m scripts.ui.app --port 5001        # 覆盖 host/port
 # akshare 可选源（字段对齐现有 adapter 约定；先 uv sync --extra akshare）
 uv run python -m scripts.collect.akshare_collect \
     --symbols 603605.SH --indexes 000300.SH,^HSI \
-    --sources price,financials,index,telegraph --date 2026-08-26 --run-id run_ak
+    --sources price,financials,index,telegraph,announcement --date 2026-08-26 --run-id run_ak
+# announcement（cninfo 公告）2026-08-28 起进默认 sources（r2 Phase 1）；日历源手触发：
+# uv run python -m scripts.collect.akshare_collect --sources calendar \
+#     --date 2026-08-28 --run-id run_calendar --calendar-period 2026半年报
+# （期次必填不做默认推断；--sources calendar 落盘 calendar/{date}/{run_id}/ 后
+#  `uv run python -m scripts.pipeline.ingest data/raw/akshare/calendar` 入库 event_calendar）
 # forward=qfq 前复权（{symbol}_forward.csv，供 adjust 用，ingest 自动跳过）；
 # --price-api sina 切新浪备用源（A 股专用，东财 push2his 不可达时用）
 uv run python -m scripts.pipeline.ingest data/raw/akshare/{financials,telegraph,index}
@@ -111,10 +116,11 @@ uv run python -m scripts.pipeline.ingest data/raw/akshare/{financials,telegraph,
 - （2026-08-28 补记⑥）入池中国神华 601088.SH / 长江电力 600900.SH / 陕西煤业 601225.SH（watchlist 23 只）：六源采集 + daily 首跑 ok=23，无卡期 degraded 属预期。两个踩坑：①东财 push2his 代理断连致 price 静默丢源，改 `--price-api sina` 重采（新入池首采后必须核对各源 CSV 实际落盘）；②新入池时 stock_info 需等价格入库后单独回补（否则股本快照校验失败回滚整股阶段）。神华 2025-08 重组停牌 10 日无 bar 属正常。恒力石化同日完成首期卡复核并激活 600346SH_9b168869（effective 2026-08-31，next_review 2026-10-31）。详见执行日志 2026-08-28 各节。
 - （2026-08-28 补记⑦）三连卡 draft 入库（待人工激活）：神华 601088SH_19b6dcd0 / 长电 600900SH_a8c0c9a4 / 陕煤 601225SH_5a669742，均 next_review 2026-10-31。锚选择：神华/长电类债股息率主锚（PE 机器层映射）、陕煤强周期（PB 缺口=人工项）。共同缺口：系统无分红/PB 序列（corporate_actions 空），股息率/PB 精确核对=激活前人工项；神华/长电中报未披露=激活后立即复核触发器。详见执行日志 2026-08-28（续③）。
 - （2026-08-28 补记⑧）三连卡激活前立即复核完成（一次性 akshare 探测+公告簿核对，不入管线）：神华股息率锚（2025 DPS 2.01/分红率 75.6%，T1 区 4.6%+）、长电分红承诺续期确认（2026-2030 规划公告在公告簿，原最大缺口闭合；T1 区 3.65-3.80%）、陕煤底部 PB 带 1.9-2.1x 全部通过；档价/矩阵零改动。draft 换版：601088SH_ca2eab78 / 600900SH_4988e3fb / 601225SH_a0f29c77（取代初版，待人工激活）。教训：分红承诺类核对先查公告簿再外探。详见执行日志 2026-08-28（续③④）。
+- （2026-08-28 补记⑨）**消息面研判 r2 Phase 1 完成**（设计 `docs/superpowers/specs/2026-08-28-message-eval-design-r2.md` §13，交接 `...-phase1-handoff.md`；做完即停等人工 review）：migration 0003（event_calendar + events.scope/source_tier + watchlist.industry_code/themes_json，真实库已迁移、备份 `data/market.db.bak_20260828`）；公告（cninfo）进 akshare 采集默认 sources 且事件带 tier=1（电报=4；tyc/kimi 历史公告路径 NULL=未分级）；`config/event_calendar.yaml` 手工宏观种子（FOMC 2026 剩余日程精确，CPI/社融/LPR 按惯例预填待官方确认）；日历采集 `--sources calendar --calendar-period <期次>`（期次必填，披露预约 23 只 + 解禁 7 行已实测落盘）；报告新增"## 5. 日历与消息面"（原 5/6/7 段顺延为 6/7/8，快照加 calendar_due 计数）；/cards 顶部日历横幅。industry_code 全部留 NULL 待人工补东财 BK 码。**真实库 event_calendar 当前为空**：种子（`db seed`）与采集行待人工核对后按 handoff §3 命令入库（冒烟在临时库副本完成，全链路已验证）。Phase 2–4 未动。
 
 ## 6. 常见任务怎么做
 
 - **加跟踪股票**：config/watchlist.yaml 加行 → 采集 3 年日线（init_collect 或 mcp_client）→ adjust/weekly/compute/weekly_signals 逐个跑或直接跑 daily --raw-dir → 无卡期间日报 degraded(no_active_card) 属预期。
 - **改信号阈值**：config/signals.yaml（defaults；overrides 第一版不用）→ 重跑对应信号模块 → config_hash 随事实入库可追溯。锚点/衰竭/吸筹参数先过人工核对期。
 - **加新信号**：照 `scripts/signals/accumulation.py` 模式（每日一行 signal_facts + DELETE 重插 + pipeline_runs 记录 + CLI），接入 daily.py 信号链，report.py 加展示，配 tests。
-- **排查数据疑问**：先看报告"7. 来源与异常"段与 signal_facts.details_json（含阈值/原值/原因码），再核对口径（复权 vs 不复权）。
+- **排查数据疑问**：先看报告"8. 来源与异常"段与 signal_facts.details_json（含阈值/原值/原因码），再核对口径（复权 vs 不复权）。

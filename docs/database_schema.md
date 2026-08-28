@@ -35,6 +35,7 @@
 | events | [事实] | event_id | 公告/新闻事件事实（不含评价） | adapters/stock_finance_data.py, adapters/tianyancha.py |
 | event_symbols | [事实] | (event_id, symbol) | 事件-股票关联 | adapters/stock_finance_data.py |
 | event_assessments | [决策] | (event_id, symbol, assessment_version) | LLM 消息评价版本（未接入） | —（D3 预留） |
+| event_calendar | [事实/配置混合] | cal_id | 已知时点事件（披露预约/解禁/宏观种子；0003，r2 Phase 1） | collect/akshare_collect.py（--sources calendar）、pipeline/db.py（manual 种子） |
 | financial_reports | [事实] | report_id；UNIQUE(symbol, period_end, period_type, is_cumulative, revision) | 财报头（修订新增 revision） | adapters/stock_finance_data.py |
 | financial_facts | [事实] | report_id（引用） | 财务事实（营收/归母净利/EPS/股本） | adapters/stock_finance_data.py |
 | share_capital_events | [事实] | sce_id | 股本变动事件/快照 | indicators/valuation.py |
@@ -105,6 +106,8 @@
 | benchmark_code | 基准指数（000300.SH / ^HSI，可按股票覆盖，§3.5） |
 | currency / timezone | 交易币种 / 市场本地时区 |
 | active | 0/1，每日管线只处理 active=1 |
+| industry_code | 东财 BK 行业码（0003，r2 §3.1）。Phase 1 无可靠来源全部留 NULL 待人工补（§2.5 不猜） |
+| themes_json | 主题词 JSON 数组，如 `["铜", "黄金"]`（0003，Phase 1 已随 yaml 预填人工判读值；Phase 3 词边界关联用） |
 
 ### trading_calendar — 交易日历 [事实]
 
@@ -150,10 +153,15 @@ UNIQUE(symbol, ex_date, action_type)。字段：ex_date（除权除息生效日�
 ### events — 公告/新闻事实 [事实]
 
 只存事实字段，不混 LLM 评价（§3.6）。event_id PK；event_type（announcement/news）；三时点（§2.1）：event_at（实际发生，可空）、published_at + published_tz（来源发布）、available_at（系统允许参与计算的最早时间）；title/summary/canonical_url；去重：source_external_id 优先，content_hash 其次。索引 published_at、(source, source_external_id)。
+**0003 扩列（r2 Phase 1，2026-08-28）**：`scope`（macro/policy/industry/company/flow——只建列，Phase 1 不填充）；`source_tier` 信源分级（r2 §2.1：公告/交易所原文=1——tdx 与 akshare 公告共用 `adapters/announcements.py` 引擎写入；财联社电报=4；**NULL=未分级**，tianyancha/stock_finance_data 等历史公告路径与 0003 之前入库的行保持 NULL，不做回填推断）。
 
 ### event_symbols — 事件-股票关联 [事实]
 
 (event_id, symbol) 复合主键，一条事件可关联多股。
+
+### event_calendar — 已知时点事件表 [事实/配置混合]（0003，r2 §3.1）
+
+L0 日历层：财报披露预约、解禁日程、宏观/议息种子。cal_id PK（akshare 采集行 = `cal_`+sha256(f"akshare|{kind}|{symbol}|{scheduled_date}")[:16] 确定性派生，重跑幂等 `ON CONFLICT DO NOTHING`；手工种子 cal_id 人工命名空间互不冲突）；kind（report_disclosure/unlock/macro_release/fomc；card_review 为派生项不落表，查询时 union `strategy_card_versions`）；symbol（宏观类 NULL）；scheduled_date（市场本地日期）；source（'akshare' 采集 / 'manual' `config/event_calendar.yaml` 种子，`scripts/pipeline/db.py::seed_event_calendar` jsonschema 校验 + incomplete_todo 跳过 + cal_id upsert）；remind_before_days（默认 3，提醒窗口按行计算含两端边界）；note（自描述事实文本）；raw_object_id；ingested_at。索引 scheduled_date。采集：`akshare_collect --sources calendar --calendar-period <期次>`（手触发）→ `adapters/event_calendar.py`（ingest 路由 `("akshare","calendar")`，仅 watchlist 行）。消费：`scripts/signals/calendar_due.py::due_items`（报告日历提醒 + /cards 横幅共用）。
 
 ### event_assessments — LLM 消息评价 [决策]
 

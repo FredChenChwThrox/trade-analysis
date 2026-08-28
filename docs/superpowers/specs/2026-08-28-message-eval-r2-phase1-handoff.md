@@ -62,9 +62,19 @@ ALTER TABLE watchlist ADD COLUMN themes_json TEXT;
 ### 3.5 报告新增段（`scripts/pipeline/report.py`）
 
 - 单股报告 `build_symbol_report()`（report.py:180，现有七段：运行状态/当前定位/决策点/观察点/衰竭信号/指标快照/来源与异常）**在"观察点"（report.py:404 起）与"衰竭信号"（report.py:478 起）之间**插入新段，渲染逻辑在 report.py:332-610 区间：
-  - `### 日历提醒`：未来 3 日的 event_calendar 到期项（该股相关 + 宏观项）+ 该股卡片 next_review 倒计时（观察点段已有类似逻辑 report.py:463-466，可复用查询不重复造）。
-  - `### 公司公告`：当日 `available_at <= as_of` 的该公司公告（events event_type='announcement'），置顶、每条标"需读原文"。无公告时显示"今日无新增公告"，不省略整段。
-- 段标题与 r2 §8.1 对齐（`## 4.x 日历与消息面`，Phase 1 只含日历+公告两个子节；"消息面"子节是 Phase 3 的事，本次**不要**留空占位标题）。
+- `### 日历提醒`：到期窗口按每行 `remind_before_days`（含两端边界日：scheduled_date BETWEEN
+  as_of AND as_of+remind_before_days），段标题表述用"默认 3 日"而非写死；event_calendar 到期项
+  （该股相关 + 宏观项）+ 该股卡片 next_review 倒计时（观察点段已有类似逻辑 report.py:463-466，可复用查询不重复造）。
+- `### 公司公告`：当日 `available_at` 日期 == as_of 的该公司公告（events
+  event_type='announcement'），置顶、每条标"需读原文"。无公告时显示"今日无新增公告"，不省略整段。
+  **注意**：`available_at` 是 UTC ISO datetime，`as_of` 是日期字符串，SQL 里直接
+  `available_at <= as_of` 按字符串比较恒 False（r2 简写在 SQLite 不可照抄）——必须日期化比较
+  （`substr(available_at,1,10) = as_of`）。
+- 段标题与 r2 §8.1 对齐（r2 的 `## 4.x` 是占位符）：**实际编号取 `## 5. 日历与消息面`**，
+  插入后原"衰竭信号/指标快照/来源与异常"顺延为 6/7/8——report.py:478/:510/:580 三个
+  标题、:477/:509/:579 区间注释、:178/:332 的"七段"注释与模块 docstring 一并改；
+  UI 与 daily 不依赖标题文本，execution_log 历史条目不改。新增代码统一加
+  `# r2 Phase 1` 标记注释（区分度要求）。
 - `input_snapshot_json`（组装在 report.py:613-623）加 `calendar_due` 计数；写入逻辑（`_insert_report_run` report.py:639-655）不动。
 - **同步更新** `tests/test_report.py::test_single_report_seven_sections`（test_report.py:224）——它锁死七段标题，加段后改为八段断言；模块 docstring 同步。
 
@@ -87,7 +97,9 @@ ALTER TABLE watchlist ADD COLUMN themes_json TEXT;
 ### 3.8 文档纪律（AGENTS.md 硬性要求）
 
 - 每个改动追加 `docs/execution_log.md`（格式仿最近条目：日期 + 节标题 + 要点列表）。
-- `docs/database_schema.md`：event_calendar 新表节 + events/watchlist 新列说明。
+- `docs/database_schema.md`：event_calendar 新表节 + events/watchlist 新列说明；
+  **写明 `events.source_tier` 的 NULL 语义**（=未分级：tdx/akshare 公告写 1、电报写 4，
+  tianyancha/kimi 等历史公告路径与 Phase 1 前入库行保持 NULL）。
 - `docs/system_design.md`：§3.6 来源矩阵把 cninfo 公告标为已接 daily；§8.1 步骤 6 注释更新；§6.2 报告结构加段说明。
 - `docs/handoff.md` 当前状态节：消息面 Phase 1 完成情况。
 
