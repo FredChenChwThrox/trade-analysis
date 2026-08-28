@@ -106,7 +106,7 @@
 | benchmark_code | 基准指数（000300.SH / ^HSI，可按股票覆盖，§3.5） |
 | currency / timezone | 交易币种 / 市场本地时区 |
 | active | 0/1，每日管线只处理 active=1 |
-| industry_code | 东财 BK 行业码（0003，r2 §3.1）。Phase 1 无可靠来源全部留 NULL 待人工补（§2.5 不猜） |
+| industry_code | 东财细分行业 BK 码（0003，r2 §3.1）。2026-08-28 经 push2delay 反查全市场板块归属回填 23 只（取每股所属最细三级板块，新分级唯一；详见执行日志当日条目） |
 | themes_json | 主题词 JSON 数组，如 `["铜", "黄金"]`（0003，Phase 1 已随 yaml 预填人工判读值；Phase 3 词边界关联用） |
 
 ### trading_calendar — 交易日历 [事实]

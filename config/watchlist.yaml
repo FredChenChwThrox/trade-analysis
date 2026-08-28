@@ -9,7 +9,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1498  # 品牌化妆品
     themes: [化妆品, 美容护理]
   - symbol: 603288.SH
     market: CN
@@ -18,7 +18,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1576  # 调味发酵品Ⅲ
     themes: [调味品, 食品饮料]
   - symbol: 601318.SH
     market: CN
@@ -27,7 +27,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1358  # 保险Ⅲ
     themes: [保险, 金融]
   - symbol: 002747.SZ
     market: CN
@@ -36,7 +36,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1408  # 机器人
     themes: [机器人, 工业自动化]
   - symbol: 601899.SH
     market: CN
@@ -45,7 +45,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1615  # 铜
     themes: [铜, 黄金, 有色金属]
   - symbol: 600029.SH
     market: CN
@@ -54,7 +54,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1479  # 航空运输
     themes: [航空, 油价, 汇率]
   - symbol: 600531.SH
     market: CN
@@ -63,7 +63,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1614  # 铅锌
     themes: [铅, 贵金属, 有色金属]
   - symbol: 600346.SH
     market: CN
@@ -72,7 +72,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1569  # 炼油化工
     themes: [炼化, 油价, 聚酯]
   - symbol: 002709.SZ
     market: CN
@@ -81,7 +81,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1302  # 电池化学品
     themes: [锂电, 电解液, 新能源]
   - symbol: 002714.SZ
     market: CN
@@ -90,7 +90,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1512  # 生猪养殖
     themes: [生猪养殖, 猪价]
   # 2026-08-16 消费筛选核心候选入池（reports/screening/2026-08-16-消费.md）
   - symbol: 002299.SZ
@@ -100,7 +100,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1511  # 肉鸡养殖
     themes: [白羽鸡, 农业]
   - symbol: 002557.SZ
     market: CN
@@ -109,7 +109,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1583  # 零食
     themes: [坚果炒货, 食品饮料]
   - symbol: 603697.SH
     market: CN
@@ -118,7 +118,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1583  # 零食
     themes: [休闲食品, 食品饮料]
   - symbol: 601168.SH
     market: CN
@@ -127,7 +127,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1615  # 铜
     themes: [铜, 有色金属]
   # 2026-08-23 加入：新入池个股（待采集 3 年日线 + adjust/weekly/compute/weekly_signals）
   - symbol: 600563.SH
@@ -137,7 +137,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1339  # 被动元件
     themes: [薄膜电容, 电子元件]
   - symbol: 600309.SH
     market: CN
@@ -146,7 +146,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1426  # 聚氨酯
     themes: [化工, MDI]
   # 2026-08-24 加入（待采集 3 年日线 + adjust/weekly/compute/weekly_signals）
   - symbol: 000001.SZ
@@ -156,7 +156,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1610  # 股份制银行Ⅲ
     themes: [银行, 金融]
   # 2026-08-26 加入（待采集 3 年日线 + adjust/weekly/compute/weekly_signals）
   - symbol: 603993.SH
@@ -166,7 +166,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1615  # 铜
     themes: [铜, 钴, 有色金属]
   # 2026-08-27 加入：白电双龙头（采集 price/forward/financials/announcement）
   - symbol: 000333.SZ
@@ -176,7 +176,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1450  # 空调
     themes: [家电, 白色家电]
   - symbol: 000651.SZ
     market: CN
@@ -185,7 +185,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1450  # 空调
     themes: [家电, 白色家电]
   # 2026-08-28 加入：能源三标的（煤电一体化/水电/煤炭，采集 price/forward/financials/announcement/forecast/stock_info）
   - symbol: 601088.SH
@@ -195,7 +195,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1493  # 动力煤
     themes: [煤炭, 电力, 煤电一体化]
   - symbol: 600900.SH
     market: CN
@@ -204,7 +204,7 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1380  # 水力发电
     themes: [水电, 公用事业]
   - symbol: 601225.SH
     market: CN
@@ -213,5 +213,5 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
-    industry_code: null
+    industry_code: BK1493  # 动力煤
     themes: [煤炭]
