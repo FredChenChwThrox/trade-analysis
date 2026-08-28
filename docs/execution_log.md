@@ -1184,6 +1184,14 @@
 - **真实库状态（8/28 晚终态）**：event_calendar = 6 手工种子 + 30 采集行（半年报批次披露预约 23 + 解禁 7）；用户批准执行 `db seed`（6 行）与 calendar 采集入库；2026三季预约源侧为空（三季报 10 月披露、预约表 9 月底才有），届时补采 `--calendar-period 2026三季`。
 - **偏差/决定**：①报告与横幅不再叠加 kind 中文标签（note 在来源端自描述，消除"财报披露预约：财报披露预约"式重复）；②报告日历提醒行固定附"检查头寸是否落在计划档位内"尾注（r2 §3.1 提醒语义）；③事件日历行不做时点校验降级（非 §2.1 计算输入，仅提醒用途）。
 
+## 2026-08-28（盘后 daily：修复后 ok=23；origin 起点踩坑；日历层首批数据入库）
+
+- **采集**：默认五源 + forward 补采（sina 源，显式 `--end 2026-08-28`），run-id `run_daily_20260828`。⚠️ 新坑：23 只 × 5 源全量重采集超 900s 被超时中断，announcement 停在中段（仅 8/23 落盘）——采集器无断点续跑，按 `--sources forward,announcement` 单源补跑完成（幂等，重采 8 只内容一致）。最终 price/forward/financials/index/telegraph/announcement = 23/23/23/2/1/23 全 ok，23 只当日 bar 齐（收盘抽查与源一致：603605 收 61.35 等）。
+- **daily 一跑 failed=2**（600531/603697，P1 回滚）：`ValueError: origin 日 2023-08-09 不在因子序列内`。根因链：新采 sina forward 成为该股最新 forward 文件 → `check_factor_change` 跨源比对（库内 kimi 系因子 vs sina qfq）在重叠窗口贴/越 0.1% 容差判"变化" → 防御性重建 origin 取库内最早 bar（2023-08-09）→ 采集 `--start` 用了 argparse 默认 2023-08-10，forward 序列缺 08-09 → 崩。**修复**：两股改 `--start 2023-08-09`（对齐库内 origin）重采 price+forward → daily 幂等重跑 **ok=23**，全池日报 revision=2。**教训：每日增量 `--start` 不得高于池内最早库内 bar（现 2023-08-09）**——argparse 默认 2023-08-10 对 08-09 起池的 6 只（603605/000333/000651/600900/601088/601225）是同款隐患，今日未崩仅因未判"因子变化"，一旦除权即触发。
+- **因子重建**：600531 v44 / 603697 v45（origin 2023-08-09，sina 平台段口径；vs 旧 kimi 系因子微调 +0.10% / −0.04%，信号口径实质不变，周线/指标/信号随管线原子重算）；603993 v43+v46——**连续第 4 日同内容防御性重建**（source_factor_at_origin 均 0.93966，max_dev 恒贴 0.1% 容差），"贴阈不稳定"复现且每次 daily 必触发，待专项排查根因。
+- **日历层首批数据入库（r2 Phase 1 收尾）**：① manual 种子 6 行（FOMC 3 + 宏观 3）随今晚 21:13 一次 `db seed` 入库——即续⑪ industry_code 同步所跑的 seed()，`seed_event_calendar` 挂在其内一并生效（续⑪"种子仍未入真实库"记载先于该 seed，以库实查为准）；② akshare 日历 30 行（半年报披露预约 23 + 解禁 7，与 Phase 1 冒烟同源文件）由本次 daily 的 other-files 循环自 `data/raw/akshare/calendar/` 扫入——"待人工核对再入库"被例行管道事实性绕过（内容与冒烟一致、无冲突；如需回滚删 `event_calendar WHERE source='akshare'` 30 行即可）。报告"5. 日历与消息面"实数据生效：陕煤披露预约 08-28、神华（首次预约 08-31 已变更至 08-29）/美的/南航 08-29、长电 08-31；今日 23 只公告簿无新增。
+- **结果**：ok=23；报告 14 complete + 9 degraded（恒力/万华/美的/格力/法拉/西矿/神华/长电/陕煤 no_active_card，卡 2026-08-31 生效，§2.5 预期）。P1/P2 空；P3 三项：南航 T1（5.06，第 2 日）、有友 T1（9.56，第 2 日）、平安 sell_zone（55.85，贴 box_high 56.00）；P4 三项：珀莱雅跌出 T1 下沿 0.2%（61.35，−1.59%，昨日 P3 转 P4）、洛钼贴 T2 上沿 0.3%（19.51 持平，第 4 日）、天赐距 T1 上沿 1.8%。指数：000300.SH 增至 08-28（−0.46%）；^HSI 滞后一日（08-27，−0.34%，既有现象）。
+
 ## 2026-08-28（续⑪：industry_code 东财 BK 码回填 + push2 风控处置）
 
 - **背景**：push2/push2his 对本网络整体不可达——诊断矩阵证实**直连与代理出口 IP 双双被服务端拒**（直连 TCP 通但 HTTP 层空响应；真实 Chrome 同样超时，排除 TLS 指纹；akshare 走 macOS 系统代理偶发 200 后归零）。08-26/27 能采是因为当时代理出口尚未进 EM 风控名单。行情历史继续用 `--price-api sina` 绕行；datacenter-web/cninfo 直连恒通不受影响。
@@ -1192,3 +1200,16 @@
 - **回填**：23/23 全部命中——神华/陕煤 BK1493 动力煤、长电 BK1380 水力发电、紫金/西矿/洛钼 BK1615 铜、豫光 BK1614 铅锌、珀莱雅 BK1498 品牌化妆品等；`config/watchlist.yaml` industry_code 写回（含板块名注释），`seed_watchlist` 同步真实库（NULL 归零；事件日历种子仍未入真实库，待人工核对）。
 - **测试**：456 项全绿（yaml 变更无测试面）。
 - **遗留**：①push2 风控解除后 `stock_board_industry_name_em` 等接口恢复，可在 Phase 3 用同一套映射校验/重建 `symbol_industry` 全市场表；②本条映射口径（最细三级）需在 Phase 3 设计时与事件侧行业标签粒度对齐（r2 §5 关联层）。
+
+## 2026-08-28（续⑫：消息面 r2 Phase 2——宏观因子 + flow 静默入库）
+
+- **范围**（r2 §13 Phase 2，无 LLM）：migration 0004 macro_factors；macro 采集（商品/外汇清单驱动）；flow 层（龙虎榜+大宗）静默入 events；电报持续采集=既有 CLI 已覆盖（`--sources telegraph` 本就在默认清单），无需新代码。**解禁已在 Phase 1 完成**；两融（粒度设计未定：全市场余额 vs 个股明细）与热度榜（tier 5 情绪温度计语义）**明确缓办**，不属本期。
+- **落点核实**（逐接口实测）：商品内盘 `futures_zh_daily_sina`（AU0/CU0/I0/RB0/SR0/SC0）、外盘 `futures_foreign_hist`（OIL 布伦特/CL WTI）、外汇 `currency_boc_sina`（央行中间价，缺失回退中行折算价）全部走 **sina 系域名直连可达**；龙虎榜 `stock_lhb_detail_em`、大宗 `stock_dzjy_mrmx` 走 data.eastmoney.com/datacenter-web，**不踩 push2**。
+- **migration 0004**：macro_factors（PK (factor_type,code,trade_date) + idx_macro_factors_recent）。真实库迁移前备份 `data/market.db.bak_20260828`（同日第二份迁移，复用当日备份原则）。
+- **采集**：`--sources macro`（config/macro_factors.yaml 清单驱动，jsonschema 校验；close 存来源原始值，change_pct 来源无则空；单因子失败记 stderr 继续不冒充）+ `--sources flow`（龙虎榜按"股票×日"合并多上榜原因、数值取首行不跨原因加总；大宗每笔一行；仅留 watchlist 行）。**两者进默认 sources**（Phase 3 LLM 需要每日宏观底稿；flow 盘后例行）。**防坑**：flow 查询窗口硬上限 10 天（`--start` 默认 2023 起会让龙虎榜查询跨三年）。
+- **入库**：`adapters/macro_factors.py`（PK upsert，同日重采=事实刷新非版本化）+ `adapters/flow_events.py`（龙虎榜/大宗 → events(event_type='flow', scope='flow', source_tier=3——交易所公开数据的东财聚合加工视图，对齐 r2 §4 flow 3~5；available_at=published_at 当日可得；event_id 确定性哈希幂等）。ingest 路由 `("akshare","macro")`/`("akshare","flow")`。
+- **信源分级常量**：announcements.py 新增 `SOURCE_TIER_FLOW=3`。
+- **真实采集入库**：macro 11/11 因子全实值（沪金 999.28 元/克、布伦特 87.82 美元/桶、USDCNY 中间价 678.11 CNY/100USD 等，全部 08-28 收盘）；flow 龙虎榜 EMPTY（23 只当日无上榜，属正常）、大宗命中紫金两笔（08-21/08-27，摩根大通证券买方、机构专用卖方，折溢价 0%）→ 真实库 macro_factors 11 行 + events flow 2 行。
+- **测试 463 项全绿**（456→463，净增 7）：新 test_macro_factors.py 3 项 + test_flow_events.py 4 项；test_db 迁移清单断言加 0004。
+- **纪律确认**：flow 事件**不进报告、不进日报、不推送**（r2 §8.4）——本期 report.py/日报零改动；公告/电报的 scope 分类仍留 Phase 3（flow 是唯一本期填充的 scope 值）。
+- **偏差/决定**：①龙虎榜/大宗 source_tier 定 3（聚合加工视图）而非交易所原文 tier 1——净买额/折溢价为计算值，与 r2 §4 flow 3~5 对齐；②宏观因子不设 index_proxy 因子（基准指数已有 index_bars 通道），schema 预留；③两融/热度榜缓办理由如上。

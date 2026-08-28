@@ -18,11 +18,12 @@ def test_migrate_idempotent(conn):
         "0001_init.sql",
         "0002_event_assessments_symbol_weekly_anchors_identity.sql",
         "0003_message_calendar.sql",
+        "0004_macro_factors.sql",
     ]
     second = db.migrate(conn)  # 第二遍：已应用的跳过，不报错
     assert second == []
     rows = conn.execute("SELECT version, name FROM schema_migrations").fetchall()
-    assert [r["version"] for r in rows] == [1, 2, 3]
+    assert [r["version"] for r in rows] == [1, 2, 3, 4]
 
 
 def test_foreign_keys_and_wal_enabled(conn):

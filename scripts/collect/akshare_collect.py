@@ -32,6 +32,14 @@
   calendar/{date}/{run_id}/{report_disclosure,unlock}.csv
   → adapters/event_calendar.parse_calendar_csv（ingest 路由 akshare/calendar）；
   期次必须显式 --calendar-period（如 2026半年报），不做默认推断（--end 硬编码教训）
+- macro（r2 Phase 2，进默认 sources）：宏观因子快照（config/macro_factors.yaml 清单驱动，
+  内盘/外盘期货 sina 接口 + 中行外汇牌价"央行中间价"）→ macro/{date}/{run_id}/macro.csv
+  → adapters/macro_factors.parse_macro_csv（ingest 路由 akshare/macro）；
+  close 存来源原始值不换算，来源无涨跌幅则 change_pct 留空
+- flow（r2 Phase 2，进默认 sources）：龙虎榜（stock_lhb_detail_em，按"股票×日"合并
+  多上榜原因）+ 大宗交易（stock_dzjy_mrmx，每笔一行）仅留 watchlist 行 →
+  flow/{date}/{run_id}/{lhb,dzjy}.csv → adapters/flow_events.parse_flow_csv
+  （ingest 路由 akshare/flow；events scope='flow' 静默入库，不推送不进日报）
 
 口径换算（与库 schema 对齐，§3.2/§9.5）：
 - 成交量：东财接口单位「手」，落盘前 ×100 换算为项目 volume_raw 口径「股」（指数不换算）；
@@ -53,15 +61,17 @@ import argparse
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import jsonschema
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WATCHLIST = ROOT / "config" / "watchlist.yaml"
 DEFAULT_OUT = ROOT / "data" / "raw" / "akshare"
+MACRO_CONFIG = ROOT / "config" / "macro_factors.yaml"
 
 CN_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -529,6 +539,148 @@ def collect_calendar_unlock(ak, symbols: list[str], since: str,
     return fp if n else None
 
 
+# ---------------------------------------------------------------- macro（宏观因子快照，r2 Phase 2）
+
+_MACRO_SCHEMA = {
+    "type": "object",
+    "required": ["schema_version", "factors"],
+    "additionalProperties": False,
+    "properties": {
+        "schema_version": {"type": "integer"},
+        "factors": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["factor_type", "code", "name", "market", "unit", "api"],
+                "additionalProperties": False,
+                "properties": {
+                    "factor_type": {"enum": ["commodity", "fx", "index_proxy"]},
+                    "code": {"type": "string"},
+                    "name": {"type": "string"},
+                    "market": {"enum": ["CN", "GLOBAL"]},
+                    "unit": {"type": "string"},
+                    "api": {"enum": ["domestic", "foreign", "boc"]},
+                    "boc_symbol": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
+
+def collect_macro(ak, out_dir: Path, date: str, run_id: str) -> Path | None:
+    """宏观因子快照（config/macro_factors.yaml 清单驱动）→ macro.csv。
+
+    内盘期货 futures_zh_daily_sina(连续合约)/外盘 futures_foreign_hist 取最后一根
+    日线；外汇 currency_boc_sina 取窗口内最后一日"央行中间价"（缺失回退"中行折算价"）。
+    close 存来源原始值；来源无涨跌幅，change_pct 留空（adapter 不计算，r2 §3.2）。
+    单因子失败记 stderr 后继续，不整批中止（§2.5：缺的因子不冒充）。
+    """
+    doc = yaml.safe_load(MACRO_CONFIG.read_text(encoding="utf-8"))
+    jsonschema.validate(doc, _MACRO_SCHEMA)
+    out = out_dir / "macro" / date / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    fp = out / "macro.csv"
+    day = datetime.strptime(date, "%Y-%m-%d")
+    boc_start = _date_compact((day - timedelta(days=10)).date().isoformat())
+    boc_end = _date_compact(date)
+    n = 0
+    with open(fp, "w", newline="", encoding="utf-8") as f:
+        f.write("factor_type,code,name,market,trade_date,close,change_pct,unit\n")
+        for fac in doc["factors"]:
+            try:
+                if fac["api"] == "domestic":
+                    df = ak.futures_zh_daily_sina(symbol=fac["code"])
+                    row, d = df.iloc[-1], _date_str(df.iloc[-1]["date"])
+                    close = _num(row["close"])
+                elif fac["api"] == "foreign":
+                    df = ak.futures_foreign_hist(symbol=fac["code"])
+                    row, d = df.iloc[-1], _date_str(df.iloc[-1]["date"])
+                    close = _num(row["close"])
+                else:  # boc
+                    df = ak.currency_boc_sina(symbol=fac["boc_symbol"],
+                                              start_date=boc_start, end_date=boc_end)
+                    row, d = df.iloc[-1], _date_str(df.iloc[-1]["日期"])
+                    mid = _num(row["央行中间价"])
+                    close = mid or _num(row["中行折算价"])
+            except Exception as e:  # noqa: BLE001
+                print(f"[macro] {fac['code']}: ERROR {e}")
+                continue
+            if not d or not close:
+                print(f"[macro] {fac['code']}: EMPTY（{d or '无日期'}）")
+                continue
+            f.write(",".join([fac["factor_type"], fac["code"],
+                              _csv_escape(fac["name"]), fac["market"], d,
+                              close, "", _csv_escape(fac["unit"])]) + "\n")
+            n += 1
+    return fp if n else None
+
+
+# ---------------------------------------------------------------- flow（龙虎榜 + 大宗，r2 Phase 2）
+
+def collect_flow(ak, symbols: list[str], start: str, end: str,
+                 out_dir: Path, date: str, run_id: str) -> tuple[Path | None, Path | None]:
+    """龙虎榜 + 大宗交易（仅留 watchlist 行）→ flow/{date}/{run_id}/{lhb,dzjy}.csv。
+
+    龙虎榜按"股票×日"合并多上榜原因（数值取首行，不跨原因加总）；大宗每笔一行。
+    返回 (lhb_fp, dzjy_fp)，可为 None（源空/无 watchlist 命中）。
+    """
+    watch = {s.split(".")[0].zfill(6): s for s in symbols
+             if s.endswith((".SH", ".SZ", ".BJ"))}
+    out = out_dir / "flow" / date / run_id
+    out.mkdir(parents=True, exist_ok=True)
+
+    lhb_fp = out / "lhb.csv"
+    n_lhb = 0
+    grouped: dict[tuple[str, str], dict] = {}
+    df = ak.stock_lhb_detail_em(start_date=_date_compact(start),
+                                end_date=_date_compact(end))
+    if df is not None and not df.empty:
+        for _, r in df.iterrows():
+            sym = watch.get(str(r["代码"]).zfill(6))
+            if sym is None:
+                continue
+            key = (sym, _date_str(r["上榜日"]))
+            g = grouped.setdefault(key, {"reasons": [], "first": r})
+            if r["上榜原因"] not in g["reasons"]:
+                g["reasons"].append(r["上榜原因"])
+    with open(lhb_fp, "w", newline="", encoding="utf-8") as f:
+        f.write("symbol,trade_date,reasons,close,pct_chg,net_buy,net_buy_ratio\n")
+        for (sym, day), g in sorted(grouped.items()):
+            r = g["first"]
+            f.write(",".join([
+                sym, day, _csv_escape("；".join(g["reasons"])),
+                _num(r["收盘价"]) or "", _num(r["涨跌幅"]) or "",
+                _num(r["龙虎榜净买额"]) or "", _num(r["净买额占总成交比"]) or "",
+            ]) + "\n")
+            n_lhb += 1
+    lhb_fp = lhb_fp if n_lhb else None
+
+    dzjy_fp = out / "dzjy.csv"
+    n_dzjy = 0
+    df = ak.stock_dzjy_mrmx(symbol="A股", start_date=_date_compact(start),
+                            end_date=_date_compact(end))
+    with open(dzjy_fp, "w", newline="", encoding="utf-8") as f:
+        f.write("symbol,trade_date,close,pct_chg,price,premium_rate,volume,"
+                "amount,buy_branch,sell_branch\n")
+        if df is not None and not df.empty:
+            for _, r in df.iterrows():
+                sym = watch.get(str(r["证券代码"]).zfill(6))
+                if sym is None:
+                    continue
+                f.write(",".join([
+                    sym, _date_str(r["交易日期"]), _num(r["收盘价"]) or "",
+                    _num(r["涨跌幅"]) or "", _num(r["成交价"]) or "",
+                    _num(r["折溢率"]) or "", _num(r["成交量"]) or "",
+                    _num(r["成交额"]) or "",
+                    _csv_escape(str(r["买方营业部"] or "")),
+                    _csv_escape(str(r["卖方营业部"] or "")),
+                ]) + "\n")
+                n_dzjy += 1
+    dzjy_fp = dzjy_fp if n_dzjy else None
+    return lhb_fp, dzjy_fp
+
+
 # ---------------------------------------------------------------- meta / CLI
 
 def write_meta(out_dir: Path, data_type: str, date: str, run_id: str,
@@ -551,7 +703,7 @@ def _watchlist_symbols() -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scripts.collect.akshare_collect")
-    parser.add_argument("--sources", default="price,financials,index,telegraph,announcement")
+    parser.add_argument("--sources", default="price,financials,index,telegraph,announcement,macro,flow")
     parser.add_argument("--symbols", default="",
                         help="逗号分隔；默认取 config/watchlist.yaml 全部 active 股票")
     parser.add_argument("--indexes", default="000300.SH,^HSI")
@@ -722,9 +874,49 @@ def main(argv: list[str] | None = None) -> int:
                                      "params": {}, "file": None, "status": "error",
                                      "error": f"{type(e).__name__}: {e}"})
                     print(f"[calendar] unlock ERROR {e}")
+        elif source == "macro":  # r2 Phase 2：宏观因子快照（清单驱动）
+            try:
+                fp = collect_macro(ak, out_dir, args.date, args.run_id)
+                requests.append({"api": "futures_zh_daily_sina/futures_foreign_hist/"
+                                         "currency_boc_sina",
+                                 "params": {"config": "config/macro_factors.yaml"},
+                                 "file": fp.name if fp else None,
+                                 "status": "ok" if fp else "empty",
+                                 "error": None if fp else "EMPTY_DATA"})
+                print(f"[macro] {'ok' if fp else 'EMPTY'}")
+            except Exception as e:  # noqa: BLE001
+                requests.append({"api": "macro_factors", "params": {},
+                                 "file": None, "status": "error",
+                                 "error": f"{type(e).__name__}: {e}"})
+                print(f"[macro] ERROR {e}")
+        elif source == "flow":  # r2 Phase 2：龙虎榜 + 大宗（静默入库）
+            # 窗口硬上限 10 天（--start 默认 2023 起会让龙虎榜查询跨三年，--end 硬编码教训）
+            end_d = datetime.strptime(args.end, "%Y-%m-%d")
+            flow_start = max(args.start, (end_d - timedelta(days=9)).date().isoformat())
+            try:
+                lhb_fp, dzjy_fp = collect_flow(ak, symbols, flow_start, args.end,
+                                               out_dir, args.date, args.run_id)
+                requests.append({"api": "stock_lhb_detail_em",
+                                 "params": {"start": flow_start, "end": args.end},
+                                 "file": lhb_fp.name if lhb_fp else None,
+                                 "status": "ok" if lhb_fp else "empty",
+                                 "error": None if lhb_fp else "EMPTY_DATA"})
+                print(f"[flow] lhb: {'ok' if lhb_fp else 'EMPTY'}")
+                requests.append({"api": "stock_dzjy_mrmx",
+                                 "params": {"start": args.start, "end": args.end,
+                                            "symbol": "A股"},
+                                 "file": dzjy_fp.name if dzjy_fp else None,
+                                 "status": "ok" if dzjy_fp else "empty",
+                                 "error": None if dzjy_fp else "EMPTY_DATA"})
+                print(f"[flow] dzjy: {'ok' if dzjy_fp else 'EMPTY'}")
+            except Exception as e:  # noqa: BLE001
+                requests.append({"api": "stock_lhb_detail_em", "params": {},
+                                 "file": None, "status": "error",
+                                 "error": f"{type(e).__name__}: {e}"})
+                print(f"[flow] ERROR {e}")
         else:
             print(f"[skip] 未知 source: {source}（可选 price,forward,financials,index,"
-                  f"telegraph,forecast,stock_info,announcement,calendar）")
+                  f"telegraph,forecast,stock_info,announcement,calendar,macro,flow）")
             continue
         write_meta(out_dir, source, args.date, args.run_id, requests, args.purpose)
         errs = [r for r in requests if r["status"] == "error"]

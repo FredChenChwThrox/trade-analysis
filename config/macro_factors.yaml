@@ -1,0 +1,83 @@
+# 宏观因子采集清单（消息面 r2 Phase 2，设计 r2 §3.2/§11）
+# 解析：scripts/collect/akshare_collect.py::collect_macro（jsonschema 校验因子清单）
+# 口径：
+# - 全部走 sina 系接口（本网络 push2 被东财风控，datacenter/sina 可达，2026-08-28 实测）；
+# - close 存来源原始值（定点 TEXT），adapter 不计算；来源无涨跌幅则 change_pct 空；
+# - 外汇取中行牌价"央行中间价"（缺失回退"中行折算价"），单位为 CNY/100外币（中行牌价口径）；
+# - 内盘期货取连续合约（AU0/CU0/I0/RB0/SR0/SC0），外盘取 sina 全球期货（OIL=布伦特、CL=WTI）；
+# - 新增/调整因子只改本文件，不改代码（采集器按清单驱动）。
+
+schema_version: 1
+factors:
+  # ---- 商品：内盘期货连续合约 ----
+  - factor_type: commodity
+    code: AU0
+    name: 沪金
+    market: CN
+    unit: 元/克
+    api: domestic
+  - factor_type: commodity
+    code: CU0
+    name: 沪铜
+    market: CN
+    unit: 元/吨
+    api: domestic
+  - factor_type: commodity
+    code: I0
+    name: 铁矿石
+    market: CN
+    unit: 元/吨
+    api: domestic
+  - factor_type: commodity
+    code: RB0
+    name: 螺纹钢
+    market: CN
+    unit: 元/吨
+    api: domestic
+  - factor_type: commodity
+    code: SR0
+    name: 白糖
+    market: CN
+    unit: 元/吨
+    api: domestic
+  - factor_type: commodity
+    code: SC0
+    name: SC原油
+    market: CN
+    unit: 元/桶
+    api: domestic
+  # ---- 商品：外盘（sina 全球期货） ----
+  - factor_type: commodity
+    code: OIL
+    name: 布伦特原油
+    market: GLOBAL
+    unit: 美元/桶
+    api: foreign
+  - factor_type: commodity
+    code: CL
+    name: WTI原油
+    market: GLOBAL
+    unit: 美元/桶
+    api: foreign
+  # ---- 外汇：中行牌价（央行中间价） ----
+  - factor_type: fx
+    code: USDCNY
+    name: 美元兑人民币
+    market: CN
+    unit: CNY/100USD
+    api: boc
+    boc_symbol: 美元
+  - factor_type: fx
+    code: HKDCNY
+    name: 港币兑人民币
+    market: CN
+    unit: CNY/100HKD
+    api: boc
+    boc_symbol: 港币
+  - factor_type: fx
+    code: EURCNY
+    name: 欧元兑人民币
+    market: CN
+    unit: CNY/100EUR
+    api: boc
+    boc_symbol: 欧元

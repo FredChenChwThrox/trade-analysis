@@ -40,11 +40,14 @@ from scripts.adapters.common import (
 # 文件名 stem 中 ticker 形如 603605.SH_p1 / 00700.HK_p1（A 股 6 位、港股 4-5 位）
 _STEM_TICKER = re.compile(r"(\d{6})\.(SH|SZ|BJ)|(\d{4,5})\.HK")
 
-# r2 Phase 1：信源分级常量（r2 §2.1）。本引擎覆盖 tdx/akshare 公告（=1）；
+
+# r2 Phase 1/2：信源分级常量（r2 §2.1）。本引擎覆盖 tdx/akshare 公告（=1）；
 # 财联社电报（=4）在 akshare.py 薄壳中引用；tianyancha/stock_finance_data 等
 # 历史公告路径不写 tier（NULL=未分级，语义见 docs/database_schema.md §6）。
 SOURCE_TIER_ANNOUNCEMENT = 1
 SOURCE_TIER_TELEGRAPH = 4
+SOURCE_TIER_FLOW = 3  # r2 Phase 2：龙虎榜/大宗等交易所公开数据的东财聚合加工视图
+
 
 
 def _ticker_from_stem(path: Path) -> str | None:

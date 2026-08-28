@@ -18,6 +18,8 @@ from pathlib import Path
 
 from scripts.adapters import akshare as ak
 from scripts.adapters import event_calendar as event_calendar_adapter  # r2 Phase 1
+from scripts.adapters import flow_events as flow_events_adapter      # r2 Phase 2
+from scripts.adapters import macro_factors as macro_factors_adapter  # r2 Phase 2
 from scripts.adapters import stock_finance_data as sfd
 from scripts.adapters import tdx
 from scripts.adapters import tianyancha as tyc
@@ -52,6 +54,8 @@ _ROUTES = {
     ("akshare", "forecast"): ak.parse_forecast_csv,      # 一致预期（转发 sfd 解析）
     ("akshare", "stock_info"): ak.parse_stock_info_csv,  # 股本快照 → share_capital_events
     ("akshare", "calendar"): event_calendar_adapter.parse_calendar_csv,  # r2 Phase 1：披露预约/解禁 → event_calendar
+    ("akshare", "macro"): macro_factors_adapter.parse_macro_csv,         # r2 Phase 2：宏观因子快照
+    ("akshare", "flow"): flow_events_adapter.parse_flow_csv,             # r2 Phase 2：龙虎榜/大宗 → events(scope='flow')
 }
 
 

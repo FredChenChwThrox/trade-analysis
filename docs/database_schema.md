@@ -36,6 +36,7 @@
 | event_symbols | [事实] | (event_id, symbol) | 事件-股票关联 | adapters/stock_finance_data.py |
 | event_assessments | [决策] | (event_id, symbol, assessment_version) | LLM 消息评价版本（未接入） | —（D3 预留） |
 | event_calendar | [事实/配置混合] | cal_id | 已知时点事件（披露预约/解禁/宏观种子；0003，r2 Phase 1） | collect/akshare_collect.py（--sources calendar）、pipeline/db.py（manual 种子） |
+| macro_factors | [事实] | (factor_type, code, trade_date) | 宏观因子日快照（商品/外汇；0004，r2 Phase 2） | collect/akshare_collect.py（--sources macro，清单 config/macro_factors.yaml） |
 | financial_reports | [事实] | report_id；UNIQUE(symbol, period_end, period_type, is_cumulative, revision) | 财报头（修订新增 revision） | adapters/stock_finance_data.py |
 | financial_facts | [事实] | report_id（引用） | 财务事实（营收/归母净利/EPS/股本） | adapters/stock_finance_data.py |
 | share_capital_events | [事实] | sce_id | 股本变动事件/快照 | indicators/valuation.py |
@@ -153,7 +154,8 @@ UNIQUE(symbol, ex_date, action_type)。字段：ex_date（除权除息生效日�
 ### events — 公告/新闻事实 [事实]
 
 只存事实字段，不混 LLM 评价（§3.6）。event_id PK；event_type（announcement/news）；三时点（§2.1）：event_at（实际发生，可空）、published_at + published_tz（来源发布）、available_at（系统允许参与计算的最早时间）；title/summary/canonical_url；去重：source_external_id 优先，content_hash 其次。索引 published_at、(source, source_external_id)。
-**0003 扩列（r2 Phase 1，2026-08-28）**：`scope`（macro/policy/industry/company/flow——只建列，Phase 1 不填充）；`source_tier` 信源分级（r2 §2.1：公告/交易所原文=1——tdx 与 akshare 公告共用 `adapters/announcements.py` 引擎写入；财联社电报=4；**NULL=未分级**，tianyancha/stock_finance_data 等历史公告路径与 0003 之前入库的行保持 NULL，不做回填推断）。
+**0003 扩列（r2 Phase 1，2026-08-28）**：`scope`（macro/policy/industry/company/flow）；`source_tier` 信源分级（r2 §2.1：公告/交易所原文=1——tdx 与 akshare 公告共用 `adapters/announcements.py` 引擎写入；财联社电报=4；**NULL=未分级**，tianyancha/stock_finance_data 等历史公告路径与 0003 之前入库的行保持 NULL，不做回填推断）。
+**0004 起 scope 填充（r2 Phase 2，2026-08-28）**：flow 层事件（龙虎榜/大宗，event_type='flow'，经 `adapters/flow_events.py` 入库）写 `scope='flow'`、`source_tier=3`（交易所公开数据的东财聚合加工视图，对齐 r2 §4 flow 3~5 区间）——**静默入库，不推送不进日报**（r2 §8.4）；公告/电报的 scope 分类仍留 Phase 3。
 
 ### event_symbols — 事件-股票关联 [事实]
 
@@ -166,6 +168,10 @@ L0 日历层：财报披露预约、解禁日程、宏观/议息种子。cal_id 
 ### event_assessments — LLM 消息评价 [决策]
 
 (event_id, symbol, assessment_version) 版本化，不覆盖（§5.5；0002 迁移起主键含 symbol，多 symbol 事件逐股独立落库）。字段：symbol（该股事件研究结果归属）、model、prompt_version、assessed_at、direction（positive/negative/neutral）、materiality、confidence、rationale、status（ok/needs_review/degraded）、event_study_json（T+1/T+5 事件研究）。**LLM 评价（D3）仍未接入**；2026-08-14 起由 `scripts/signals/event_study.py` 写入确定性事件研究行（assessment_version='event_study_v1'、model='deterministic'，direction/materiality/confidence/rationale 置 NULL 不冒充评价，status 取值 ok/suspended/degraded，event_study_json 含 base/t1/t5 明细与 pending/suspended 标记）。注意：assessment_version 列声明 INTEGER 亲和而 event_study 写入 TEXT 'event_study_v1'（SQLite 亲和容忍，已知不严谨，未修）。
+
+### macro_factors — 宏观因子快照 [事实]（0004，r2 §3.2）
+
+主键 (factor_type, code, trade_date)：商品（内盘连续合约 AU0/CU0/I0/RB0/SR0/SC0 + 外盘 OIL 布伦特/CL WTI）与外汇（中行牌价 USDCNY/HKDCNY/EURCNY）的每日收盘快照。close 为来源原始值定点 TEXT **不换算**（外汇单位 CNY/100外币，中行牌价口径）；change_pct 来源无则 NULL（adapter 不代算，§2.5）。同日重采 `ON CONFLICT DO UPDATE` 覆盖（事实刷新，非版本化）。清单固化 `config/macro_factors.yaml`（jsonschema 校验），采集全部走 sina 系域名（push2 风控规避，2026-08-28 实测）。消费：Phase 3 LLM 宏观类事件评价的底稿。
 
 ## 7. 财务、股本、预测与汇率
 

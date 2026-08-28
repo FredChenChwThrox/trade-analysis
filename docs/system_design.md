@@ -191,6 +191,8 @@ adjusted_volume_t = raw_volume_t / share_factor_t
 | 全市场快讯 | 财联社（政策/宏观主渠道，`--sources telegraph`） | 政策、宏观 | ●（采集/入库通道已备，事件带 source_tier=4；持续采集编排属 r2 Phase 2） |
 | 行业新闻 | 东财行业频道 | 行业 | ○ |
 | 财报披露预约 / 解禁日程 | akshare `stock_report_disclosure` / `stock_restricted_release_queue_em` → `event_calendar`（`--sources calendar` 手触发） | 日历层 | ●（r2 Phase 1，2026-08-28） |
+| 宏观因子（商品/外汇） | akshare sina 期货接口 + 中行牌价（清单 config/macro_factors.yaml） | 宏观 | ●（r2 Phase 2，2026-08-28：macro_factors 每日快照，进默认 sources） |
+| 龙虎榜 / 大宗交易 | akshare（data.eastmoney.com/datacenter-web，不踩 push2） | 资金/情绪（flow） | ●（r2 Phase 2，2026-08-28：events scope='flow' tier=3 静默入库，不推送不进日报） |
 
 - 每个来源接入时必须在报告中标注覆盖区间；快讯/行业源缺数时消息面标 `degraded`，不阻断确定性价格信号（§5.5 既有原则）。
 
