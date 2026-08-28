@@ -1,0 +1,26 @@
+# AKQuant 回测配置（scripts/backtest/，Phase 1 单股验证）
+# 对标 docs/akquant_backtest_plan.md §8 A股交易规则；参数值仅供参考，实验期可调。
+# 复权口径：库内后复权（raw × price_adj_factor，与系统 §3.3 一致），Phase 1 不做 qfq 换算。
+
+initial_cash: 1000000        # 初始资金（元）
+lot_size: 100                # A 股最小交易单位（股整数倍）
+t_plus_one: true             # T+1：当日买入最早下一交易日卖出
+commission_rate: 0.0003      # 券商佣金（万三，按成交额）
+stamp_tax_rate: 0.0005       # 印花税（卖出收取）
+transfer_fee_rate: 0.0       # 过户费（2023-08 后双向 0.001%，Phase 1 暂不启用）
+min_commission: 0.0          # 最低佣金（元）
+slippage: 0.0001             # 滑点（百分比模型，1bp）
+timezone: Asia/Shanghai      # 数据本地时区
+# fill_policy 使用 akquant 默认 NextOpen()：T 日收盘信号 → T+1 开盘成交（无未来函数）
+
+# Phase 3 三因子横截面评分（scripts/backtest/factors.py，计划 §11）
+factors:
+  momentum_window: 20        # 动量窗口：N 日收益率
+  volatility_window: 20      # 波动率窗口：日收益率 std(ddof=0)
+  liquidity_window: 20       # 流动性窗口：20 日均成交额（amount_raw，缺口即无分不猜）
+  weights:                   # 综合得分权重；volatility 负值即方向统一
+    momentum: 0.5
+    volatility: -0.3
+    liquidity: 0.2
+  winsorize_pct: 0.05        # 横截面每端裁剪分位
+  min_names: 3               # 截面最少样本数（低于则该因子当日贡献中性 0）

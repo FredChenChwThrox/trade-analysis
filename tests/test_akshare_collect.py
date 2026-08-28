@@ -113,6 +113,18 @@ class FakeAk:
             "变动原因": ["回购", "回购"],
         })
 
+    def stock_zh_a_disclosure_report_cninfo(self, symbol, market, start_date, end_date):
+        # 记录入参供测试断言紧凑日期格式（接口对带 - 格式静默返回空，实测）
+        self.last_cninfo_kwargs = {"symbol": symbol, "market": market,
+                                   "start_date": start_date, "end_date": end_date}
+        return pd.DataFrame({
+            "代码": [symbol, symbol],
+            "简称": ["洛阳钼业", "洛阳钼业"],
+            "公告标题": ["洛阳钼业关于对外担保计划的公告", "标题含逗号，应被引号包裹"],
+            "公告时间": [pd.Timestamp("2026-08-21"), pd.Timestamp("2026-08-22")],
+            "公告链接": ["http://cninfo/ann/1", "http://cninfo/ann/2"],
+        })
+
 
 @pytest.fixture()
 def fake_ak():
@@ -354,3 +366,45 @@ def csv_rows(path):
     import csv
     with open(path, newline="", encoding="utf-8-sig") as f:
         yield from csv.DictReader(f)
+
+
+# ---------------------------------------------------------------- announcement（cninfo 公告）
+
+
+def test_collect_announcement_aligned(fake_ak, out_dir):
+    """线格式列序/内容/引号转义 + 接口参数紧凑日期格式。"""
+    path = ac.collect_announcement(fake_ak, "603993.SH", "2025-08-26", "2026-08-27",
+                                   out_dir, "2026-08-27", "run_ak")
+    # 接口日期参数必须紧凑 YYYYMMDD（带 - 的格式静默返回空，实测）
+    assert fake_ak.last_cninfo_kwargs == {"symbol": "603993", "market": "沪深京",
+                                          "start_date": "20250826", "end_date": "20260827"}
+    assert path == out_dir / "announcement" / "2026-08-27" / "run_ak" / "603993.SH.csv"
+    rows = list(csv_rows(path))
+    assert len(rows) == 2
+    r = rows[0]
+    assert set(r) == {"title", "time", "url", "source", "summary",
+                      "code", "setcode", "name"}
+    assert r["title"] == "洛阳钼业关于对外担保计划的公告"
+    assert r["summary"] == r["title"]  # 线格式约定 summary 回填标题
+    assert r["time"] == "2026-08-21 00:00:00"
+    assert r["url"] == "http://cninfo/ann/1"
+    assert r["source"] == "巨潮资讯"
+    assert r["code"] == "603993" and r["setcode"] == "1" and r["name"] == "洛阳钼业"
+    # 含逗号标题须引号包裹且可被 DictReader 还原
+    assert rows[1]["title"] == "标题含逗号，应被引号包裹"
+
+
+def test_collect_announcement_empty(fake_ak, out_dir):
+    class EmptyAk(FakeAk):
+        def stock_zh_a_disclosure_report_cninfo(self, symbol, market,
+                                                start_date, end_date):
+            return pd.DataFrame()
+
+    assert ac.collect_announcement(EmptyAk(), "603993.SH", "2026-08-01",
+                                   "2026-08-27", out_dir, "2026-08-27", "run_ak") is None
+
+
+def test_collect_announcement_hk_rejected(fake_ak, out_dir):
+    with pytest.raises(ValueError, match="仅支持 A 股"):
+        ac.collect_announcement(fake_ak, "00700.HK", "2025-08-26", "2026-08-27",
+                                out_dir, "2026-08-27", "run_ak")

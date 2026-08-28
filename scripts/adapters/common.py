@@ -12,7 +12,7 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -270,6 +270,45 @@ def record_revision(
             source, reason, run_id, utc_now(),
         ),
     )
+
+
+# ---------------------------------------------------------------- 代码映射与交易日推进（多 adapter 共用）
+
+# setcode → symbol 后缀（个股）；与 SUFFIX_MARKET 对齐。
+# 62=中证指数系统内统一 .SH；32=港股指数。INDEX_SETCODES 归属各源（tdx kline/index 路由专用）。
+SETCODE_SUFFIX = {
+    "1": "SH",    # 沪市 A 股
+    "0": "SZ",    # 深市 A 股
+    "2": "BJ",    # 北交所
+    "31": "HK",   # 港股
+    "62": "SH",   # 中证指数（000300 沪深300）
+    "32": "HK",   # 港股指数
+}
+
+
+def symbol_from_code_setcode(code: str, setcode: str) -> str:
+    """code + setcode → 系统 symbol（带后缀，如 603605.SH / 00700.HK）。"""
+    suffix = SETCODE_SUFFIX.get(str(setcode))
+    if suffix is None:
+        raise ValueError(f"未知 setcode={setcode}，无法推断 symbol 后缀")
+    return f"{code}.{suffix}"
+
+
+def next_open_available_at(calendar: dict, pub_date: str, market: str) -> str:
+    """下一个开市交易日 00:00（本地）→ UTC ISO（§2.1 保守时点）。
+
+    calendar 为空/缺日时退化为发布日 +1 自然日（降级，调用方应另行
+    通过 incomplete_reasons 标注）。
+    """
+    tz = market_tz(market)
+    d = datetime.fromisoformat(pub_date).date() + timedelta(days=1)
+    if calendar:
+        while d.isoformat() not in calendar or not calendar[d.isoformat()]["is_open"]:
+            d += timedelta(days=1)
+            if (d - datetime.fromisoformat(pub_date).date()).days > 40:
+                break
+    return datetime(d.year, d.month, d.day,
+                    tzinfo=tz).astimezone(timezone.utc).isoformat()
 
 
 def load_calendar(conn: sqlite3.Connection, market: str) -> dict[str, sqlite3.Row]:

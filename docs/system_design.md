@@ -111,6 +111,7 @@ Python Derivation（确定性）
 
 - Skill 不计算指标、不评价消息、不生成规范化财务数字。
 - 不要求 Python 完全不懂数据源。每个数据源有独立 adapter；更换数据源时只新增或替换 adapter，不修改下游统一模型与策略代码。
+- 多源共用的确定性逻辑下沉公共层：标准公告线格式（title/time/url/source/summary/code/setcode/name）的解析引擎在 `scripts/adapters/announcements.py`，tdx/akshare 等源适配器只做薄壳委托并在 `events.source` + event_id 命名空间上隔离来源（§3.6 dedup）；代码映射/交易日推进类工具在 `adapters/common.py`。源间不互相借用实现，复用一律经公共层。
 - 原始文件按 `data/raw/{source}/{data_type}/{YYYY-MM-DD}/{run_id}/` 存放，并在 `raw_objects` 登记路径、请求、响应校验和和抓取状态。
 
 ### 3.2 行情数据

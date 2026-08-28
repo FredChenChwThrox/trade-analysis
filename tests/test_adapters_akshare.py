@@ -359,3 +359,92 @@ def test_parse_stock_info_csv_cross_source_conflict(conn, tmp_path):
     # 整批回滚：akshare 行未写入
     rows = conn.execute("SELECT source FROM share_capital_events").fetchall()
     assert [x["source"] for x in rows] == ["stock_finance_data get_stock_info"]
+
+
+# ---------------------------------------------------------------- 公告 → events（公共引擎 adapters.announcements）
+
+_AK_ANN_COLS = ["title", "time", "url", "source", "summary", "code", "setcode", "name"]
+
+
+def _write_announcement(path, title="珀莱雅2026年半年度报告", time_s="2026-08-05 00:00:00",
+                        summary=None):
+    _write_csv(path, _AK_ANN_COLS, [
+        [title, time_s, "http://example.com/ann/1", "巨潮资讯",
+         summary or title, "603605", "1", "珀莱雅"],
+    ])
+
+
+def test_parse_announcement_csv_source_namespace(conn, tmp_path):
+    """akshare 公告入库：events.source='akshare'、时点口径与事件关联正确。"""
+    path = tmp_path / "raw" / "akshare" / "announcement" / "2026-08-26" / "run_ak" / "603605.SH.csv"
+    path.parent.mkdir(parents=True)
+    _write_announcement(path)
+    r = ingest_file(conn, path, source="akshare", data_type="announcement",
+                    symbol="603605.SH", parse=ak_adapter.parse_announcement_csv)
+    assert r.status == "ok", r.summary()
+    assert r.inserted == 1
+    ev = conn.execute("SELECT * FROM events WHERE source='akshare'").fetchone()
+    assert ev["event_type"] == "announcement"
+    assert ev["title"] == "珀莱雅2026年半年度报告"
+    # 发布日 2026-08-05（周三）00:00 CST → UTC 前一日 16:00
+    assert ev["published_at"] == "2026-08-04T16:00:00+00:00"
+    assert ev["published_tz"] == "Asia/Shanghai"
+    # available_at = +1 开市交易日（08-06 周四）00:00 CST → UTC 同步
+    assert ev["available_at"] == "2026-08-05T16:00:00+00:00"
+    sym = conn.execute("SELECT symbol FROM event_symbols WHERE event_id=?",
+                       (ev["event_id"],)).fetchone()
+    assert sym["symbol"] == "603605.SH"
+
+
+def test_announcement_cross_source_isolation(conn, tmp_path):
+    """同一公告被 akshare 与 tdx 先后采集：event_id 按源命名空间隔离，互不吞并。
+
+    注：两文件需有真实字节差异（如来源摘要文本不同）——完全相同的字
+    节会先被全局 content-hash 门槛拦下（§9.5 幂等），到不了解析器层。
+    """
+    from scripts.adapters import tdx as tdx_adapter
+
+    pa = tmp_path / "raw" / "akshare" / "announcement" / "2026-08-26" / "run_a" / "603605.SH.csv"
+    pt = tmp_path / "raw" / "tdx" / "announcement" / "2026-08-26" / "run_t" / "603605.SH_p1.csv"
+    pa.parent.mkdir(parents=True)
+    pt.parent.mkdir(parents=True)
+    _write_announcement(pa, summary="珀莱雅2026年半年度报告（巨潮）")
+    _write_announcement(pt, summary="珀莱雅2026年半年度报告（巨潮资讯网）")
+
+    ra = ingest_file(conn, pa, source="akshare", data_type="announcement",
+                     symbol="603605.SH", parse=ak_adapter.parse_announcement_csv)
+    rt = ingest_file(conn, pt, source="tdx", data_type="announcement",
+                     symbol="603605.SH", parse=tdx_adapter.parse_announcement_csv)
+    assert ra.inserted == 1 and rt.inserted == 1
+    rows = conn.execute(
+        "SELECT source, COUNT(*) AS n FROM events WHERE event_type='announcement'"
+        " GROUP BY source ORDER BY source").fetchall()
+    d = {r["source"]: r["n"] for r in rows}
+    assert d["akshare"] == 1 and d["tdx"] == 1
+
+
+def test_announcement_idempotent_rerun(conn, tmp_path):
+    """同内容重跑：零新增，幂等跳过。"""
+    path = tmp_path / "raw" / "akshare" / "announcement" / "2026-08-26" / "run_a" / "603605.SH.csv"
+    path.parent.mkdir(parents=True)
+    _write_announcement(path)
+    kw = dict(source="akshare", data_type="announcement",
+              symbol="603605.SH", parse=ak_adapter.parse_announcement_csv)
+    r1 = ingest_file(conn, path, **kw)
+    assert r1.inserted == 1
+    r2 = ingest_file(conn, path, **kw)
+    assert r2.inserted == 0 and r2.skipped >= 1
+    assert conn.execute("SELECT COUNT(*) FROM events WHERE source='akshare'"
+                        ).fetchone()[0] == 1
+
+
+def test_akshare_announcement_route_registered():
+    """ingest 路由表锁定：(akshare, announcement) 必须注册到公共引擎薄壳。"""
+    from scripts.adapters import announcements as ann_mod
+    from scripts.pipeline.ingest import _ROUTES
+
+    assert _ROUTES[("akshare", "announcement")] is ak_adapter.parse_announcement_csv
+    # 行为契约：薄壳最终落到公共引擎，source='akshare'
+    import inspect
+    src = inspect.getsource(ak_adapter.parse_announcement_csv)
+    assert "parse_disclosure_csv" in src and "SOURCE" in src

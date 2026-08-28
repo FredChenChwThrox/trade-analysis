@@ -20,3 +20,9 @@ dev = [
 akshare = [
     "akshare>=1.14.0",
 ]
+
+# 可选：AKQuant 回测引擎（scripts/backtest/，Rust 内核体积大）
+# 需要时 uv sync --extra backtest 或 uv pip install akquant
+backtest = [
+    "akquant>=0.3.52",
+]

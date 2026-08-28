@@ -46,21 +46,23 @@ tqflag=1/2（前/后复权）文件不入 daily_bars（留给 D1.5 复权模块�
 from __future__ import annotations
 
 import csv
-import hashlib
 import json
 import re
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from scripts.adapters import announcements
 from scripts.adapters.common import (
     IngestResult,
     dec_str,
     load_calendar,
     market_of,
     market_tz,
+    next_open_available_at,
     record_revision,
+    symbol_from_code_setcode,
     utc_now,
 )
 from scripts.adapters.stock_finance_data import (
@@ -71,16 +73,7 @@ from scripts.adapters.stock_finance_data import (
 
 SOURCE = "tdx"
 
-# setcode → symbol 后缀（个股）/ index 后缀（指数）
-# 与 common.SUFFIX_MARKET 对齐；62 中证指数系统内统一 .SH（与 yahoo INDEX_CODE_ALIAS 同口径）
-SETCODE_SUFFIX = {
-    "1": "SH",    # 沪市 A 股
-    "0": "SZ",    # 深市 A 股
-    "2": "BJ",    # 北交所
-    "31": "HK",   # 港股
-    "62": "SH",   # 中证指数（000300 沪深300）
-    "32": "HK",   # 港股指数
-}
+# setcode 路由：62/32 为指数走 index_bars；code→后缀映射已上移 common.SETCODE_SUFFIX
 INDEX_SETCODES = {"62", "32"}  # 走 index_bars 而非 daily_bars
 
 
@@ -112,14 +105,6 @@ def _vol_to_shares(vol_raw, unit_raw) -> float | None:
     if unit == 1:
         return vol
     return vol * unit
-
-
-def _symbol_from_code_setcode(code: str, setcode: str) -> str:
-    """code + setcode → 系统 symbol（带后缀，如 603605.SH / 00700.HK）。"""
-    suffix = SETCODE_SUFFIX.get(str(setcode))
-    if suffix is None:
-        raise ValueError(f"未知 setcode={setcode}，无法推断 symbol 后缀")
-    return f"{code}.{suffix}"
 
 
 def _tdx_date_to_iso(s: str) -> str:
@@ -163,7 +148,7 @@ def parse_kline_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,
             result.conflicts += 1
             result.errors.append(f"缺 code 或 setcode 列: {path.name}")
             return result
-        symbol = _symbol_from_code_setcode(code, setcode)
+        symbol = symbol_from_code_setcode(code, setcode)
         market = market_of(symbol)
         tqflag = (rec.get("tqflag") or "0").strip()
         if tqflag in ("1", "2"):
@@ -250,7 +235,7 @@ def parse_index_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,
             result.errors.append(
                 f"setcode={setcode} 不是指数（应∈{INDEX_SETCODES}）却入 index 目录: {path.name}")
             return result
-        index_code = _symbol_from_code_setcode(code, setcode)
+        index_code = symbol_from_code_setcode(code, setcode)
         try:
             trade_date = _tdx_date_to_iso(rec.get("data") or "")
         except ValueError:
@@ -283,122 +268,20 @@ def parse_index_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,
 
 # ---------------------------------------------------------------- 公告 → events/event_symbols
 
-_STEM_TICKER = re.compile(r"(\d{6})\.(SH|SZ|BJ)|(\d{4,5})\.HK")
-
-
-def _ticker_from_stem(path: Path) -> str | None:
-    """从文件名 stem 推断 ticker（形如 603605.SH_p1 / 00700.HK_p1）。
-
-    港股 code 为 4-5 位（00700），A 股为 6 位。
-    """
-    m = _STEM_TICKER.search(path.stem)
-    if m:
-        if m.group(1):  # A 股 6 位
-            return f"{m.group(1)}.{m.group(2)}"
-        if m.group(3):  # 港股 4-5 位
-            return f"{m.group(3)}.HK"
-    return None
-
-
-def _next_open_available_at(calendar: dict, pub_date: str, market: str) -> str:
-    """下一个开市交易日 00:00（本地）→ UTC ISO（§2.1 保守时点）。"""
-    tz = market_tz(market)
-    d = datetime.fromisoformat(pub_date).date() + timedelta(days=1)
-    if calendar:
-        while d.isoformat() not in calendar or not calendar[d.isoformat()]["is_open"]:
-            d += timedelta(days=1)
-            if (d - datetime.fromisoformat(pub_date).date()).days > 40:
-                break
-    return datetime(d.year, d.month, d.day,
-                    tzinfo=tz).astimezone(timezone.utc).isoformat()
-
-
 def parse_announcement_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,
                            result: IngestResult) -> IngestResult:
     """tdx wenda_notice_query 公告 CSV → events + event_symbols。
 
-    列：title, time, url, source, summary, code, setcode, name
+    实现已下沉公共引擎 scripts.adapters.announcements.parse_disclosure_csv
+    （与 akshare cninfo 公告共用同一标准线格式；去重/时点口径单一定义）。
+    本函数仅为源内入口，events.source='tdx' 保证 dedup 命名空间隔离（§3.6）。
 
-    去重：通达信公告无 uuid，按 title|pub_date 哈希（§3.6）。
-    symbol 关联：优先 CSV 中 code+setcode 推断，回退文件名 stem（含 ticker）。
+    列：title, time, url, source, summary, code, setcode, name；
+    symbol 关联：优先文件名 stem（含 ticker），回退行内 code+setcode；
     available_at：发布日 + 1 开市交易日 00:00 本地（§2.1）。
     """
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        rows = list(csv.DictReader(f))
-    if not rows:
-        result.skipped += 1
-        result.notes.append("公告 CSV 无数据行")
-        return result
-
-    symbol = _ticker_from_stem(path)
-    if symbol is None:
-        # 回退：CSV 行内的 code+setcode 推断
-        first = rows[0]
-        code = (first.get("code") or "").strip()
-        setcode = (first.get("setcode") or "").strip()
-        if code and setcode:
-            try:
-                symbol = _symbol_from_code_setcode(code, setcode)
-            except ValueError:
-                pass
-    if symbol is None:
-        result.conflicts += 1
-        result.errors.append(
-            f"无法推断 ticker（文件名 stem 不含 ticker，CSV 行也无 code/setcode）: {path.name}")
-        return result
-
-    market = market_of(symbol)
-    calendar = load_calendar(conn, market)
-    if not calendar:
-        result.incomplete_reasons.append(
-            f"trading_calendar 缺失（market={market}），available_at 取发布日+1 天（降级）")
-
-    now = utc_now()
-    for rec in rows:
-        title = (rec.get("title") or "").strip()
-        time_s = (rec.get("time") or "").strip()
-        if not title or not time_s:
-            result.conflicts += 1
-            result.errors.append(
-                f"公告行缺标题或时间列（实得列: {sorted(rec.keys())}）")
-            return result
-        # time 形如 "2026-08-04 00:00:00"，取前 10 位日期
-        pub_date = time_s[:10]
-        url = (rec.get("url") or "").strip() or None
-        source_tag = (rec.get("source") or "").strip() or None  # "上交所" 等
-        summary = (rec.get("summary") or "").strip() or source_tag
-        # 去重：title|pub_date 哈希（通达信无 uuid）
-        dedup_key = f"{title}|{pub_date}"
-        event_id = "evt_" + hashlib.sha256(
-            f"{SOURCE}|{dedup_key}".encode()).hexdigest()[:16]
-
-        if conn.execute("SELECT 1 FROM events WHERE event_id = ?",
-                        (event_id,)).fetchone():
-            result.skipped += 1
-            continue
-
-        tz = market_tz(market)
-        published_at = datetime.fromisoformat(pub_date).replace(
-            tzinfo=tz).astimezone(timezone.utc).isoformat()
-        available_at = _next_open_available_at(calendar, pub_date, market)
-
-        conn.execute(
-            """
-            INSERT INTO events (event_id, event_type, event_at, published_at,
-                published_tz, available_at, title, summary, canonical_url,
-                source, source_external_id, content_hash, raw_object_id, ingested_at)
-            VALUES (?, 'announcement', NULL, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-            """,
-            (event_id, published_at, str(tz), available_at, title, summary, url,
-             SOURCE, hashlib.sha256(dedup_key.encode()).hexdigest(),
-             raw_object_id, now),
-        )
-        conn.execute(
-            "INSERT OR IGNORE INTO event_symbols (event_id, symbol) VALUES (?, ?)",
-            (event_id, symbol),
-        )
-        result.inserted += 1
-    return result
+    return announcements.parse_disclosure_csv(
+        conn, path, raw_object_id, result, source=SOURCE)
 
 
 # ---------------------------------------------------------------- 估值/股本快照 → share_capital_events
@@ -432,7 +315,7 @@ def parse_quotes_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,
         result.conflicts += 1
         result.errors.append(f"缺 code 或 setcode 列: {path.name}")
         return result
-    symbol = _symbol_from_code_setcode(code, setcode)
+    symbol = symbol_from_code_setcode(code, setcode)
     snapshot_at = (rec.get("snapshot_at") or "").strip()
     if not snapshot_at:
         # 回退用 hqdate
@@ -587,7 +470,7 @@ def parse_financials_csv(conn: sqlite3.Connection, path: Path, raw_object_id: st
         result.errors.append(f"缺 code/setcode 列或值为空: {path.name}")
         return result
     try:
-        symbol = _symbol_from_code_setcode(code, setcode)
+        symbol = symbol_from_code_setcode(code, setcode)
     except ValueError as e:
         result.conflicts += 1
         result.errors.append(str(e))
@@ -675,7 +558,7 @@ def parse_financials_csv(conn: sqlite3.Connection, path: Path, raw_object_id: st
             # 带来披露日（如 akshare NOTICE_DATE）时，回填 published_at/available_at
             # 并记 data_revisions；事实数字未变，不新增 revision
             if published_at_utc is not None and latest["published_at"] is None:
-                avail = _next_open_available_at(
+                avail = next_open_available_at(
                     load_calendar(conn, market), published_at_raw, market)
                 src_row = conn.execute(
                     "SELECT source FROM raw_objects WHERE raw_object_id = ?",
@@ -725,7 +608,7 @@ def parse_financials_csv(conn: sqlite3.Connection, path: Path, raw_object_id: st
             f"available_at 取入库时间（降级，待 pit_backfill）")
         available_at_utc = now
     else:
-        available_at_utc = _next_open_available_at(
+        available_at_utc = next_open_available_at(
             load_calendar(conn, market), published_at_raw, market)
 
     cur = conn.execute(

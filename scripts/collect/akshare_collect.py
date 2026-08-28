@@ -22,6 +22,10 @@
   列对齐 kimi stock_info 约定（thscode + ths_total_shares_stock 集团总股本，
   取最新变动行）→ akshare.parse_stock_info_csv → share_capital_events
   （snapshot_group_total / group_total，参与 PE 取数，与 kimi 源可切换）
+- announcement：巨潮公告列表（stock_zh_a_disclosure_report_cninfo，仅 A 股）→
+  标准公告线格式（title,time,url,source,summary,code,setcode,name；接口日期参数
+  必须紧凑 YYYYMMDD，带 - 格式静默返回空，实测）→ announcements.parse_disclosure_csv 公共引擎薄壳
+  akshare.parse_announcement_csv（events.source='akshare'，与 tdx dedup 隔离）
 
 口径换算（与库 schema 对齐，§3.2/§9.5）：
 - 成交量：东财接口单位「手」，落盘前 ×100 换算为项目 volume_raw 口径「股」（指数不换算）；
@@ -394,6 +398,47 @@ def collect_stock_info(ak, symbol: str, out_dir: Path, date: str, run_id: str) -
     return fp
 
 
+# ---------------------------------------------------------------- stock_info（股本快照，仅 A 股）
+
+# ---------------------------------------------------------------- announcement（cninfo 公告，仅 A 股）
+
+def collect_announcement(ak, symbol: str, start: str, end: str, out_dir: Path,
+                         date: str, run_id: str) -> Path | None:
+    """巨潮公告列表（stock_zh_a_disclosure_report_cninfo，仅 A 股沪深京）→ {symbol}.csv。
+
+    列 = 标准公告线格式（title,time,url,source,summary,code,setcode,name），
+    由 scripts/adapters/announcements.parse_disclosure_csv 解析入库
+    （events.source='akshare'，与 tdx dedup 命名空间隔离）。
+    注意：接口日期参数必须紧凑格式 YYYYMMDD（带 - 的格式静默返回空，已实测）；
+    同内容重跑入库侧幂等（content-hash + event_id 双门槛），可放心按窗口重复拉取。
+    """
+    if not symbol.endswith((".SH", ".SZ", ".BJ")):
+        raise ValueError(f"announcement 源仅支持 A 股（cninfo 沪深京）: {symbol}")
+    code, setcode, _c, _m = _symbol_parts(symbol)
+    df = ak.stock_zh_a_disclosure_report_cninfo(
+        symbol=code, market="沪深京",
+        start_date=_date_compact(start), end_date=_date_compact(end))
+    if df is None or df.empty:
+        return None
+    out = out_dir / "announcement" / date / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    fp = out / f"{symbol}.csv"
+    with open(fp, "w", newline="", encoding="utf-8") as f:
+        f.write("title,time,url,source,summary,code,setcode,name\n")
+        for _, r in df.iterrows():
+            title = str(r["公告标题"]).strip()
+            t = r["公告时间"]
+            time_s = (t.strftime("%Y-%m-%d %H:%M:%S") if hasattr(t, "strftime")
+                      else str(t).strip())
+            url = str(r["公告链接"]).strip()
+            name = str(r.get("简称") or "").strip()
+            f.write(",".join([
+                _csv_escape(title), time_s, url,
+                "巨潮资讯", _csv_escape(title), code, setcode, _csv_escape(name),
+            ]) + "\n")
+    return fp
+
+
 # ---------------------------------------------------------------- meta / CLI
 
 def write_meta(out_dir: Path, data_type: str, date: str, run_id: str,
@@ -530,9 +575,26 @@ def main(argv: list[str] | None = None) -> int:
                                      "params": {"symbol": sym}, "file": None,
                                      "status": "error", "error": f"{type(e).__name__}: {e}"})
                     print(f"[stock_info] {sym}: ERROR {e}")
+        elif source == "announcement":
+            for sym in symbols:
+                try:
+                    fp = collect_announcement(ak, sym, args.start, args.end,
+                                              out_dir, args.date, args.run_id)
+                    requests.append({"api": "stock_zh_a_disclosure_report_cninfo",
+                                     "params": {"symbol": sym, "start": args.start,
+                                                "end": args.end, "market": "沪深京"},
+                                     "file": fp.name if fp else None,
+                                     "status": "ok" if fp else "empty",
+                                     "error": None if fp else "EMPTY_DATA"})
+                    print(f"[{source}] {sym}: {'ok' if fp else 'EMPTY'}")
+                except Exception as e:  # noqa: BLE001
+                    requests.append({"api": "stock_zh_a_disclosure_report_cninfo",
+                                     "params": {"symbol": sym}, "file": None,
+                                     "status": "error", "error": f"{type(e).__name__}: {e}"})
+                    print(f"[{source}] {sym}: ERROR {e}")
         else:
             print(f"[skip] 未知 source: {source}（可选 price,forward,financials,index,"
-                  f"telegraph,forecast,stock_info）")
+                  f"telegraph,forecast,stock_info,announcement）")
             continue
         write_meta(out_dir, source, args.date, args.run_id, requests, args.purpose)
         errs = [r for r in requests if r["status"] == "error"]

@@ -120,7 +120,7 @@
 | market | TEXT | CN / HK |
 | open_raw/high_raw/low_raw/close_raw | REAL | 不复权 OHLC |
 | volume_raw | REAL | 成交量（股） |
-| amount_raw | REAL | 成交额，可为空（stock_finance_data 无 amount，见 probe 记录；amt_* 指标因此为 NULL） |
+| amount_raw | REAL | 成交额（元，不做股份调整）。历史缺口已于 2026-08-27 由 akshare-sina 全量回填（15 只 10896 行更新、零价差，run_amt_backfill*）；港股 24 行及 42 个采集起点边界行仍缺 |
 | currency | TEXT | |
 | price_adj_factor | REAL | 前向累积复权因子，origin 日归一 1.0；复权价 = raw × factor（§3.3）。由 adjust.py 平台段检测写入/重建 |
 | share_factor | REAL | 只反映拆股/送转等股数变化；调整量 = volume_raw ÷ share_factor |
@@ -194,7 +194,7 @@ report_id 引用 financial_reports。金额/股数为关键决策值存 TEXT 定
 | RSI | rsi6/12/24 | Wilder RMA |
 | BOLL | boll_mid/upper/lower/bandwidth | mid=MA20，±2σ（ddof=0），带宽=(上−下)/中 |
 | 量能 | vol_ma5/10、vol_mean20/std20、vol_mean60/std60 | 调整量（÷share_factor）均值/总体标准差 |
-| 成交额 | amt_mean20/std20、amt_mean60/std60 | 来源缺 amount → 全 NULL（已知缺口） |
+| 成交额 | amt_mean20/std20、amt_mean60/std60 | 2026-08-27 起 18 只全量有值（此前 kimi 源无 amount 为已知缺口，sina 回填后重算） |
 | KDJ | kdj_k/d/j | RSV(9)，K/D 初值 50 平滑，J=3K−2D |
 | 基础量 | pct_chg / amplitude | 百分比存储（1.23 = 1.23%） |
 | 估值 | pe_ttm / pe_status | 不复权市值 ÷ TTM 归母净利；pe_status 为空值/降级原因码 |

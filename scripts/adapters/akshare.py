@@ -5,6 +5,9 @@ akshare 采集器（scripts/collect/akshare_collect.py）落盘列与既有 adap
 - price → 复用 stock_finance_data.upsert_daily_bars（source=akshare）
 - index → 复用 stock_finance_data.upsert_index_bars（source=akshare）
 - financials → 直接转发 tdx.parse_financials_csv（列约定一致，含 published_at/下一开市日/单位换算/修订）
+- announcement → 委托公共引擎 announcements.parse_disclosure_csv（标准公告线格式，
+  events.source='akshare' 与 tdx dedup 命名空间隔离，§3.6）；
+  注意：采集器暂无 cninfo 抓取源，入库通道仅面向已落盘 CSV
 - forecast → 转发 stock_finance_data.parse_forecast_csv（列约定一致，source=akshare）
 - stock_info → share_capital_events（snapshot_group_total/group_total，复用
   indicators.valuation.load_group_total_snapshot；与 kimi 源可切换：同 effective_at
@@ -27,6 +30,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
+from scripts.adapters import announcements
 from scripts.adapters.common import (
     IngestResult,
     load_calendar,
@@ -343,3 +347,19 @@ def parse_telegraph_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str
             )
         result.inserted += 1
     return result
+
+
+# ---------------------------------------------------------------- 公告 → events/event_symbols（公共引擎薄壳）
+
+def parse_announcement_csv(conn: sqlite3.Connection, path: Path, raw_object_id: str,
+                           result: IngestResult) -> IngestResult:
+    """akshare cninfo 公告 CSV → events + event_symbols。
+
+    列与标准公告线格式一致（title, time, url, source, summary, code,
+    setcode, name），解析/去重/时点口径单一定义在公共引擎
+    announcements.parse_disclosure_csv（不在源间互相借用实现）。
+    events.source='akshare' 进入 dedup event_id 命名空间，与 tdx
+    采到同一公告时互不吞并；同内容重跑幂等跳过。
+    """
+    return announcements.parse_disclosure_csv(
+        conn, path, raw_object_id, result, source=SOURCE)

@@ -1,0 +1,405 @@
+# 个人股票监测系统
+
+> 一个面向左侧交易的个人股票监测系统。核心原则：**确定性管线在 Python/SQLite 中完成，LLM 只消费结构化底稿、只产出排期卡 draft，不生成规范化数字，也不直接激活卡片。**
+
+---
+
+## 1. 项目定位
+
+- **目标**：对自选池（watchlist）股票做日线/周线分析，按估值排期卡每日盘后输出观察点和决策点，保存可审计的历史判断依据。
+- **策略内核**：估值排期卡框架——估值锚定档（赔率）+ 胜率打分（仓位）+ 衰竭信号择时（时机）+ 证伪线兜底（认错）。
+- **非目标**：不预测涨跌、不接券商下单、不做组合级自动优化。
+
+---
+
+## 2. 技术栈与运行依赖
+
+- **Python** ≥ 3.12，使用 **uv** 管理依赖
+- 主依赖见 `pyproject.toml`：`pandas`、`pyyaml`、`jsonschema`、`flask`（只读 Web UI）
+- 测试：`pytest`
+- 数据库：SQLite `data/market.db`（派生库，可由 `data/raw/` 重跑重建）
+- 可选数据源：`akshare`（`uv sync --extra akshare` 后使用）
+
+---
+
+## 3. 环境安装
+
+### 3.1 初次创建环境
+
+```bash
+uv sync
+# 如需 akshare 数据源：
+uv sync --extra akshare
+```
+
+### 3.2 建库与种子
+
+```bash
+# 创建表结构和交易日历、watchlist 等种子
+uv run python -m scripts.pipeline.db migrate
+uv run python -m scripts.pipeline.db seed
+```
+
+### 3.3 验证
+
+```bash
+uv run pytest -q
+# 当前 400 项测试应全绿
+```
+
+---
+
+## 4. 数据管线总览
+
+数据从来源采集到报告生成，经过以下环节，每个环节都是幂等的，可重复重跑：
+
+```
+采集（Skill：tdx-collect / stock-collect；Python 脚本：akshare_collect / init_collect）
+  → 落盘 data/raw/{source}/{data_type}/
+  → adapter 解析/校验/入库（scripts/adapters/）
+  → 复权因子计算（scripts/pipeline/adjust.py）
+  → 周线聚合（scripts/pipeline/weekly.py）
+  → 指标计算（scripts/indicators/compute.py）
+  → 周线衰竭信号（scripts/signals/weekly_signals.py）
+  → 日频监测（scripts/signals/daily_watch.py）
+  → 右侧确认状态机（scripts/signals/right_side.py）
+  → 吸筹形态（scripts/signals/accumulation.py）
+  → 公司行为处置（scripts/signals/corporate_action.py）
+  → 排期卡管理（scripts/pipeline/card.py）
+  → 报告生成（scripts/pipeline/report.py）
+```
+
+**每日例行主入口**（推荐）：
+
+```bash
+uv run python -m scripts.pipeline.daily --date 2026-08-27 --raw-dir data/raw/tdx/2026-08-27
+```
+
+---
+
+## 5. 逐步使用指南
+
+### 5.1 维护观察池
+
+编辑 `config/watchlist.yaml` 添加股票，随后用对应采集方式初始化或增量。
+
+---
+
+### 5.2 数据采集
+
+#### A. 通达信 tdx-collect Skill（第一优先级数据源）
+
+**使用智能体**：调用 `tdx-collect` Skill 的 Agent 或 MCP 环境。
+
+功能：
+- A 股/港股/指数日 K
+- 估值/股本快照
+- 公告
+- 落盘到 `data/raw/tdx/`
+
+采集约定见 `skills/tdx-collect/SKILL.md`。
+
+#### B. stock-collect Skill（kimi-datasource，fallback）
+
+**使用智能体**：调用 `stock-collect` Skill。
+
+- A 股行情/财报/公告/一致预期
+- 港股行情、公司行为、指数
+- 落盘到 `data/raw/stock_finance_data/` 或 `data/raw/yahoo_finance/`
+
+采集约定见 `skills/stock-collect/SKILL.md`。
+
+#### C. akshare 采集器（可选，纯 Python）
+
+akshare 是 Python 第三方库，**不需要调用智能体/Skill**，直接跑脚本：
+
+```bash
+# 先安装可选依赖
+uv sync --extra akshare
+
+# 全量或增量采集
+uv run python -m scripts.collect.akshare_collect \
+  --symbols 603605.SH,601318.SH \
+  --indexes 000300.SH,^HSI \
+  --sources price,financials,index,telegraph \
+  --date 2026-08-27 \
+  --run-id run_ak_20260827
+```
+
+支持 sources：`price`、`forward`、`financials`、`index`、`telegraph`、`forecast`、`stock_info`。
+
+---
+
+### 5.3 数据入库
+
+#### 通用 ingester（所有来源）
+
+```bash
+# 按 data/raw/{source}/{data_type}/ 路由解析入库
+uv run python -m scripts.pipeline.ingest data/raw/tdx/2026-08-27
+```
+
+#### 每日管线（推荐）
+
+```bash
+uv run python -m scripts.pipeline.daily --date 2026-08-27 --raw-dir data/raw/tdx/2026-08-27
+```
+
+会依次完成：
+1. raw 文件解析入库
+2. 交易日历/停牌门禁
+3. 复权因子检查/重建
+4. 周线/指标/信号重算
+5. 日报生成
+
+支持状态查询：
+
+```bash
+uv run python -m scripts.pipeline.daily status 603605.SH
+```
+
+---
+
+### 5.4 单独重跑各环节
+
+用于数据补齐、参数调整后的局部重算（全部幂等）：
+
+```bash
+# 复权因子 + 周线
+uv run python -m scripts.pipeline.adjust 603605.SH
+uv run python -m scripts.pipeline.weekly 603605.SH
+
+# 指标
+uv run python -m scripts.indicators.compute 603605.SH
+
+# 信号
+uv run python -m scripts.signals.weekly_signals 603605.SH
+uv run python -m scripts.signals.daily_watch 603605.SH
+uv run python -m scripts.signals.right_side 603605.SH
+uv run python -m scripts.signals.accumulation 603605.SH
+uv run python -m scripts.signals.corporate_action 603605.SH
+```
+
+---
+
+### 5.5 生成排期卡（核心）
+
+#### 步骤 1：导出系统底稿
+
+```bash
+uv run python -m scripts.pipeline.card_inputs 603605.SH
+# → cards/603605.SH/inputs_2026-08-27.json
+```
+
+#### 步骤 2：使用 fred-valuation-card-skill 生成 draft
+
+**使用智能体**：调用 `fred-valuation-card-skill` Skill 的 Agent。
+
+该 Skill 消费 `inputs_*.json` 底稿，执行 9 步流程：
+1. 取数
+2. 盈利底稿
+3. 历史底部估值刻度
+4. 情景矩阵与三档排期
+5. 衰竭信号规则
+6. 胜率打分
+7. 波段仓与右侧确认仓规则
+8. 锚维护日历
+9. 输出排期卡 Markdown + 卡片 JSON
+
+输出物放在 `cards/{symbol}/`，包括：
+- `{股票名}估值排期卡_draft_{YYYY-MM-DD}.md`
+- `draft_{YYYY-MM-DD}.json`
+
+#### 步骤 3：人工校验并入库
+
+```bash
+# 结构校验，写入 draft
+uv run python -m scripts.pipeline.card create-draft 603605.SH --json cards/603605.SH/draft_2026-08-27.json
+
+# 人工确认后激活
+uv run python -m scripts.pipeline.card activate 603605SH_xxxx --effective-from 2026-08-27
+
+# 或拒绝/废止
+uv run python -m scripts.pipeline.card reject 603605SH_xxxx
+```
+
+> **重要约定**：LLM/Skill 只能产出 draft，不能自行 `activate`/`reject`，必须由人工确认。
+
+---
+
+### 5.6 执行记录
+
+每笔实际交易必须关联当前 active 卡片：
+
+```bash
+uv run python -m scripts.pipeline.execution add \
+  --symbol 603605.SH \
+  --action buy \
+  --price 55.00 \
+  --quantity 1000 \
+  --fees 5.50 \
+  --tier 1 \
+  --executed-at 2026-08-27
+
+# 补录历史手工单
+uv run python -m scripts.pipeline.execution add ... --backfill --note "手工单"
+
+# 冲正
+uv run python -m scripts.pipeline.execution reverse <execution_id>
+```
+
+---
+
+### 5.7 查看报告
+
+#### 单股报告
+
+```bash
+uv run python -m scripts.pipeline.report --date 2026-08-27 --symbol 603605.SH
+# → reports/603605.SH/2026-08-27.md
+```
+
+#### 全池日报
+
+```bash
+uv run python -m scripts.pipeline.report --date 2026-08-27
+# → reports/daily/2026-08-27.md
+```
+
+---
+
+### 5.8 启动 Web UI
+
+```bash
+uv run python -m scripts.ui.app
+# http://127.0.0.1:5000/
+# 探活 http://127.0.0.1:5000/health
+```
+
+默认端口 5000，可覆盖：
+
+```bash
+uv run python -m scripts.ui.app --port 5001
+```
+
+页面入口：
+- `/`：股票启动台
+- `/stock/{symbol}`：单股三图联动分析页
+- `/data`：信号/指标/对比/卡片/运行记录汇总入口
+
+---
+
+## 6. 核心智能体 / Skill 分工
+
+| 智能体 / Skill | 职责 | 禁止事项 |
+|---|---|---|
+| `tdx-collect` Skill | 通达信数据源采集；落盘 `data/raw/tdx/` | 不加工、不入库、不评价消息 |
+| `stock-collect` Skill | kimi/yahoo 数据源采集；落盘 `data/raw/` | 不加工、不入库、不评价消息 |
+| `akshare_collect` Python 脚本 | akshare 数据源采集；落盘 `data/raw/akshare/` | 不加工、不入库、不评价消息 |
+| `fred-valuation-card-skill` | 消费系统底稿，生成估值排期卡 Markdown + 卡片 JSON draft | 不直接 `activate/reject` 卡片；不计算指标 |
+| `trade-winrate-odds` Skill | 胜率打分辅助（如调用） | 不直接改变仓位或执行记录 |
+| `earnings-surge-screener` | 财报异动筛选 | 不替代完整估值排期流程 |
+| Python 管线 | 所有规范化数字、指标、信号、报告 | — |
+| 人工 | 卡片激活/拒绝、执行确认 | — |
+
+---
+
+## 7. 关键目录结构
+
+```
+config/              # 配置：watchlist、信号阈值、指标参数、日历、UI
+  watchlist.yaml
+  signals.yaml
+  indicators.yaml
+  calendar_cn_*.yaml
+
+data/
+  raw/               # 原始 CSV（按来源/类型/日期/运行批次存放）
+  market.db          # SQLite 主库（派生，可重建）
+
+scripts/
+  adapters/          # 数据源解析适配器
+  collect/           # 采集客户端与 akshare 采集器
+  indicators/        # 指标公式与计算
+  pipeline/          # 主管线：daily、db、adjust、weekly、ingest、report、card、execution
+  signals/           # 各类信号：weekly、daily_watch、right_side、accumulation、corporate_action
+  ui/                # Flask 只读 Web UI
+
+skills/
+  fred-valuation-card-skill/   # 排期卡 Skill（draft-only）
+  tdx-collect/                 # 通达信采集 Skill
+  stock-collect/               # kimi/yahoo 采集 Skill
+
+cards/{symbol}/      # 排期卡存档（current.md、版本、inputs、draft）
+reports/             # 单股报告 + 全池日报
+docs/                # 设计、计划、执行日志、数据库说明
+tests/               # pytest 测试集
+```
+
+---
+
+## 8. 常用命令速查
+
+```bash
+# 每日盘后主入口
+uv run python -m scripts.pipeline.daily --date 2026-08-27 --raw-dir data/raw/tdx/2026-08-27
+
+# 导出排期卡底稿
+uv run python -m scripts.pipeline.card_inputs 603605.SH
+
+# 卡片管理
+uv run python -m scripts.pipeline.card create-draft 603605.SH --json cards/603605.SH/draft_2026-08-27.json
+uv run python -m scripts.pipeline.card activate 603605SH_xxxx --effective-from 2026-08-27
+uv run python -m scripts.pipeline.card reject 603605SH_xxxx
+
+# 执行记录
+uv run python -m scripts.pipeline.execution add --symbol 603605.SH --action buy --price 55.00 --quantity 1000 --fees 5.50 --tier 1 --executed-at 2026-08-27
+
+# 报告
+uv run python -m scripts.pipeline.report --date 2026-08-27 --symbol 603605.SH
+uv run python -m scripts.pipeline.report --date 2026-08-27
+
+# UI
+uv run python -m scripts.ui.app
+
+# 测试
+uv run pytest -q
+```
+
+---
+
+## 9. 关键设计约束（违反会出错）
+
+- **复权 vs 不复权**：指标/周线用复权；排期卡价区/证伪线/箱体/现价用不复权。两边比较前必须 ÷ 当日因子折回。
+- **不猜**：关键数据缺失输出 `incomplete/degraded` 及原因码，禁止伪装成“条件满足”。
+- **无未来函数**：信号只使用当时可见数据，均量基数 `shift(1)`，样本不足不判定。
+- **LLM 边界**：LLM 只消费 card_inputs 底稿，产出排期卡 draft；`activate/reject` 必须人工。
+- **文档同步**：任何改动追加 `docs/execution_log.md`；设计变更同步 `docs/system_design.md`。
+- **幂等重跑**：所有派生表采用 DELETE + 重插 + `pipeline_runs` 记录。
+
+---
+
+## 10. 必读文档
+
+开发或维护前，请按以下顺序阅读：
+
+1. `docs/system_design.md` —— 设计基线与契约
+2. `docs/implementation_plan.md` —— 阶段计划
+3. `docs/execution_log.md` —— 执行历史与偏差决定
+4. `docs/handoff.md` —— 其他智能体交接入口
+5. `docs/database_schema.md` —— 数据库逐表逐字段说明
+6. `AGENTS.md` —— 硬性约定精简版
+
+---
+
+## 11. 故障排查
+
+- **测试失败**：先运行 `uv run pytest -q`，定位后查看 `docs/execution_log.md` 是否已有类似记录。
+- **因子重建误报/每日全量重建**：参见 `docs/execution_log.md` 2026-08-10 晚间记录；根因是新 bar 因子占位 1.0 进入重叠窗口。当前 workaround 是使用 3 年 full forward 文件。
+- **akshare 采集缺字段或空**：检查 `data/raw/akshare/.../_meta.json` 中的 `errors`。
+- **UI 启动失败**：确认 `TRADE_DB_PATH` 或默认 `data/market.db` 存在且可读写。
+- **卡片相关信号为 incomplete**：无 active 卡或卡片尚未生效属预期，见 `scripts/pipeline/card.py`。
+
+---
+
+*项目版本：0.1.0 · trade-analysis*

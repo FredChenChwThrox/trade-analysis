@@ -947,3 +947,223 @@
 - **教训（操作）**：`--raw-dir` 是单值参数，重复传参后者覆盖前者——今日首跑误只入库指数（ok=1/suspended=17），二跑 `--raw-dir data/raw/akshare` 才覆盖 price+index。
 - **daily 2026-08-26 结果**：`uv run python -m scripts.pipeline.daily --date 2026-08-26 --raw-dir data/raw/akshare` → **ok=18**（calendar/event_study/summary success；report 阶段 degraded 仅因 4 只无激活卡：600309/600563/601168 no_active_card、603993 卡 2026-08-27 起生效，均属 §2.5 预期）。601899 因子检查通过、pe_ttm=13.55 正常，报告 complete P5。全池日报 revision=4：优先级 3 决策点 002557 箱体 buy_zone、000001 箱体 sell_zone、600029/603697 档位 T1 等（详见 reports/daily/2026-08-26.md）。
 - **测试**：`uv run pytest -q` **400 全绿**（399+1 新增回归）。
+
+## 2026-08-27（执行记录补登：601899 卖出）
+
+- 用户报告 2026-08-26 卖出紫金矿业 601899.SH 600 股 @ 35.00（当日振幅 33.70–35.35，价可行）。`execution add` 记录 **#11**（card=601899SH_85cd7f52，信号快照截止 2026-08-26，key=auto_17910bd78c8e6605ee11d3be）。执行具体时分未知，executed_at 记 14:30 约定值（仅影响展示，快照按日冻结不受影响）；费用未提供留空。
+
+## 2026-08-27（AKQuant 回测 Phase 1：单股双均线全链路验证）
+
+- **背景**：依据 `~/Downloads/akquant_backtest_plan.md`（AKShare+AKQuant 回测方案）做差距分析并经用户拍板三件事——①并入本仓库（不另起 quant_project）；②本次只做 Phase 1 单股双均线验证；③数据复用库内后复权口径、结果仅打印不落盘。用户额外要求量化代码与既有管线尽量隔离。
+- **akquant API 核实**（v0.3.52，官网/源码对照计划假设）：`run_backtest` 参数基本全对且更丰富（另有 commission_policy/transfer_fee_rate/min_commission/volume_limit_pct/fill_policy/benchmark/risk_config）；`IntParam` 内联参数、`order_target_percent/close_position/get_history/get_position/warmup_period` 均确认存在；`result.viz.report` 实为 `result.report`（Phase 1 未用）；**原生内置 run_grid_search / run_walk_forward 与 on_cross_section 横截面范式（Phase 2/3 架构风险大降）**；涨跌停未见原生支持（留待 Phase 4 补充验证）；停牌由缺 bar 天然处理。
+- **隔离落地**：新增自包含子包 `scripts/backtest/`——自带只读连接（`db.py`，URI ro 模式 + BACKTEST_DB 环境变量测试注入，每次调用读取环境变量）与配置装载（`run.py:load_config`），不 import scripts/pipeline|adapters|indicators 任何代码；仅共享 data/market.db 文件与 `price_adj_factor/share_factor` 口径（§3.3）。依赖入 pyproject optional extra `backtest = ["akquant>=0.3.52"]`（同 akshare 处理，主环境不引入）。
+- **实现**：
+  - `config/backtest.yaml`：initial_cash 100 万 / lot_size 100 / t_plus_one / 万三佣金 + 卖出印花税 5bp / slippage 1bp / Asia/Shanghai；fill_policy 用默认 NextOpen()（T 日收盘信号 → T+1 开盘成交，无未来函数）。
+  - `scripts/backtest/data.py`：daily_bars → akquant DataFrame（date/open/high/low/close/volume/symbol），调整价=raw×price_adj_factor、调整量=volume_raw÷share_factor，按 (date,symbol) 升序；无数据抛 ValueError 不猜（§2.5）。
+  - `scripts/backtest/strategies/dual_ma.py`：DualMAStrategy（short/long/target_pct IntParam，on_start 设 warmup_period=long_window，on_bar get_history→MA 比较→order_target_percent(95%)/close_position），与计划 §6 示例一致。
+  - `scripts/backtest/run.py`：CLI `uv run python -m scripts.backtest.run --symbol 000001.SZ [--start/--end/--json]`；打印核心指标 + 验证摘要（orders/trades 行数、拒单明细）；slippage 裸数字已废弃 → 显式转 `{"type":"percent","value":x}`；不落库不产文件。
+- **真实跑通（000001.SZ，727 个交易日 2023-08-25~2026-08-26）**：total_return 17.13% / 年化 5.40% / Sharpe 0.436 / 最大回撤 15.34% / 胜率 32% / 25 笔完整交易；orders 52 笔中 filled 51 + rejected 1。
+- **Phase 1 验收四项全部通过**：
+  1. **T+1 生效实证**：2024-11-12 收盘信号买入 84600 股（11-13 开盘成交），当日收盘回落触发的卖出单被拒 `Insufficient available position, Available: 0`，11-14 重新提交成功——买入当日不可卖的教科书证据；
+  2. **费用可复算**：trade.commission ≈ Σ(买单额×0.0003) + Σ(卖单额×(0.0003+0.0005))，逐笔 rel=5% 内吻合；
+  3. **无未来函数**：warmup 生效（8 根 bar < long_window 20 时零订单）；NextOpen 保证信号日收盘数据不含当日成交价；
+  4. **复权口径连续**：因子平台跳变处（raw ×2.0）复权序列无缺口。
+- **测试**：新增 `tests/test_backtest.py` 9 项——数据导出 golden（×factor 平台/÷share_factor/区间过滤/缺数据报错）、配置加载与 slippage policy 组装、端到端指标存在、warmup 零订单、费用逐笔可复算、T+1 当日卖被拒合成序列构造（数学精确化：P>10 触买、P+C<20 次日即翻空）。注意 daily_bars.raw_object_id 有 FK，测试插入置 NULL；临时库用 pipeline db 的 migrate+seed_calendar 建 schema。`uv run pytest -q` **409 全绿**（400+9）。
+- **偏差/决定**：① trades_df.side 全 'Long' 是 closed-trade 语义（开平合一笔）非只买不卖，UI/报告消费时勿误读；② reject_reason 列空串非 NULL，判断拒单要按长度过滤；③ akquant Rust wheel 安装较慢（uv sync --extra backtest 约 2 分钟），走后台完成；④ 双均线 MA 比较用 mean(closes[-short:]) vs mean(closes)（长均线=整窗均值），等价于窗口内对比，已在 docstring 说明；⑤ 监测系统 §1.2 "回测优化不进第一版"边界不变——本子包是平行研究工具，不接入 daily 管线、不影响监测信号任何输出。
+
+## 2026-08-27（AKQuant 回测 Phase 2：18 只迷你池周频 Top-N 等权轮动跑通）
+
+- **范围决定**：用户指示"继续"，进入计划 §19 Phase 2（股票池 + Top N + 等权 + 每周调仓）。库内现仅 18 只 watchlist 行情 → 先以 18 只为迷你池验证多股链路；扩容 ≥100 只需 akshare 批量采集入库，列为后续独立任务（接口已预留 `--symbols` 与 universe.py）。隔离原则同 Phase 1：全部新代码限于 `scripts/backtest/`，只读 market.db。
+- **实现**：
+  - `scripts/backtest/universe.py`：股票池加载——显式列表优先（空列表报错不回退），默认 watchlist active=1 排序输出；行情充足性交给 run_multi 按 lookback+裕量剔除并**明示原因**（§2.5 不静默）。
+  - `scripts/backtest/strategies/topn_rotation.py`：TopNRotationBase——每周首个被处理的 bar 触发一次（ISO 周去重），`get_history(count=lookback)` 取各股截至上一收盘的序列算动量分（触发时点其他标的当日 bar 未入缓冲，横截面天然无未来函数），Top-N 等权经文档确认的 `rebalance_weights(target_weights, liquidate_unmentioned=True, rebalance_tolerance=0.01)` 下单；universe 经工厂函数以类属性注入（避免依赖构造器参数语义猜测）；`CASH_BUFFER=0.05` 目标权重和=95%（吸收滑点/佣金/跳空，双均线 95% 同一问题域）。
+  - `scripts/backtest/run_multi.py`：CLI `uv run python -m scripts.backtest.run_multi [--symbols --top-n --lookback --start --end --json]`——逐股加载→样本不足剔除报告→concat 按 (date,symbol) 升序→回测→打印指标/交易/拒单数/参与标的/末日持仓快照/沪深300 同区间对比（index_bars 只读查询取首末收盘，缺数据打印跳过不猜）。
+- **真实跑通（18 只 × 约 730 日）**：参数 top_n=5 / lookback=20 / buffer=0.05：total_return 4.52%、Sharpe 0.19、最大回撤 35.7%、377 笔完整交易、拒单仅 1（T+1 类，次周自愈）、margin 拒单归零；沪深300 同区间 15.71%。
+- **重要研究警示（非 bug）**：buffer 2%→5% 的微调使 total_return 从 50.8% 摆到 4.5%。根因是迷你池动量轮动的**排名边界敏感性**：仓位口径变化改变个别周的 Top-5 成员与部分成交路径，收益路径随之剧变（且首轮 margin 拒单本身也在塑造路径）。结论：当前数字仅证明"多股回测链路可用"，不构成任何策略有效性证据——这正是计划 Phase 2 的定位；参数敏感性/扩池/正式因子框架属 Phase 3+ 工作。
+- **引擎行为记录**：① 调仓同切片出现大量 `Deferred same-cycle order until cross-symbol reduce-first orders finish`——引擎自动先卖后买排序提示，属预期；② margin 拒单机制见上；③ 残余拒单订单次日过期、下周按实际权益重定目标自愈。两者都在 stdout 显形而非吞掉。
+- **测试**：新增 `tests/test_backtest_multi.py` 10 项——universe 默认/覆盖/空池报错、短样本剔除明示、全样本不足抛错、4 股分化趋势端到端（交易标的 ⊆ 池、基准首末收盘语义、trades/orders/positions 结构存在）、持仓宽松上限（≤top_n×2 过渡容忍）、sell 订单按 ISO 周聚合 ≤13 周（节奏无未来函数佐证）。修坑记录：pd.Timestamp.isoformat() 带 T00:00:00 后缀会污染文本日期比较（真实库存纯日期无此问题）；daily_bars.raw_object_id FK 测试置 NULL；小资金等权起步腿差滑点即 margin 拒单（合成用百万资金+策略侧缓冲）。`uv run pytest -q` **419 全绿**（409+10）。
+
+## 2026-08-27（AKQuant 回测 Phase 3：三因子横截面评分框架）
+
+- **架构（计划 §10 因子与交易分离的最小实现）**：因子全部在 akquant 引擎外由 pandas 向量化预计算，`{date:{symbol:score}}` 表经工厂类属性注入策略；策略仅做"取分→排序→等权调仓"。取分纪律为**严格早于触发日的最近一天**（T-1 收盘信号）叠加 NextOpen 成交，双保险未来函数隔离；取分之外不动 bar.extra 注入路径（避开引擎日内到达顺序问题）。
+- **新增文件**：
+  - `scripts/backtest/factors.py`：FactorParams + 单股三因子（momentum=N日收益率 / volatility=N日收益率 std(ddof=0) 与 §4.1 BOLL 口径一致 / liquidity=N日均 amount_raw，成交额不做股份调整）+ 横截面逐日 winsorize(5%)→zscore→权重加权（vol 权重 -0.3 即方向统一）→score；中性语义两层——行级三因子缺任一即无分（覆盖率统计）；因子级截面 <min_names 或 std≈0 该因子当日贡献 0，**三因子全中性则整日无分**（不制造伪区分度让策略空转交易）。辅助 `select_scores_asof`（严格早于语义）/`build_score_map`。
+  - `scripts/backtest/strategies/factor_rotation.py`：FactorTopNBase 继承 Phase2 TopNRotationBase 复用 CASH_BUFFER(5%)/ISO 周去重/rebalance_weights(tolerance 1%)，仅替换选股来源为外部 score 表。
+  - `scripts/backtest/run_factor.py`：CLI `uv run python -m scripts.backtest.run_factor [--symbols --top-n --config --start --end --json]`；额外输出因子首末日/中性计数/**每只覆盖率%与 <80% 明细**/trade_leakage（参与交易 ⊆ 有分集合的外部佐证）。
+  - `config/backtest.yaml` 追加 factors 块（窗口/权重/裁剪/min_names 默认即计划 §11 示例 0.5/-0.3/+0.2）。
+  - `data.load_symbol` 加 `include_amount` 开关（默认关，Phase1/2 兼容）。
+- **真实跑通（18 只 watchlist）**：策略收益 77.43% / 年化 20.7% / Sharpe 0.83 / 回撤 25.5% / win_rate 79% / 112 笔零拒单；沪深300 同期 15.71%。末日持仓恰为有分的 3 只各 ~95% 折算等权（top_n=5 > 截面数时自然收缩），拒单 0。
+- **⚠️ 关键数据发现（决定后续研究价值）**：覆盖率报告显示 **15/18 只 coverage=0.0%**，仅 600309/600563/603993 三只有分——正是 handoff 已知缺口"amount 仅 tdx/akshare 部分股票有值"的直接体现（kimi 历史无成交额）。即当前三因子轮动实际运行在 3 只迷你截面上，momentum/vol 在 ≤3 只截面上的排名几乎无区分度，77% 数字**仅为链路验证结论而非因子有效性证据**。补齐路径已明确：用 akshare 东财源（price 输出自带 amount）对缺额股票全量重采并 ingest（amount 属规范化事实 upsert，data_revisions 可追溯），再重算 amt_* 指标——涉及监测管线指标面，须人工拍板后再做。
+- **测试教训留档**：① 各股帧 RangeIndex 重叠 + concat 未 ignore_index → 按日 loc 写入跨股互相覆写（golden 复算暴露，修 factors.concat(ignore_index=True)）；② 等比缩放的合成面板 pct_change 完全相同 → 截面天然零区分度触发全中性（属新语义正确行为，改用独立漂移路径面板）；③ 截面剩余样本跌破 min_names 时整段日期无分为预期（NOAMT 用例配 min_names=2 验证 10/2 分布）。新增 `tests/test_backtest_factors.py` 10 项；bt_multi_db_path fixture 提升至 conftest 共享（模块间导入 fixture 不注册）。`uv run pytest -q` **429 全绿**（419+10）。
+
+## 2026-08-27（amount 数据面补齐：15 只 A 股成交额全量回填 + amt_* 指标填充）
+
+- **决策背景**：Phase 3 因子覆盖率报告暴露 15/18 只 liquidity 无分（库内 amount_raw 已知缺口，kimi 主源历史无成交额；仅此前 akshare 重铺过的 600309/600563/603993 三只完整）。用户拍板执行补齐。
+- **采集**：`akshare_collect --sources price --price-api sina --run-id run_amt_backfill`（东财 push2his 域名代理仍不可达，按 2026-08-26 先例切新浪源，`stock_zh_a_daily` 输出自带成交额），15 只 × 各自库内起点至 2026-08-27，全部 ok（原始目录留档不动）。
+- **两道裁剪门（避免越权写入）**：① 原始文件含当日 2026-08-27 bar——该交易日必须走每日管线因子检查流程，补采不得夹带，副本目录 `run_amt_backfill_trim` 截至各股库内末日（≤2026-08-26）；② 发现 42 个"CSV 有库无"日期，**全部为 2023-08-09~16 的各股原初采集起点边界**（原源起始日参差所致）而非停牌——在因子 origin 日之前，动它即触发 §3.3 前扩历史流程，本次排除并记录待议。
+- **入库比对门**：15 只共 11031 行逐行对库校验——OHLC 偏差 0 行（0.005 容差）、成交量偏差 0 行（0.1% 容差），跨源逐分一致，纯 UPDATE 零 INSERT。`pipeline.ingest run_amt_backfill_trim` → **inserted=0 / updated=10896 / conflicts=0**；updated 数恰等于原缺额行数，每文件 skipped=9~13 恰为近几日已有额的行（内容不变幂等跳过），账目自洽。
+- **指标重算**：15 只逐一 `indicators.compute` 全量重算（§4.3 幂等惯例）；2026-08 以来窗口 null_amt20=0、null_amt60=0，amt_mean20/60 抽查量级合理（000001 约 13 亿/日）。周线/信号不受影响（close/量未变， amt_* 仅报告展示消费）。
+- **因子复验（回测侧闭环）**：`run_factor --top-n 5` → **18/18 只有分、覆盖率<80% 名单清空**、中性截面计数仅 3、首分日 2023-09-07；真实截面轮动 36.20% vs 沪深300 同期 15.71%（Sharpe 0.55、回撤 31.4%、326 笔、拒单 1 次周自愈），末日 5 持仓满配等权。因 Volume/close 未动，监测侧信号零扰动，`uv run pytest -q` **429 全绿**证实。
+- **遗留**：① 42 个起点边界行是否前扩入库（每只需 §3.3 新因子版本+全量重建，价值有限建议搁置）；② 0700.HK 港股 24 行无 amount 未处理（港股流动性因子本就未纳入本期范围）。
+
+## 2026-08-27（盘后 daily：全池 ok=18；补采 miss3 与洛钼因子重建 v31）
+
+- **补采 miss3**：`run_amt_backfill` 只含 15 只，缺 watchlist 中 600563.SH / 600309.SH / 603993.SH。`akshare_collect --sources price,forward,index --price-api sina --run-id run_daily_20260827_miss3` 一并补齐三只及 000300.SH/^HSI 两指数。**踩坑留档**：首次执行漏传 `--end`，argparse 默认值硬编码 `2026-08-25` 且不随日期更新，三只 price/forward 文件静默截至今日前一日——入库前抽查 CSV 尾行发现（§2.5 纪律），未污染数据库，原地重采修正。教训：**akshare_collect 每日增量必须显式 `--end <当日>`**。
+- **daily 结果**：`uv run python -m scripts.pipeline.daily --date 2026-08-27 --raw-dir data/raw/akshare` → **ok=18**，18 只 A 股全部有当日 bar（收盘抽查与源一致：603605 收 62.34、603993 收 19.51 等）；旧目录 content-hash 幂等跳过，仅新增行入库。无代码改动。
+- **603993.SH 因子重建 version_id=31**：重叠窗口 max_dev=0.1013% 刚过 0.1% 容差（除权落在检查窗内），按设计触发防御性全量重建（origin 2023-08-10，platform 段口径，source_factor_at_origin=0.93966），周线 156/指标 daily=739/五类信号已随管线原子重算，报告 complete P4。
+- **指数**：000300.SH 增至 2026-08-27（inserted=1）；^HSI 最新仍为 2026-08-26（sina 港指滞后一日，既有现象非本次退化）；其全历史解析另跳过 30 行非法行（o=0、c=h 等源质量问题，逐行带 note，与库既有行为一致）。index_bars 现状：000300.SH→08-27、^HSI→08-26。
+- **报告**：15 complete + 3 degraded（600309/600563/601168 均 no_active_card，§2.5 预期）；全池日报 revision=1 → reports/daily/2026-08-27.md。杂项：`announcement/2026-08-26/run_lyc/603993.SH.csv` 每次 daily 提示无法路由——根因是 `_ROUTES` 无 (akshare, announcement) 注册：该通道曾实现并将本文件 135 条公告入库（commit 1341243），随后按用户要求整体回退代码（ea2dfd1），CSV 留档在 raw 树内所致。核实数据零丢失（events 表 akshare 公告恰 135 条，published_at 与 CSV 一致），仅提示噪音，处置方案待议 → 当日经用户拍板重构解决，见下节。
+
+## 2026-08-27（重构：公告解析引擎下沉 adapters/announcements + 恢复 akshare 公告入库通道）
+
+- **决策**：针对 run_lyc 无法路由问题，用户否决"akshare 直接借用 tdx 解析器"做法，拍板**不复用、正式重构**：把公告解析提取为源中立公共引擎后再恢复通道。上一版回退实现（1341243）的薄壳模式本身无架构问题，本次是把"共用"从隐式委托升级为显式公共层归属。
+- **新增 `scripts/adapters/announcements.py`**：`parse_disclosure_csv(..., *, source)` 引擎承接标准公告线格式（title, time, url, source, summary, code, setcode, name）→ events/event_symbols 全部逻辑：title/time 必填整文件拒绝、stem ticker 推断优先 + code+setcode 回退、dedup event_id = sha256(f"{source}|{title}|{pub_date}")[:16] 命名空间隔离、published_at = 发布日当地 00:00 → UTC、available_at = 发布日 +1 开市交易日 00:00（§2.1）、calendar 缺失降级 +1 自然日记 incomplete。docstring 明确边界：线格式不同的源（sfd 列别名、tyc uuid 去重）不进本引擎。
+- **common.py 上移三个跨 parser 工具并公开化**：`SETCODE_SUFFIX` / `symbol_from_code_setcode` / `next_open_available_at(calendar, pub_date, market)`（实现原样搬迁）；tdx 其余 kline/index/quotes/financials 解析改引 common 版本（全局重命名 6 处调用点），行为零变化；清 hashlib/timedelta 残留导入。tdx 内部 `_ticker_from_stem` 随公告逻辑迁入 announcements（唯二使用方）。
+- **源适配器薄壳化**：tdx.parse_announcement_csv 与新增 akshare.parse_announcement_csv 均为纯委托（各自传 source='tdx'/'akshare'），签名不变；ingest._ROUTES 注册 `(akshare, announcement)`。
+- **测试**：test_adapters_akshare.py 新增 4 项——aksource 入库字段/时点断言、跨源同公告 event_id 隔离互不吞并、同内容重跑幂等、**路由表锁定断言**（_ROUTES 必须含 ak.parse_announcement_csv 且薄壳落点为公共引擎，防再被静默移除）。踩坑记录：隔离测试初版两份 CSV 字节全同，先被全局 content-hash 门槛拦下（§9.5）到不了解析层——系测试构造不当而非引擎缺陷，改为有真实差异的两来源文件。`uv run pytest -q` **433 全绿**（429+4）。
+- **真实验证**：`pipeline.ingest data/raw/akshare/announcement/2026-08-26/run_lyc` → 路由生效、content-hash 幂等跳过（raw_6084cd377dc7ec1c），events 表 akshare 公告维持 135 条零重复；后续 daily 不再出现该文件无法路由提示。
+- **遗留/backlog**：① cninfo 抓取仍未进 akshare_collect（当时一并回退未恢复），采集仍靠一次性手段，要常态化需给 collector 加 announcement fetcher（含增量游标），涉及新外部接口探测，另议；② sfd/tyc 公告解析仍在各自 adapter（线格式/dedup 语义确实不同，如后续出现第三个异构公告源再评估是否抽归一化记录层）。
+
+## 2026-08-27（akshare_collect 新增 announcement 通道：cninfo 公告常态化采集）
+
+- **背景**：上一节 backlog① 由用户拍板执行。接口实测：`stock_zh_a_disclosure_report_cninfo(symbol=<6位>, market="沪深京", start_date, end_date)` 返回列 `[代码,简称,公告标题,公告时间('YYYY-MM-DD'),公告链接]`；**日期参数必须紧凑 YYYYMMDD——带 - 的格式静默返回空行（0 行不报错），已写入 docstring 与测试断言双保险**。
+- **实现**：`collect_announcement`（仅 A 股，HK/非沪深京拒绝）→ `{symbol}.csv` 标准公告线格式：source 列固定"巨潮资讯"、summary 回填标题、自由文本 `_csv_escape` 防注入；时间规范化 `%Y-%m-%d %H:%M:%S`（引擎取前 10 位口径不变）。CLI 按既有模式接入分发（opt-in 不进默认 sources）；meta 记录 api/params 同其他源约定。
+- **测试 +3**（FakeAk 补 cninfo 方法）：线格式列序/引号转义还原、**紧凑日期入参断言**（锁住踩坑点）、空结果 None / HK 拒绝。`uv run pytest -q` **436 全绿**（433+3）。
+- **真实冒烟**：603993.SH 窗口 2025-08-26~2026-08-27 → 135 行落盘 `announcement/2026-08-27/run_daily_20260827_ann/`；ingest 全部事件级去重 skipped=135、inserted=0、conflicts=0（与存量公告完全一致；落盘 time 无秒位不影响 pub_date 口径）——采集→入库→幂等闭环验证完成。
+- **待议**：法拉电子 600563.SH / 万华化学 600309.SH 公告簿偏薄缺口现可用本通道批量回填（用户点头后跑全池 A 股或指定标的即可）；D3 消息评价落地前 events 只进库不评价。
+
+## 2026-08-27（盘后 daily 二跑：折入公告增量，revision=3；当日复盘完成）
+
+- **daily 二跑**：公告回填后重跑 `daily --date 2026-08-27 --raw-dir data/raw/akshare` → ok=18 全幂等，新增公告事件 184 条折入 event_study（重算写入 61 行 ok），全池日报 revision=3。⚠️ 观察项：603993 因子检查两日内连续触发防御性重建（v31 max_dev=0.1013% → v32 0.1047%，均贴近 0.1% 容差），疑该除权点附近检查存在贴阈不稳定性——复权序列连续性由重建自身保障、不影响信号口径，但需另次排查根因，避免每日重复重建噪音（跟进项）。
+- **复盘**：基于 reports/daily/2026-08-27.md + signal_facts/adjusted 口径 SQL 汇总，在对话中向用户交付（P1/P2 空；P3 五项决策点：珀莱雅 T1+右侧确认、南航/有友 T1、洽洽 buy_zone、平安 sell_zone；海天 -5.09% 跌入 tier_2 但衰竭信号 0<2 门控未过，属设计预期）。
+
+## 2026-08-27（海天味业公告簿回填 +171 条；消息面盲窗消除，中报同日性强相关确认）
+
+- **背景**：用户要求结合消息面分析海天当日 -5.09%（复权、放量 17.84 亿≈近16日均量~3.9 倍）。原事件簿 tianyancha 至 8/03、tdx 仅 8 月中旬起，存在盲窗。用户拍板回填。
+- **执行**：`akshare_collect --symbols 603288.SH --sources announcement --start 2025-08-26 --end 2026-08-27` → 172 行（含内文件重复 1 行幺等跳过）；ingest **inserted=171 / conflicts=0**。事件簿现为三源：akshare 171（2025-08-28 起）+ tianyancha 154 + tdx 5。
+- **关键发现（消息面结论性事实）**：cninfo 显示**正式半年报及摘要、半年度主要经营数据公告、董事会决议公告、H股公司秘书变更等于公告日 2026-08-27 同批挂网**（早于开盘可见；注意 events.published_at 为 UTC，date() 展示会偏差一日，原始 CSV 公告时间为准）——"昨天的中报作用很大"的用户判断得到结构支持：信息密集披露当日即出现全池最大放量跌幅。基本面数字本身温和（营收 +6.0% / 归母净利 +7.1%，此前 SQL 已算）；分渠道/品类明细在「主要经营数据公告」正文内，本系统仅采标题级事件，需人工经 canonical_url 查看。提醒消费侧 D3：同题公告现存在于 akshare/tdx/tianyancha 三命名空间，评价前需跨源归并。
+
+## 2026-08-27（公告簿回填：法拉电子 +64 / 万华化学 +120 条 cninfo 公告入库）
+
+- **执行**：用户拍板回填。`akshare_collect --symbols 600563.SH,600309.SH --sources announcement --start 2025-08-26 --end 2026-08-27 --run-id run_ann_backfill_fa_wanhua`（窗口与洛钼存档口径对齐，便于后续增量切换）→ 采集 68/121 行零错误；ingest `inserted=184 / skipped=5 / conflicts=0`——万华 121=120+1、法拉 68=64+4，5 条 skip 均为 cninfo 返回列表内同日同题行（同一公告多附件场景）被引擎按 title|pub_date 幺等去重，账目自洽。
+- **结果**：事件簿现为双源并存（源命名空间隔离，§3.6）——万华 akshare 120 条（2025-09-03~2026-08-25）+ tdx 22 条；法拉 akshare 64 条（2025-09-12~2026-08-21）+ tdx 19 条。抽查关键节点（万华 2026 中报摘要 08-24、临时股东会法律意见书等）均在库。handoff 已知缺口⑦中"法拉/万华公告簿偏薄"已关闭（corporate_actions 空/万华 forecasts 缺仍保留）。
+- **提醒（后续消费侧注意，非本次缺陷）**：同公告现可能同时存在 tdx 与 akshare 两条 event_id 不同的事件记录；D3 消息评价落地时需在消费端做跨源归并（canonical_url/title+pub_date 关联），§2.5 口径下不建议在采集层擅自合并。
+
+## 2026-08-27（入池：美的集团 000333.SZ / 格力电器 000651.SZ，全链路首日跑通）
+
+- **入池**：watchlist.yaml 新增两行（带注释），`db seed` 导入 20 只；采集 `run_onboard_midea_gree`（price/forward/financials/announcement 四源，sina 源，--start 2023-08-09 --end 2026-08-27 显式传参）。
+- **采集/入库**：各 740 根日线 + forward + 财报（美的 78 期、格力 135 期，格力至 1993 年起全史）+ 公告（美的 532 条、格力 282 条入 akshare 命名空间，格力 7 条文件内重复幺等跳过）；ingest inserted=2485 / conflicts=0。
+- **daily 首跑**：ok=**20**，两新店 adjust/weekly（各 156 周）/indicators（各 740）全链路生成；收盘 美的 86.18 / 格力 39.27；报告 degraded（no_active_card）属入池预期。⚠️ pe_ttm=NULL（no_share_capital）：两股无股本快照，待补采 stock_info 源（东财股本快照）后自动填充；forecast 可一并补。
+- **测试**：`uv run pytest -q` **443 全绿**。+7 来自另一工作流今日新建的 `tests/test_backtest_events.py`（Phase A 时序事件回测，7 项，未跟踪文件，与本批改动无关），已核实无冲突。
+- **排期卡 draft（LLM draft-only，待人工激活）**：card_inputs 底稿导出后按洛钼卡同套方法论起草两张 draft，`create-draft` 校验入库：
+  - **美的 000333SZ_b6226347**：EPS 三情景 5.50/5.80/6.20（TTM 5.7935 为锚，无一致预期缺口）；PE 悲观/中性/乐观 12.5/13.8/15.5（p5/p50/p95，恐慌带 11.44–14.21 无体系切换）；三档 88.00–90.00 / 76.60–80.00 / 66.00–67.90；箱体 [74.00, 89.50]（买 74.00–76.50 卖 88.00–89.50，失效 71.50）；证伪线 66.00（= 锚定恐慌低点 66.20 下方）；next_review 2026-10-31
+  - **格力 000651SZ_f7c4f770**：EPS 三情景 4.98/5.33/5.60（base=FY1 一致预期 298.25 亿，bear=TTM 持平下行情景）；PE 6.7/7.6/8.4（盈利下行期低估值窄幅刻度 6.52–8.43）；三档 44.50–47.20 / 40.70–42.30 / 36.50–37.50；箱体 [36.30, 42.50]（买 36.30–37.60 卖 41.00–42.50，失效 35.80）；证伪线 36.50（= 锚定恐慌低点 36.98 防线带）；next_review 2026-10-31
+  - 两张均为 draft 状态，activate/reject 等待人工
+- **股本快照补齐（同日追加）**：`stock_info` 两店入库（美的 76.29 亿股、变更日 2026-08-19 自主行权；格力 56.01 亿股、2026-06-30）→ indicators.compute 全量重算，pe_ttm 740/740 非空：美的 **14.88** / 格力 **7.54**。forecast：格力 FY1-FY3 净利预期 298.3/313.1/330.5 亿入库；美的同花顺接口返回空，按 §2.5 留缺口标（后续重试）。注意：单快照全局应用的 PE 历史为近似值，早期段严格点时需更早快照（与法拉/万华同款已知限制）。
+
+## 2026-08-27（执行记录补登：平安 601318 4 笔波段 #13–#16）
+
+- **用户报告**：2026 年两轮已完成波段——6/18 买入 1100 @49.4（当日放量下跌日，恰为 accumulation 模块 breakdown_date）、6/22 卖出 @51.8；6/24 买入 @49.25、7/20 卖出 @52.7。毛利 +2,640 / +3,795 元（费前）。四笔 `execution add --backfill` 补录为 **#13–#16**（card=601318SH_6c1eba32，时分未知记 14:30 约定值，backfill 语义不冻结信号快照）。
+- **底仓情况**：另持有底仓 5300 股 @44.2（买入日期未提供，暂未入系统台账）；当前浮盈约 +26.4%，今日收盘 55.87 落在卡 sell_zone [53.50, 56.00] 内（P3 决策点），用户策略为保底仓做波段压成本；已向用户提供卖出现价/回补 buy_zone 的摊薄成本场景表（Python 计算，对话交付）。
+- **底仓补录（同日追加）**：用户确认“购买时间较早，单独记一笔” → `execution add --backfill` **#17**（buy 5300 @44.2，executed_at 以系统行情覆盖起点 2023-08-09 约定标记，note 如实声明日期不详与摊薄口径）。平安台账齐整：底仓 #17 + 波段 #13–#16；后续波段即做即记即可维持审计线。
+- **对照观察**：用户两轮买入价 49.4/49.25 均落在卡 buy_zone [47.00, 49.50] 上半区，卖出价 51.8/52.7 低于本轮 sell_zone 下沿 53.50——本轮价格已更高，场景差异已向用户标出。
+
+## 2026-08-27（AKQuant 回测 Phase A：排期卡择时层忠实机械化——衰竭时序事件版）
+
+- **定位**：回答"我的策略能否做成量化因子回测"的第一步——择时层（衰竭 5 项/锚点/吸筹）本来就是确定性规则且已有 3 年点时事实，直接消费 `signal_facts`+`weekly_anchors` 做时序事件回测；卡片价区/估值研判层明确不做（语义上不可回放，Phase B/C 议题）。仍全程 `scripts/backtest/` 隔离、只读共享库。
+- **新增**：`event_signals.py`（SQL 直查：①同周同锚 active 计数取最大组、并列取小 id；②真实 decline_start 锚列表 `is_fallback=0` 过滤；③HFQ 止损换算 stop_adj=adjusted_price×(1−stop_pct)，锚点日因子一次性落位历史不漂移）；`strategies/exhaustion_timing.py`（入场=最近完成周 active≥min_signals 且本 episode 未开仓；出场①收盘≤止损线、出场②锚推进即旧 episode 终结；可选折扣门近似卡片段价区半条件）；`run_event.py` CLI 逐股独立账户回测+池级聚合。
+- **关键发现一（粘性信号主导释放）**："≥2 项"极易被 duration（episode 内持续活跃）与 no_new_low_3w（创新低前持续）两个慢变量凑满——603605 3 年 155 周中 52 周满足。卡片语境有人工价区+复核节奏抑制换手；纯信号时序版在震荡区形成"绕线震荡"（603605 静态证伪线附近 2–4 天反复进出，74 笔、胜率 50% 但净亏 -33.6%）。
+- **关键发现二（fallback 锚污染已修）**：weekly_anchors 全量加载会把"缺恐慌信号的每周兜底锚"当真锚推进 episode 索引（全池 503 锚仅 117 真实），episode 锁与终结出场双双失效——加 `is_fallback=0` 后恢复真实节奏（单股仅 2–3 个真实下跌起点）。
+- **全池基线（纯信号版，stop 8%）**：18/18 参与，17 只有交易（601168 为未平仓浮盈 +156%，trades 只计 closed 属口径正常）：总收益中位 **+18.65%** / 均 +32%、正收益 12/17；分化极端——大赢家是"低位一次进场长持"的 beta 型（603993 +205%/601899 浮盈+93%），输家集中在粘性信号高频区绕线品种（002299 −27%/603605 −34%）。结论：链路忠实可用，但该数字是机制验证非策略有效性证据；半条件重要性获得直接证据——603605 加 5% 折扣门改善至 −30%（回撤 43→39.9%），25% 折扣门降至 10 笔/+4.1%/回撤 2.6%（参数未调优仅示敏感性）。
+- **测试**：`tests/test_backtest_events.py` 7 项——计数 golden（多锚取大/并列小 id）、完成周 asof 边界、fallback 过滤+止损换算精确值、episode 锁单元（桩注入 order/close/get_position）、折扣门绑定、缺数据干净抛错、akquant 端到端一笔开平闭环（含 warmup 21 根门槛教训：事件周必须落在预热后才能被策略看到）。全量 **443 全绿**。
+- **明确未做**：卡片三档价区/箱体机械化推导（Phase C）、横截面评分融合（Phase B）、扩池。参数（stop_pct/min_signals/discount）全部暴露为 CLI 参数且默认保持"忠实口径"，不作寻优。
+
+## 2026-08-27（紫金矿业历史建仓补录 #12 + 锚点四维复核）
+
+- **补录**：用户口述历史建仓 601899.SH 买入 25.05×1200 股（"前几个月"）。`execution add --backfill` 记 **#12**，executed_at 取约定近似值 2026-06-26T14:30+08（成本落在 6 月下旬低点带 24.70~25.14 内；时点沿用项目 14:30 约定），snapshot 显式标记 backfill=true 并注明日期为约数、可冲正重录。fees 未提供留空。card=601899SH_85cd7f52。
+- **持仓口径更新**：成本 30,060；#11 已实现 +5,970（600 股@35.00）；持余 600 股按 34.57 计浮盈 +5,712 → **合计 +38.9%**。历史成本补齐后组合视角首次可自动核算。
+- **锚点四维复核（只读）**：①因子一致性 ✔——恐慌锚 2025-09-04 隐含因子 1.037277 与 08-21 除息因子重建后的库内值完全一致（重建链路传导正确）；②恐慌周事实重演 ✔——量比 2.34+大阳（实体/全幅 65%、周涨 +5.7%），判定成立；③episode ✔——现价 34.57 远高于下跌起点 23.08，已终结、系统等待新周期；④fallback 漂移温和——26 周最低收盘窗落点 2026-06-26@adj26.63，较在册锚仅 +9.7%（修正此前"大幅过期"的口头推测）。⑤新周期触发门槛量化：单周量 ≥29.18 亿股（现均 14.59 亿×2）+反转形态+创可识别低点。
+- **结论**：紫金锚"无移动"为正确状态（与洛钼同机制：锚表=周期事件日志）；但卡片阶梯（T1 20.91–21.78）较现价低 37% 的锚定过期仍成立，优先复核建议维持。
+
+## 2026-08-27（研究记录：低估值分位 × 择时机制有效性——池内事件研究）
+
+- **背景**：用户假设"机制在估值较低时更有效更安全"，追问"是否对周期股更有效"。纯只读研究，不改任何管线代码。
+- **设计**：20 只 active CN 股（新增美的/格力已自动纳入）× 3,118 周观测；触发=同锚 active≥2 首次释放周（116 个，111 含 PE）；估值=pe_ttm 自身 52 周窗分位（自相对，点时）；前向 +4w/+8w 复权周收。
+- **结果**：①低分位触发周 8w 胜率 66%/中位 +3.2%/左尾 8.0%，高分位 40.7%/−1.1%/最差 −26.3%——H1 成立、H2 半成立（非线性，"高分位禁行"优于"越低越安全"）；②信号增益低分位 +3.0pp vs 高分位 +1.4pp（信号非估值代理）；③风格内增益证伪 H3：周期仅 +1.5pp（时代β），制造成长 +11.6pp/胜率 81.8% 才是增益王，金融 −1.3pp。修正假说：机制收益∝波动/重估弹性，低 PE 分位是排除性风控而非收益引擎。
+- **产物**：`reports/research/2026-08-27-低估值与择时机制有效性验证.md`（含全部表格、反例清单、局限声明与三级落地建议）。
+
+## 2026-08-28（恒力石化 600346 首期卡复核：600346SH_5df2b631 → draft 600346SH_0f65e846）
+
+- **触发**：next_review_at 2026-08-31 到期 + 2026 中报落地（H1 归母 72.06 亿，+136.2%，兑现 07-07 预增）。按 fred-valuation-card-skill 复核流程：`card_inputs` 新底稿（inputs_2026-08-27.json）→ 情景/刻度/档价/右侧位逐段复核 → `build_schedule.py` 重建矩阵 → draft 入库。**draft-only，待人工激活**。
+- **TTM 更新**：89.34 亿/1.2692 → **112.30 亿/1.5954**（中报 published 2026-08-20 入库）。复核中发现 08-12 卡内 TTM 手推基数有误（当时把 2025Q1 当 2025H1 用），以系统重算为准；本轮对话早前"PE-TTM 10.9"口头估算同步修正为 **11.85**（现价 18.90 折算）。
+- **刻度口径排查（重要）**：底稿"当时口径"PE 分位 p50 11.96→16.84 跳动，排查结论=①08-17 股本快照口径 issued→group_total（股数一致 70.391 亿）②08-26 财报全历史回填修正历史 TTM 基数（样本窗 2023-08-14/726 天→2023-10-30/688 天，2023-24 盈利谷底期当时 PE 41.7/53.0 进入序列）——系数据修正非行情因素，两代快照分位不可直比。折算口径（历史低点价÷1.5954）低点带 **8.56–9.40**（2024-11/2025-07/2025-08/2026-07 四低点），PE 三情景 13/11/9.5 **维持**（刻度稳定，体系未切换）。
+- **情景上移**（盈利改善→档线上移纪律）：EPS 中性/悲观/极悲 1.49/1.21/0.99 → **1.56/1.35/1.21**（H1 锁定使旧 87 折 105 亿隐含 H2 -18% 过度悲观；极悲 0.99 需 H2 亏损与 H1 锁定矛盾）。矩阵：T1 15.70-16.40→**16.47-17.16**、T2→**14.11-14.85**、T3→**11.50-12.41**；证伪线 9.40→**11.50**（=1.21×9.5；3 年最低 11.11 为盈利谷底双杀，体系外参考）。胜率区间 50-60/60-70/65-75 维持，Kelly 上限 0/9.9%/15.8%（build_schedule 重算）。
+- **右侧位重置**：旧触发位 18.50 已于 08-19 放量 2.09× 触发、08-20 confirmed（episode 终态用尽）；08-25/26 收盘跌破 hold 线 18.315（台账 #8→#9 止损 -4.2%），08-27 缩量收复 18.90。新触发位 **19.55**（半年线 19.25×38.2% 回撤 19.54 共振带上沿，状态机判定线 19.75）、止损 **17.90**（MA20 17.89/8 月下旬平台下沿）。波段箱体仍不适用。
+- **产物**：`cards/600346.SH/draft_2026-08-28.json` + `恒力石化估值排期卡_draft_2026-08-28.md`（含复核对照表）；draft `600346SH_0f65e846`（--next-review 2026-10-31）。**缺口标注**：券商 forecast 快照停 2026-08-12（中报后是否上修未验证），激活前后应刷新；组合执行缺口（数据源无该接口，价差人工跟踪）。
+- **数据纪律备注**：卡复核属例行流程无代码/配置改动；本次复核期间只读排查 pipeline_runs/indicators_daily/share_capital_events，未重算任何派生表（right_side/daily_watch 重算为幂等例行）。
+
+## 2026-08-28（续：恒力石化 forecast 快照刷新 → draft 更新 600346SH_9b168869）
+
+- **刷新**：`akshare_collect --symbols 600346.SH --sources forecast --date/--end 2026-08-28`（显式 --end，避开已知坑）+ ingest 1 行 → forecasts snapshot #20（akshare/同花顺源）。**中报后 FY1 上修 +4.6%：120.78→126.38 亿**（FY2 141.93 / FY3 159.54 亿）。
+- **对 draft 的影响评估（只动注释层，矩阵不变）**：中性 110 亿（EPS 1.56）恰为新 FY1 的 87 折（109.95），中性数字不变、依据增强；bull 口径 1.72→**1.80**（FY1 足额）；裂口 −65.5pp→**−57.4pp** 仍有利（H1 实际 +136.2% vs FY1 +78.6%）；三档价区/证伪线/右侧位/PE 刻度全部不受影响。
+- **产物**：draft_2026-08-28.json 三处更新后重新入库为 **draft 600346SH_9b168869**（取代 600346SH_0f65e846，后者建议人工 reject）；markdown 复核稿同步更新（对照表加 FY1 刷新行）。激活/拒绝均由人工执行。
+
+## 2026-08-28（续②：恒力石化复核稿人工激活）
+
+- **人工确认激活** draft `600346SH_9b168869`（effective_from=2026-08-31，衔接旧卡 next_review 日）；旧 active `600346SH_5df2b631` 自动置 superseded（effective_to=2026-08-31，排他端点，08-28（周五）盘后 daily 仍按旧卡算信号）。current.md 已刷新至新卡视图。
+- **待清理**：被取代的复核初稿 `600346SH_0f65e846` 仍为 draft 状态，待人工 reject（agent 不代做）。
+- 新卡要点备忘：T1 16.47–17.16 / T2 14.11–14.85 / T3 11.50–12.41；证伪线 11.50；右侧触发 19.55（判定线 19.75）/止损 17.90；next_review 2026-10-31。
+
+## 2026-08-28（入池：中国神华 601088.SH / 长江电力 600900.SH / 陕西煤业 601225.SH，watchlist 23 只）
+
+- **流程**：watchlist.yaml 加 3 行 → `db seed` upsert（active=23）→ akshare 六源采集（price/forward/financials/announcement/forecast/stock_info，--start 2023-08-09 --end 2026-08-27）→ ingest → daily 首跑 ok=23 → stock_info 回补 → indicators 全量重算（pe_ttm 全非空）→ pytest 443 全绿。
+- **踩坑一（代理断连静默丢源）**：东财 push2his 走系统代理被 RemoteDisconnected，price 3 requests 全 error 但进程末尾只打 per-source 汇总，`tail -12` 只看到后续源 ok 险些漏检——靠 price 目录只有 _meta.json 无 CSV 才发现。改用 `--price-api sina` 备用源重采成功。教训：新入池首采后必须核对各源 CSV 实际落盘，不能只看末尾汇总行。
+- **踩坑二（stock_info 与 daily 的先后依赖）**：首轮 daily failed=3——`daily_bars 为空，无法推导股本快照 effective_at（§2.5 不猜）`，且失败回滚该股全部阶段（价格也未入库）。移出 stock_info run 目录重跑 ok=23 后，再回移 + `ingest stock_info` + indicators 重算补 pe_ttm。与美的/格力 8/27 先例一致：**新入池六源采集时 stock_info 必须等价格入库后单独回补**。
+- **数据覆盖**：神华 730 bars（2025-08-04~15 重组停牌 10 日，sina 源停牌日无行，日历 gate 口径一致非缺陷）/ 长电 740 / 陕煤 740；周线 154/156/156；信号 1502/1522/1522；财报全历史 81/95/62 期（远超 3 年价格窗，TTM 余量足）；公告 463/315/224 条；forecast 各 1 快照；pe_ttm（snapshot_share_basis）最新 20.11/19.05/16.19。
+- **口径备注**：无卡期间日报对三只 degraded(no_active_card) 属预期；排期卡未排（神华/长电为强周期+类债水电，PE 刻度锚定思路与现有卡不同，待用户发起）；今日（08-28，周五）盘中，价格截至 08-27 完整日，当日 bar 由盘后例行 daily 补齐。
+
+## 2026-08-28（续③：三连卡 draft——神华 601088SH_19b6dcd0 / 长电 600900SH_a8c0c9a4 / 陕煤 601225SH_5a669742）
+
+- **流程**：三股当日入池后即跑 `card_inputs` → 锚选择（细则：神华/陕煤强周期、长电公用事业）→ 情景矩阵 `build_schedule.py` → 胜率打分 → draft-only 入库，**全部待人工激活**。产物：各股 `draft_2026-08-28.json` + 估值排期卡 markdown。
+- **锚选择与体系判定**：①神华=类债分红（煤电路港长协平滑，2023-2025 三连降收敛），底部价位逐轮上移 27→32.7→37.5→**42.46（2026-03-02 真实锚）**，体系上移取最近底部 PE 18.8 为悲观基准（18/19/22）；②长电=细则公用事业**主锚股息率**，PE 机器层为线性映射（中性 PE 18.5=股息率 3.8%，DPS=中性 EPS×70% 承诺下限），带极窄 18.8-23.6 体系稳定，T1 即压 2024-11~2025-12 恐慌底带 26.44-27.37；③陕煤=强周期（细则主锚 PB 但系统无 PB 序列=人工缺口项），底部 PE 刻度 4.3→8.5→11.5 上移，T1=中性口径 13 倍 25.58-26.65（现价回档 1.3% 即入区）。
+- **三卡要点**：神华 T1/T2/T3=41.95-43.70/37.91-39.90/32.40-34.99，证伪线 32.40，右侧 51.70/45.50；长电 T1/T2/T3=26.28-27.38/23.73-24.98/21.60-23.33，证伪线 21.60（=3 年最低带下沿），右侧 29.85/27.45，**唯一 T1 胜率下沿即正期望（Kelly 5.6%）**；陕煤 T1/T2/T3=25.58-26.65/22.85-24.05/17.60-19.01，证伪线 17.60，右侧 28.50/24.90，T1 质量三卡最低（赔率 b=0.78，Kelly 0，纪律从严）。全部 next_review 2026-10-31。
+- **共同缺口（激活前人工核对项）**：①系统无分红/PB 序列（corporate_actions 空）——神华/长电股息率、陕煤底部 PB 均需人工补数核对；②神华/长电 2026H1 未披露（截止 08-27，披露临近=激活后立即复核触发器）；③长电 2026+ 分红承诺是否续期（2021-2025 ≥70% 到期）直接动摇其主锚。三家券商 FY1 快照=今日采集（akshare 源）：神华 583.4 亿（与 Q1 实际方向相悖，卡内已按实际趋势下修）、长电 357.7 亿、陕煤 203.8 亿（与 H1 实际裂口 +47.6% 有利）。
+- **纪律提示**：三卡均 draft-only；activate/reject 由人工执行。
+
+## 2026-08-28（续④：三连卡激活前立即复核——股息率/分红承诺/底部 PB 全部闭合，draft 换版）
+
+- **复核方法**：缺口项均标注"系统无分红/PB 序列"，本次用一次性探测闭合（akshare stock_fhps_detail_em，含每股股利/每股净资产/股息率；仅复核消费不录入管线，来源已在卡内 input_snapshot 标注）；长电分红承诺在公告簿内直接命中（2025-08-14《未来五年（2026-2030年）股东分红回报规划的公告》）。
+- **复核结论（全部通过，档价/矩阵零改动）**：
+  - **神华**：2025 全年 DPS 2.01 元（中期 0.98+年度 1.03），分红率 75.6%；静态 TTM yield 现价 4.20%、T1 区 4.60-4.79%、T3 区≈5.96%；中性盈利口径（2.30×75.6%=DPS 1.74）T1 区≈4.0%——股息率主锚验证通过。
+  - **长电（实质性闭合）**：2026-2030 分红规划**已公告续期**（原卡最大缺口消除）；2025 实际 DPS 1.00 元（三季 0.21+年度 0.79）、分红率 70.9% 达标；静态 TTM yield 现价 3.56%、T1 区 3.65-3.80%，与中性 DPS 1.036 口径一致。残留项：规划具体比例待读公告原文（次要）。
+  - **陕煤**：点时 BPS 口径历史底部 PB 带 **1.9-2.1x**（2025-03 低 18.59/BPS 9.344≈1.99x；2026-02-03 锚 20.64/BPS 9.998≈2.06x）；现 PB 2.59x；T1 区 2.45-2.55x（回档位定位）、T3 区 1.69-1.82x 破底带——与证伪线"体系击穿"逻辑自洽，PB 主锚验证通过。另确认 2026 中期分红预案 10 派 0.58（"小中期+大年度"模式延续，2025 全年 DPS 0.948 / payout 54.8%）。
+- **draft 换版**（数值层零改动、注释层闭合缺口后重新入库）：神华 **601088SH_ca2eab78**、长电 **600900SH_4988e3fb**、陕煤 **601225SH_a0f29c77** 取代初版（19b6dcd0/a8c0c9a4/5a669742，建议人工 reject）。激活/拒绝由人工执行。
+- **教训**：公告簿（events）本身就是分红承诺类信息的第一核对源——本次长电规划公告早在簿内，"无分红序列"的缺口表述过重；后续类似核对应先查公告簿再外探。
+
+## 2026-08-28（续⑤：三连卡人工激活）
+
+- **人工确认激活**：神华 `601088SH_ca2eab78` / 长电 `600900SH_4988e3fb` / 陕煤 `601225SH_a0f29c77`（均 effective_from=2026-08-31，next_review 2026-10-31）。initial 代 draft（19b6dcd0/a8c0c9a4/5a669742）留待人工 reject；恒力被取代初稿 600346SH_0f65e846 亦同（agent 不代做）。
+- 激活后全池状态（据库实查修正）：23 只股票 **18 张 active 卡**（8/10-8/14 批次 11 张 + 洛钼 8/27 + 恒力 v2 + 本批三连卡等）；无 active 卡仅 5 只（法拉/万华/美的/格力/西矿——西矿 draft cc4c2ac7 仍待人工激活）。**另发现：13 张卡 next_review=2026-08-31（周一）集中到期**，为 8/10-8/14 建卡批次的第一个复核窗口，构成下周一的批量复核工作量，建议逐张走 card_inputs 对照复核。
+
+## 2026-08-28（续⑥：draft 清理）
+
+- **人工确认 reject** 四张被取代的初稿：600346SH_0f65e846（恒力）、601088SH_19b6dcd0（神华）、600900SH_a8c0c9a4（长电）、601225SH_5a669742（陕煤）。库内版本状态：active 18 / superseded 1（恒力 v1）/ rejected 5 / draft 5。**剩余 5 张 draft 非本次产物、未处置**：美的 000333SZ_b6226347、格力 000651SZ_f7c4f770（均 2026-08-28 凌晨另一会话生成）、万华 600309SH_6c62ce20、法拉 600563SH_b11e5de5（8/24）、西矿 601168SH_cc4c2ac7（8/23，handoff 在册待人工激活）——activate/reject 均待各自人工决定，agent 不代做。
+
+## 2026-08-28（续⑦：遗留五卡人工激活——全池 23 只 active 卡全覆盖）
+
+- **人工确认激活** 存量 5 张 draft：美的 000333SZ_b6226347 / 格力 000651SZ_f7c4f770 / 万华 600309SH_6c62ce20 / 法拉 600563SH_b11e5de5 / 西矿 601168SH_cc4c2ac7（均 --effective-from 2026-08-31，next_review 2026-10-31）。激活前 30 秒体检：美的/格力数据截止 08-27 新鲜；万华/法拉/西矿截止 08-21（一周内，可接受）。
+- **标注**：美的卡 financial_reports 截止停在 2026Q1（中报未入底稿）——若其 2026 中报已披露，EPS 情景先于中报，列入该卡下次复核优先项；美的/格力卡 right_side_trigger 为空（右侧仓未定义），日报右侧信号对这两只将无输出。
+- **全池状态**：23/23 只股票 active 卡全覆盖（draft 清零）；draft/rejected/superseded 见前两节。2026-08-31 起全池卡片信号同口径进入日报；**next_review 分两批**：2026-08-31 到期 12 张（8/10-8/14 建卡批次）、2026-10-31 到期 11 张（平安 000001、恒力 v2、洛钼、三连卡、本批五卡）。
+
+## 2026-08-28（续⑧：消息面研判 r2 合并设计稿）
+
+- **产出**：`docs/superpowers/specs/2026-08-28-message-eval-design-r2.md`，取代 r1（`2026-08-26-message-eval-design-r1.md`），合并吸收 `~/Downloads/股票消息面研判系统设计.md`（v1.0）。
+- **合并要点**：①定位分层——新稿作"业务规矩层"（四层分类/四道筛子/证伪条件/判断归因），r1 作"机器实现层"（采集/幂等/关联/LLM 初判/人审 gate/报告）；②`events.scope` 扩为五档（+flow 资金/情绪，静默入库不推送），新增 `source_tier` 信源分级（tier 5 不进决策链）；③`event_assessments` 重建时扩展 target/half_life/expectation_gap/action_hint/falsification/narrative 列（LLM 初判、人审 amend 补写，原始行不动）；④新增 `event_calendar`（L0 日历层，财报预约/解禁 akshare + 宏观手工 + 排期卡 next_review 派生 union，到期前 3 天提醒）与 `message_judgments`（L4 判断闭环：证伪条件+复核日期+归因）；⑤混合 gate 新增 company+tier≤2 一律人审；⑥报告新增"日历提醒+公司公告置顶（需读原文）+价格位置交叉验证行+背离样本 divergence 标记"；⑦落地改渐进四 Phase（Phase 1 日历+公告无 LLM 先行），migration 拆 0003–0006。
+- **状态**：纯设计稿，无代码/库变更；待人工 review 后按 Phase 1 动工。
+
+## 2026-08-28（续⑨：消息面 r2 Phase 1 交接文档）
+
+- **产出**：`docs/superpowers/specs/2026-08-28-message-eval-r2-phase1-handoff.md`，供其他 Agent 接手实现 Phase 1（日历层 + 公司公告，无 LLM）。
+- **范围圈定**：只做 Phase 1，做完即停等人工 review；Phase 2–4（macro_factors/flow 采集/LLM 评价链/judgments）明令禁止夹带。
+- **落点核实**（explore 代理只读核查）：迁移由 `db.py:41 migrate()` 按文件名自动发现；公告入库链路已通（akshare_collect 有 announcement 源但不在默认 --sources；ingest._ROUTES 已路由至 announcements.py 公共引擎）；报告七段结构锁在 `test_report.py:224`，新段插"观察点"与"衰竭信号"之间需同步改断言；卡片复核到期提醒（queries.py get_dashboard_alerts review_due）为日历横幅现成复用模板；项目此前无任何事件日历实现。
+- 无代码/库变更。

@@ -132,3 +132,40 @@ stocks:
     benchmark_code: 000300.SH
     currency: CNY
     timezone: Asia/Shanghai
+  # 2026-08-27 加入：白电双龙头（采集 price/forward/financials/announcement）
+  - symbol: 000333.SZ
+    market: CN
+    name: 美的集团
+    aliases: [美的集团, 美的, Midea]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 000651.SZ
+    market: CN
+    name: 格力电器
+    aliases: [格力电器, 格力, Gree]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  # 2026-08-28 加入：能源三标的（煤电一体化/水电/煤炭，采集 price/forward/financials/announcement/forecast/stock_info）
+  - symbol: 601088.SH
+    market: CN
+    name: 中国神华
+    aliases: [中国神华, 神华, Shenhua]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 600900.SH
+    market: CN
+    name: 长江电力
+    aliases: [长江电力, 长电, China Yangtze Power]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+  - symbol: 601225.SH
+    market: CN
+    name: 陕西煤业
+    aliases: [陕西煤业, 陕煤, Shaanxi Coal]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai

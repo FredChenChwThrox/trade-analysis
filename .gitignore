@@ -20,3 +20,7 @@ data/raw/
 # 生成产物（可由 daily pipeline + 排期卡 skill 重生成；不入 git）
 reports/
 cards/
+
+# SQLite WAL 临时文件
+data/market.db-shm
+data/market.db-wal
