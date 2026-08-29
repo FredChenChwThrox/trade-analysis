@@ -2,6 +2,10 @@
 
 config/llm.yaml：enabled=false 时调用方应跳过 LLM 阶段（设计关闭，非 degraded）。
 api_key 从 api_key_env 指定的环境变量读取，不入库不入日志。
+
+两条打标通道（产出同一 llm_v1 行、同一 schema、同一人审 gate）：
+- API 通道：本模块 complete_json（daily 自动，需 api key）；
+- agent/skill 通道：scripts/llm/inputs.py 导出底稿 → agent 打标 → import_tags 校验入库。
 """
 
 from __future__ import annotations
@@ -66,11 +70,15 @@ def load_config(path: Path | None = None) -> LLMConfig:
 
 
 class LLMClient:
-    """openai-compatible /chat/completions 薄封装：重试指数退避、严格 JSON 解析。"""
+    """openai-compatible /chat/completions 薄封装：重试指数退避、严格 JSON 解析。
+
+    self.last_content 保留最近一次原始返回文本（schema 拒绝时的诊断留痕用）。
+    """
 
     def __init__(self, cfg: LLMConfig, session: requests.Session | None = None):
         self.cfg = cfg
         self.session = session or requests.Session()
+        self.last_content: str | None = None
 
     def available(self) -> bool:
         return bool(self.cfg.enabled and self.cfg.api_key())
@@ -94,9 +102,10 @@ class LLMClient:
                                       timeout=self.cfg.timeout_seconds)
                 r.raise_for_status()
                 content = r.json()["choices"][0]["message"]["content"]
+                self.last_content = content
                 return _parse_json_content(content)
             except LLMError as exc:
-                raise exc  # JSON 非法不该重试（同输入同输出）
+                raise exc  # JSON 非法不重试（同输入同输出，重试无意义）
             except Exception as exc:  # noqa: BLE001
                 last = exc
                 time.sleep(min(2 ** attempt, 8))

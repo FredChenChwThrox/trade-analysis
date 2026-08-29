@@ -94,7 +94,7 @@ def run_llm_eval(conn: sqlite3.Connection, *, run_id: str, as_of: str,
              "published_at": ev["published_at"], "title": ev["title"],
              "summary": ev["summary"]}, macro_lines)
         try:
-            result = client.complete_json(system, user)
+            result = schema.normalize_event(client.complete_json(system, user))
             jsonschema.validate(result, schema.EVENT_ASSESSMENT_SCHEMA)
         except (LLMError, LLMDisabled, jsonschema.ValidationError) as exc:
             res.skipped += 1

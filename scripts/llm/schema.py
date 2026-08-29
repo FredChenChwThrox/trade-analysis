@@ -36,6 +36,23 @@ NARRATIVE_SCHEMA = {
     },
 }
 
+_KNOWN_EVENT_KEYS = {"scope", "direction", "materiality", "confidence", "target",
+                     "half_life", "expectation_gap", "action_hint",
+                     "falsification_suggestion", "rationale"}
+
+
+def normalize_event(obj: dict) -> dict:
+    """良性偏差归一化（不改语义，不冒充）：丢弃模型自作主张的多余键；
+    confidence 为字符串数字时转 float（带 % 则除 100）。归一化后再严格校验。"""
+    out = {k: v for k, v in obj.items() if k in _KNOWN_EVENT_KEYS}
+    if isinstance(out.get("confidence"), str):
+        try:
+            val = float(out["confidence"].strip().replace("%", ""))
+            out["confidence"] = val / 100 if val > 1 else val
+        except ValueError:
+            pass
+    return out
+
 
 def validate_event(obj: dict) -> None:
     """合法直接返回；非法抛 jsonschema.ValidationError（调用方按丢弃处理）。"""

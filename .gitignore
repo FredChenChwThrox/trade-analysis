@@ -24,3 +24,6 @@ cards/
 # SQLite WAL 临时文件
 data/market.db-shm
 data/market.db-wal
+
+# LLM 打标底稿/标签工作目录（agent/skill 通道，不入 git）
+data/llm_tags/
