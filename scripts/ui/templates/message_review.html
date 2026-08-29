@@ -19,15 +19,9 @@
       <td class="align-top text-xs whitespace-nowrap">
         {% if r.hidden %}<span class="text-red-600 font-semibold">已否决</span>
         {% elif r.status == 'needs_review' %}<span class="text-amber-600 font-semibold">待人审</span>
-        {% else %}<span class="text-green-700 font-semibold">ok</span>{% endif %}
+        {% else %}<span class="text-green-700 font-semibold">{{ r.status_cn or '已过审' }}</span>{% endif %}
       </td>
-      <td class="align-top text-xs whitespace-nowrap">
-        {{ r.direction or '—' }} / {{ r.materiality or '—' }} /
-        C{{ '%.2f'|format(r.confidence) if r.confidence is not none else '—' }}
-        <br>target={{ r.target or '—' }}
-        <br>half_life={{ r.half_life or '—' }}
-        <br>hint={{ r.action_hint or '—' }}
-      </td>
+      <td class="align-top text-xs whitespace-nowrap">{{ r.tags_cn }}</td>
       <td class="align-top text-xs max-w-[16rem]">{{ r.rationale or '—' }}</td>
       <td class="align-top text-xs max-w-[10rem]">{{ r.expectation_gap or '—' }}</td>
       <td class="align-top text-xs max-w-[10rem]">{{ r.falsification or '—' }}</td>
@@ -43,10 +37,11 @@
           </div>
           <div class="flex gap-1 items-center">
             <select name="materiality" class="border rounded px-1 py-0.5 flex-1">
-              <option value="">materiality</option>
-              {% for m in ['low', 'medium', 'high', 'critical'] %}
-              <option value="{{ m }}">{{ m }}</option>
-              {% endfor %}
+              <option value="">重要性</option>
+              <option value="low">轻微</option>
+              <option value="medium">一般</option>
+              <option value="high">重大</option>
+              <option value="critical">关键</option>
             </select>
             <button name="action" value="upgrade_materiality" class="px-2 py-0.5 rounded border bg-white">升级</button>
           </div>
@@ -54,12 +49,17 @@
           <input name="falsification" placeholder="证伪条件（人工定稿）" class="w-full px-1 py-0.5 border rounded">
           <div class="flex gap-1 items-center">
             <select name="target" class="border rounded px-1 py-0.5 flex-1">
-              <option value="">target</option>
-              {% for t in ['eps', 'pe', 'sentiment'] %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+              <option value="">作用</option>
+              <option value="eps">盈利（EPS）</option>
+              <option value="pe">估值</option>
+              <option value="sentiment">情绪</option>
             </select>
             <select name="half_life" class="border rounded px-1 py-0.5 flex-1">
-              <option value="">half_life</option>
-              {% for h in ['day', 'week', 'month', 'quarter'] %}<option value="{{ h }}">{{ h }}</option>{% endfor %}
+              <option value="">半衰期</option>
+              <option value="day">日级</option>
+              <option value="week">周级</option>
+              <option value="month">月级</option>
+              <option value="quarter">季度级</option>
             </select>
             <button name="action" value="amend" class="px-2 py-0.5 rounded bg-blue-600 text-white">补写</button>
           </div>
@@ -68,7 +68,7 @@
     </tr>
     {% else %}
     <tr><td colspan="9" class="py-6 text-center text-gray-400">
-      暂无 LLM 评价事件——启用 config/llm.yaml（enabled: true + api key）后由 daily 生成
+      暂无 LLM 评价事件——用消息打标 skill（scripts/llm/inputs.py）生成后在此复核
     </td></tr>
     {% endfor %}
     </tbody>

@@ -43,6 +43,7 @@ from scripts.signals import cards as card_mod
 from scripts.signals import corporate_action as ca_mod
 from scripts.signals import calendar_due  # r2 Phase 1：日历到期提醒（单股过滤见 relevant_to_symbol）
 from scripts.signals import event_link  # r2 Phase 3：消息面 effective 解析
+from scripts.llm import labels  # r2 Phase 3：标签中文呈现（报告/人审页统一映射）
 from scripts.signals.common import RULE_VERSION as SIGNALS_RULE_VERSION
 from scripts.signals.common import WEEKLY_SIGNALS, load_params
 
@@ -542,12 +543,9 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
             continue
         shown += 1
         a(f"- [{r['available_at'][:10]}] {r['title']}")
-        a(f"  标签: direction={view['direction']}，materiality={view['materiality']}，"
-          f"confidence={_f(view['confidence']) if view['confidence'] is not None else '—'}，"
-          f"target={view['target'] or '—'}，half_life={view['half_life'] or '—'}，"
-          f"action_hint={view['action_hint'] or '—'}（LLM 初判，人工复核后）")
+        a(f"  标签: {labels.tags_line(view)}（LLM 初判，人工复核后）")
         a(f"  预期差: {view['expectation_gap'] or '待人工补写'}")
-        a(f"  叙事: {view['narrative']}")
+        a(f"  叙事: {view['narrative'] or '—'}")
         if view.get("falsification"):
             a(f"  证伪条件: {view['falsification']}")
     if shown == 0:

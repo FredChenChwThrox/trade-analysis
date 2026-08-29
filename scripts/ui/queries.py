@@ -12,8 +12,9 @@ import json
 import sqlite3
 from datetime import date, datetime, timedelta
 
-from scripts.signals import calendar_due  # r2 Phase 1：日历到期提醒（只读查询复用）
-from scripts.signals import event_link    # r2 Phase 3：effective_status 解析复用
+from scripts.llm import labels                       # r2 Phase 3：标签中文呈现
+from scripts.signals import calendar_due             # r2 Phase 1：日历到期提醒（只读查询复用）
+from scripts.signals import event_link               # r2 Phase 3：effective_status 解析复用
 # 价格刻度类指标：与价格轴同量纲，不复权展示时需要 ÷ 当日因子折回（§5.1）
 PRICE_SCALE_FIELDS = {
     "ma5", "ma10", "ma20", "ma60", "ma120", "ma250",
@@ -1461,11 +1462,15 @@ def list_message_review(conn: sqlite3.Connection, limit: int = 200) -> list[dict
         symbols = [x["symbol"] for x in conn.execute(
             "SELECT symbol FROM event_symbols WHERE event_id = ? ORDER BY symbol",
             (r["event_id"],))]
+        eff_view = {k: eff[k] for k in ("direction", "materiality", "confidence",
+                                        "target", "half_life", "action_hint")}
         out.append({
             "event_id": r["event_id"], "title": r["title"], "summary": r["summary"],
             "published_at": r["published_at"], "scope": r["scope"],
             "source_tier": r["source_tier"], "assessed_at": r["assessed_at"],
             "status": eff["status"], "hidden": eff["hidden"],
+            "status_cn": labels.STATUS_CN.get(eff["status"], eff["status"] or ""),
+            "tags_cn": labels.tags_line(eff_view),
             "direction": eff["direction"], "materiality": eff["materiality"],
             "confidence": eff["confidence"], "rationale": eff["rationale"],
             "target": eff["target"], "half_life": eff["half_life"],

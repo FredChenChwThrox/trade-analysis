@@ -1264,3 +1264,10 @@
 - **纪律执行**：不猜——中报无数据底稿不给业绩方向（neutral + "以报告原文为准"）；程序性不给 narrative；narratives 只给池内股。
 - **gate 分布（已提交）**：company tier=1 needs_review 89（本周新采集）；company tier=NULL ok 78（历史回填通道公告，未分级按 gate 现规则放行——已知点：后续可考虑 NULL 也强制人审）；industry 6 ok + 2 needs_review；macro 2 needs_review（confidence<0.4 自动触发 ✓）+ 1 ok；policy 2 ok。
 - **人工复核入口**：/message-review 现列 180 条（公告类 167 条为公司 tier1/未分级，逐一确认工作量较大——如需批量确认按钮说一声）。
+
+## 2026-08-29（续：标签体系中文呈现——可读性整改）
+
+- **问题**：人审页/报告直接暴露英文枚举（neutral / low / C0.60 / target=eps / half_life=quarter / hint=schedule），人工看不懂。
+- **整改**：DB 枚举为存储契约不动；新增统一展示映射 `scripts/llm/labels.py`（DIRECTION/MATERIALITY/TARGET/HALF_LIFE/ACTION_HINT/STATUS → 中文），报告"### 消息面"与人审页共用，杜绝散落翻译。
+- **渲染示例**：`方向 利空 ｜ 重要性 一般 ｜ 把握 55% ｜ 作用 盈利（EPS 底稿） ｜ 半衰期 季度级 ｜ 流程 触发排期卡复核`；人审表单选项同步中文化（提交值不变）。
+- **测试**：473 全绿（断言同步中文化）。
