@@ -167,7 +167,7 @@ L0 日历层：财报披露预约、解禁日程、宏观/议息种子。cal_id 
 
 ### event_assessments — LLM 消息评价 [决策]
 
-(event_id, symbol, assessment_version) 版本化，不覆盖（§5.5；0002 迁移起主键含 symbol，多 symbol 事件逐股独立落库）。**0005 重建（r2 Phase 3，2026-08-28）**：assessment_version 改 TEXT NOT NULL（修 0002 INTEGER 亲和遗留）；扩研判字段 target（eps/pe/sentiment）、half_life（day/week/month/quarter）、expectation_gap（LLM 可空人补）、action_hint（none/swing/schedule/redraw_anchor 仅提示）、falsification（人定稿/LLM 建议稿）、narrative（逐股叙事 ≤150 字，仅 symbol 行）；历史 event_study_v1 行全量平移（11877 行无损）。写入方：①`scripts/signals/event_study.py`（event_study_v1，确定性）；②`scripts/llm/eval.py`（llm_v1：__event__ 事件级行 direction/materiality/confidence/rationale/target/half_life/expectation_gap/action_hint/falsification/status + 逐股 narrative 行），gate 按 r2 §6.3（materiality high/critical、confidence<0.4、rationale 禁用词、company+tier≤2 → needs_review）。
+(event_id, symbol, assessment_version) 版本化，不覆盖（§5.5；0002 迁移起主键含 symbol，多 symbol 事件逐股独立落库）。**0005 重建（r2 Phase 3，2026-08-28）**：assessment_version 改 TEXT NOT NULL（修 0002 INTEGER 亲和遗留）；扩研判字段 target（eps/pe/sentiment）、half_life（day/week/month/quarter）、expectation_gap（LLM 可空人补）、action_hint（none/swing/schedule/redraw_anchor 仅提示）、falsification（人定稿/LLM 建议稿）、narrative（逐股叙事 ≤150 字，仅 symbol 行）；历史 event_study_v1 行全量平移（11877 行无损）。写入方：①`scripts/signals/event_study.py`（event_study_v1，确定性）；②**agent/skill 打标通道** `scripts/llm/inputs.py import`（llm_v1：__event__ 事件级行 + 逐股 narrative 行，gate 按 r2 §6.3，model 记 agent:<actor>；原 API 自动通道已移除，执行日志续⑭）。
 
 ### event_human_review — 人工复核 [决策]（0005，r2 §3.3）
 

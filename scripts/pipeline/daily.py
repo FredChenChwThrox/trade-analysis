@@ -75,7 +75,7 @@ from scripts.pipeline import report as report_mod
 from scripts.signals import accumulation as acc_mod
 from scripts.signals import corporate_action as ca_mod
 from scripts.signals import daily_watch as dw_mod
-from scripts.llm import eval as llm_eval
+from scripts.signals import event_link as el_mod
 from scripts.signals import event_study as es_mod
 from scripts.signals import right_side as rs_mod
 from scripts.signals import weekly_signals as ws_mod
@@ -468,26 +468,24 @@ def run_daily(
                       error=es_error, started_at=started,
                       config_hash=config_hash, git_commit=git_commit)
 
-    # ---- 步骤 6b（r2 Phase 3）：池级 LLM 评价链（6b1→6c→6b2）。
-    # 未启用/失败均不阻断报告阶段（r2 §9）；设计关闭（enabled=false）记 success+notes。
+    # ---- 步骤 6b（确定性，r2 §5 L2）：关联层——scope 关键词初分 + themes/
+    # symbol_industry 词边界关联。LLM/agent 打标走 skill 通道
+    # （skills/message-tag-skill），手触发不经 daily。
     started = utc_now()
     try:
-        with conn:  # 池级事务：评价行 + scope 更新 + 关联同事务
-            llm_res = llm_eval.run_llm_eval(
-                conn, run_id=f"{run_id}_llm_eval", as_of=f"{trade_date}T23:59:59+00:00")
-        llm_status, llm_error = llm_res.status, None
+        with conn:  # 池级事务：scope 更新 + 关联同事务
+            link_stats = el_mod.run_link_stage(conn)
+        link_status, link_error = "success", None
         result.notes.append(
-            f"LLM 评价链: 状态 {llm_res.status}；事件级 {llm_res.assessed} 条、"
-            f"逐股叙事 {llm_res.narratives} 条、丢弃 {llm_res.skipped} 条、"
-            f"关联 +{llm_res.links_added}（scope 更新 {llm_res.scope_updated}）")
-        result.notes.extend(f"  {n}" for n in llm_res.notes[:10])
+            f"关联层: scope 更新 {link_stats['scope_updated']}，"
+            f"关联 +{link_stats['links_added']}")
     except Exception as exc:
-        llm_status = "degraded"
-        llm_error = f"{type(exc).__name__}: {exc}"
-        result.notes.append(f"llm_eval degraded: {llm_error}")
+        link_status = "degraded"
+        link_error = f"{type(exc).__name__}: {exc}"
+        result.notes.append(f"关联层 degraded: {link_error}")
     with conn:
-        _record_stage(conn, run_id, "llm_eval", trade_date, llm_status,
-                      error=llm_error, started_at=started,
+        _record_stage(conn, run_id, "link", trade_date, link_status,
+                      error=link_error, started_at=started,
                       config_hash=config_hash, git_commit=git_commit)
 
     # ---- 步骤 7：报告生成（单股 + 全池日报；失败不阻断前面阶段，记 degraded）

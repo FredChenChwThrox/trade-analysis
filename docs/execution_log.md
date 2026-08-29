@@ -663,6 +663,7 @@
   - 公告：kimi get_stock_announcement 164 条入库（`announcement/...`）。
   - 天眼查"上市信息-上市公告"25 页 500 行（2023-01-19~2026-08-17，`tianyancha/announcement/2026-08-23/pit_backfill_601168/`，子代理抓取）。
 - **入库与管线**：ingest 全部 ok；股本快照双口径写入（`valuation.load_share_snapshot` + `load_group_total_snapshot`，均 2,383,000,000 股，effective_at=2023-08-24，sce_id 40/41）；`adjust --forward-csv` 建因子 5 平台段（切换日 2024-05-31/2025-06-20/2026-02-11/2026-06-10，与 yahoo 分红记录交叉印证一致）；周线 154 周。
+
 - **pit_backfill 回填 14 期披露日全匹配**（matched=14，回填前已备份）——解除 `degraded_available_at` 降级，PE 刻度从静态折算转为点时口径（§2.1），这是本次入池的关键质量动作。指标重算后 pe_ttm 非空 591/725（空值为 2024-03-18 前无点时 TTM，需 2022 财报才能再前推，未采，属预期）。weekly_signals/daily_watch/right_side/accumulation 全跑过（daily_watch/right_side 为 incomplete/no_active_card，激活卡后自愈）；报告 `reports/601168.SH/2026-08-21.md` revision=2 degraded(no_active_card)；底稿 `cards/601168.SH/inputs_2026-08-21.json`。
 - **排期卡**（fred-valuation-card-skill 全流程）：MD `cards/601168.SH/西部矿业估值排期卡.md` + JSON `cards/601168.SH/draft_2026-08-23.json`，`create-draft` 入库 → **card_version_id=`601168SH_cc4c2ac7`，状态 draft**。按 draft-only 纪律未激活，activate 必须人工（`uv run python -m scripts.pipeline.card activate 601168SH_cc4c2ac7 --effective-from <date>`）。
   - 关键数字：现价 37.85（08-21）；TTM 归母 59.43 亿 / EPS 2.4938 / PE 15.18；EPS 情景 中性 2.85/悲观 2.55/极悲 2.20；PE 情景 乐观 17/中性 14/悲观 12；档位 T1 38.3–39.9(30%)/T2 33.9–35.7(35%)/T3 26.4–28.5(35%)；证伪线 26.40；右侧触发 43.30/止损 42.85；波段仓不适用；胜率 T1 55–75%/T2 65–85%/T3 70–90%；Kelly 上限 T1 0.0%/T2 10.9%/T3 17.1%；next_review_at 2026-10-31；锚=pe_scale（体系上移：底部刻度 10.4→12.5→14.2→16.8→18.7，双重计价问题已在卡内说明）；样本区间 2024-03-18~2026-08-21（§3.2 已标注）。
@@ -1227,3 +1228,31 @@
 - **测试 474 项全绿**（463→474，净增 11）：test_event_link.py 4 + test_llm_eval.py 4（FakeLLM 全链/gate/disabled/schema）+ UI 2 + 报告段 1（dismiss 前后对比）。
 - **过程坑**：连续快速重写同尺寸文件导致 `.pyc` mtime+size 碰撞复用过期字节码——出现"改了没生效"的灵异现象，清 `__pycache__` 解决（pytest 用户遇怪异结果先清缓存）。
 - **遗留（Phase 4 / 运维）**：①`config/llm.yaml` 需人工填 api key 并 enabled:true 后，LLM 链才真实产出（模型 glm-4-flash 可换）；②message_judgments 判断闭环属 Phase 4；③主题词边界 precision 局限由 LLM+人工补（r2 §3.6 二期）。
+
+## 2026-08-29（入池联影医疗 688271.SH / 迈瑞医疗 300760.SZ，watchlist 25 只）
+
+- **流程**（复用 08-28 六源先例）：watchlist.yaml 加 2 行（行业码 BK1605 医疗设备，经 symbol_industry 表反查确认两股同属）→ `db seed` upsert（active=25）→ akshare 六源采集（price/forward/financials/announcement/forecast/stock_info，`--start 2023-08-09 --end 2026-08-28 --price-api sina --run-id run_mi_0829`）→ daily 首跑 ok=25 → stock_info 回补 → indicators 全量重算 → pytest 全绿（首次记 474，后经清 `__pycache__` 复跑核实为 **476**——474 为续⑬ pyc 陈旧缓存假象复现，无代码改动测试数不应变化即此信号）。
+- **新坑（cninfo 502 自愈）**：announcement 采集两度 `JSONDecodeError`（首轮与单独重试 run_mi_0829b 均挂），手打 `www.cninfo.com.cn/new/hisAnnouncement/query` 与 `szse_stock.json` 核实均返回 **502 Bad Gateway（tengine）**——上游故障而非参数/风控（与 push2his 风控拒答现象不同：那里是空响应/超时，这里是网关错误页）。约十分钟后第三次重试（run_mi_0829c）自愈。**教训：akshare JSONDecodeError 先手打接口看原始响应定故障层，再决定等自愈还是换源。**
+- **daily 首跑**：`--date 2026-08-28 --raw-dir data/raw/akshare` → **ok=25**（两新股全链路入库；23 只存量同日重跑 report_runs revision=4 属 §9.5 预期）。stock_info 沿踩坑二流程先移出、daily 后回补 + `ingest stock_info`（2 行 inserted）+ indicators 重算。
+- **数据覆盖**：两股各 741 bars（2023-08-09..2026-08-28）/ 周线 157 周（至 08-28）/ 信号 1528 行 / forecast 快照 1 / 因子版本 联影 v51 / 迈瑞 v47（forward_over_none_plateau 平台段口径）。财报全历史利润表：联影 25 期（2018 年报起）、迈瑞 40 期（2014 年报起），published_at 全非空（akshare 直回，无需回填）。公告 ingest inserted=676（联影 387 / 迈瑞 289，31 skip 为 cninfo 同日同题附件幺等去重）。股本快照 snapshot_group_total：联影 8.24 亿股 / 迈瑞 12.12 亿股。
+- **估值口径备注**：pe_ttm（snapshot_group_total，单快照全局应用，历史近似）最新 联影 49.20 / 迈瑞 25.41 @2026-08-28。
+- **收尾状态**：无卡期 degraded 已随排期卡激活闭合（见下「续」节）。今日周六非交易日，无盘后例行。
+
+## 2026-08-29（续：联影/迈瑞排期卡首期生成并激活，全池 active 25 张）
+
+- **流程**（fred-valuation-card-skill 全流程，用户指令「生成排期卡，激活」即人工确认）：`card_inputs` 底稿九段 → 盈利底稿/裂口检查 → 情景矩阵（`build_schedule.py`）→ draft JSON + create-draft → **activate --effective-from 2026-08-31（周一）**。卡号：**688271SH_b7daa877** / **300760SZ_b257c0cd**；draft md 存 `cards/{symbol}/draft_2026-08-29.json` + 激活归档 `2026-08-31_*.md`（CLI 自动生成）。周末无例行，08-31 盘后 daily 起两股卡片相关信号（tier_proximity/tier_triggered/证伪线监测）开始产出。
+- **联影医疗 688271.SH**（现价 105.56，PE 49.20）：盈利 2026H1 营收 +17.2% 但归母 -10.1%，Q2 单季 -20.7% 加速下滑，FY1 裂口 **-34.5pp**（券商 +24.4% vs 实际）未收敛——情景以实际趋势为准。EPS 2.05/1.85/1.65（中性=H2 -7.8%）、PE 55/45/43（底部带 42.65–47.74；**2024-09 谷底轮 38.5 排除出情景锚**——盈利谷底污染，同恒力卡 2024-02 处理）。三档 88.56–92.25 / 79.09–83.25 / 70.95–76.63，证伪线 70.95（极悲×悲观 PE；低于 3 年最低 92.00 约 23%）。胜率 30-45/40-55/45-60（轨迹 -15~-20 为主因），Kelly 0/5.1%/10.2%，T1 为纯赔率注。右侧预案 119.80（双顶）/109.20（MA20/60 带）。人工复核项：干涸量能阈值为 None（锚表无下跌起点）。
+- **迈瑞医疗 300760.SZ**（现价 164.30，PE 25.41）：FY2025 -30.3% 深度下修后，中报（08-28 晚披露）Q2 单季 **+1.1% 转正**、收入 +10.5%——下滑减速/改善初现；FY1 裂口 -13.4pp 收敛中。EPS 6.60/6.00/5.35（中性=H2 +4.4%）、PE 30/26.5/22（底部带 20.2–22.7 三轮缓降后趋平：22.72→21.21→20.70→约20.2；2023 年 28.9–32.0 旧体系弃用；**若三季报后新低点 PE<20 悲观 PE 下修 18–19 并未买档线下移**）。三档 167.90–174.90 / 151.05–159.00 / 117.70–127.12，证伪线 117.70（低于 3 年最低 130.66 约 9.9%）。胜率 50-60/60-70/65-75（现价≈悲观 EPS×中性 PE，已定价下滑；Q2 转正 +5 与裂口 -5 对冲），Kelly 0/6.3%/15.7%。右侧预案 165.00（三重顶 162.0–164.8，现价贴下方 0.4%，最先可验证）/155.20（MA20）。人工复核项：**衰竭锚滞后 16 个月**（锚前低 206.80 vs 现价 164.30，2026-06 新低 130.66 未入锚），待系统以新下跌段重算。
+- **共性**：均 pe_scale 锚、波段仓不适用（反弹/筑底段无成熟箱体）、next_review 2026-10-31（三季报）；两股中报均已落地无待披露复核项；胜率区间宽 ≥15pp 或下沿 ≤50 的档按固定比例下限执行。
+- **测试**：`uv run pytest -q` **476 全绿**（清缓存后稳定值；卡片无新增用例——test_card/test_card_inputs 57 项 fixture 隔离，不受真实库影响）。
+- **勘误**：本节上文（首段）测试计数 474 系缓存假象，已就地更正为 476。
+
+## 2026-08-28（续⑭：移除 LLM API 自动通道，打标定型为 agent/skill 通道）
+
+- **决定**（用户）：移除 r2 §6.1 的 API 自动打标通道（zhipu chat completions），打标定型为 **agent/skill 通道**——与排期卡同纪律：agent 读结构化底稿现场打标（质量优于单次 API 调用），draft 必过人审 gate。诱因：API 通道首采 6/6 全被 schema 拒（glm-4-flash 输出形态与严格 schema 不齐），对接摩擦与 key/成本负担不值得。
+- **删除**：`scripts/llm/client.py`（API client）、`prompts.py`（规则并入 SKILL.md）、`eval.py`（6b1/6b2 API 编排，其中确定性 gate 迁入 inputs.py）、`tests/test_llm_eval.py`。
+- **保留/增强**：`scripts/llm/schema.py`（+normalize_event：多余键丢弃、confidence 字符串归一）；`inputs.py` 新增 **--symbol 个股过滤**（export 只导该股 event_symbols 关联的未评价事件，个股深查模式）与 gate 内聚（读 config/llm.yaml review_gate）。
+- **daily 变更**：步骤 6b 由 llm_eval（disabled 占位）改为**确定性关联层** stage 'link'（event_link.run_link_stage：scope 关键词初分 + themes/symbol_industry 关联，池级事务，失败 degraded 不阻断报告）。真实跑验证：link success、scope 更新 12553。
+- **config/llm.yaml** 瘦身为 review_gate + prompt_version（API 字段全删；用户此前手工 enabled:true 一并失效，无需回滚）。
+- **测试 474→473 全绿**（删 eval 4 项；新增 gate 规则 6 断言、--symbol 过滤、非法标签拒绝等 3 项）。
+- **偏差决定（对 r2）**：①§6.1 的 6b1/6b2 API 自动编排不建，6b1/6b2 语义由 skill 通道的 agent 打标 + narratives 等价实现（同 schema 同 gate 同人审页）；②每日 daily 只做确定性 L2，LLM 打标人工触发；③API 通道如未来需要可从 git 历史（5800f27）恢复。

@@ -1,7 +1,8 @@
 """agent/skill 打标通道测试（消息面 r2 Phase 3）。
 
-锁定：export 底稿格式与候选过滤；import schema 校验（非法拒绝）、事件事实
-以 events 表为准（tier 取库值）、gate（company+tier1 → needs_review）、
+锁定：export 底稿格式、候选过滤（available_at 点时、--symbol 个股过滤）、
+import schema 校验（非法拒绝不冒充）、事件事实以 events 表为准（tier 取库值）、
+gate（company+tier1 → needs_review、banned word → needs_review）、
 narratives 逐股行、已评价跳过、6c 关联自动执行。
 """
 
@@ -29,6 +30,8 @@ def _mkconn(tmp_path):
         " ('evt_a', 'announcement', '2026-08-28T03:00:00+00:00', 'Asia/Shanghai',"
         "  '2026-08-28T03:00:00+00:00', '公司回购公告', NULL, 'akshare', 1, NULL,"
         "  'h1', ?)", (now,))
+    conn.execute(
+        "INSERT INTO event_symbols (event_id, symbol) VALUES ('evt_a', '601899.SH')")
     conn.commit()
     return conn
 
@@ -36,12 +39,19 @@ def _mkconn(tmp_path):
 def test_export_import_roundtrip(tmp_path):
     conn = _mkconn(tmp_path)
     out = tmp_path / "input.jsonl"
-    n = inputs_mod.export_inputs(conn, "2026-08-28", 10, out)
-    assert n == 1
+    assert inputs_mod.export_inputs(conn, "2026-08-28", 10, out) == 1
     rec = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
     assert rec["event_id"] == "evt_a" and rec["event_type"] == "announcement"
 
-    # agent 标签：故意不写 event_type/source_tier（以 events 表为准）、写错 tier 无效
+    # --symbol 过滤：别的股票 → 0 条；本股 → 1 条
+    assert inputs_mod.export_inputs(conn, "2026-08-28", 10,
+                                    tmp_path / "other.jsonl",
+                                    symbol="600029.SH") == 0
+    assert inputs_mod.export_inputs(conn, "2026-08-28", 10,
+                                    tmp_path / "same.jsonl",
+                                    symbol="601899.SH") == 1
+
+    # agent 标签：不写 event_type/source_tier（以 events 表为准）
     tags = tmp_path / "tags.jsonl"
     tags.write_text(json.dumps({
         "event_id": "evt_a", "scope": "company", "direction": "positive",
@@ -84,3 +94,20 @@ def test_import_rejects_invalid_tag(tmp_path):
     assert stats["rejected"] == 1 and stats["accepted"] == 0
     assert conn.execute("SELECT COUNT(*) FROM event_assessments").fetchone()[0] == 0
     conn.close()
+
+
+def test_gate_rules():
+    gate = inputs_mod.gate
+    review_gate = {"high_materiality": ["high", "critical"],
+                   "low_confidence": 0.4, "company_tier_max": 2,
+                   "banned_words": ["必涨"]}
+    base = {"materiality": "medium", "confidence": 0.8, "rationale": "库存下行"}
+    assert gate(review_gate, "industry", 4, base) == "ok"
+    assert gate(review_gate, "company", 1, base) == "needs_review"   # 强制人审
+    assert gate(review_gate, "company", 4, base) == "ok"             # 非公司层不限
+    assert gate(review_gate, "industry", 4,
+                {**base, "materiality": "high"}) == "needs_review"
+    assert gate(review_gate, "industry", 4,
+                {**base, "confidence": 0.3}) == "needs_review"
+    assert gate(review_gate, "industry", 4,
+                {**base, "rationale": "此事件后必涨"}) == "needs_review"

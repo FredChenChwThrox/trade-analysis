@@ -215,3 +215,22 @@ stocks:
     timezone: Asia/Shanghai
     industry_code: BK1493  # 动力煤
     themes: [煤炭]
+  # 2026-08-29 加入：医疗器械双龙头（采集 price/forward/financials/announcement/forecast/stock_info）
+  - symbol: 688271.SH
+    market: CN
+    name: 联影医疗
+    aliases: [联影医疗, 联影, United Imaging]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+    industry_code: BK1605  # 医疗设备
+    themes: [医疗器械, 医学影像]
+  - symbol: 300760.SZ
+    market: CN
+    name: 迈瑞医疗
+    aliases: [迈瑞医疗, 迈瑞, Mindray]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+    industry_code: BK1605  # 医疗设备
+    themes: [医疗器械, 体外诊断, 监护仪]

@@ -564,14 +564,15 @@ tests/                        # 单元、集成和 golden tests
 4. 在单一事务中发布规范化行情和因子版本。
 5. 重算受影响股票的周线、指标、信号和状态机。
 6. 抓取新增公告、新闻并运行版本化评价；失败时标记消息阶段 degraded。
-   （当前实现：确定性部分——池级事件研究 event_study（§5.5，event_study_v1）
-   已接入 daily，位于逐股信号之后、报告之前，池级事务，失败记 degraded 不阻断
-   报告；**r2 Phase 3 LLM 评价链已接入 daily 步骤 6b**（6b1 事件级初判 → 6c
-   关联层 → 6b2 逐股叙事，`scripts/llm/eval.py`，gate 按 §6.3），默认
-   `config/llm.yaml enabled=false`——关闭态记 success+notes（设计关闭非
-   degraded），配置 api key 后启用；公告/电报 source_tier 已随采集写入；flow
-   （龙虎榜/大宗 tier=3）静默入库不推送不进日报；event_calendar 到期项在报告
-   "日历提醒"与 /cards 横幅展示。）
+   （当前实现：①池级事件研究 event_study（§5.5，event_study_v1）——确定性，
+   位于逐股信号之后、报告之前，失败记 degraded 不阻断报告；②**确定性关联层**
+   （r2 §5 L2：scope 关键词初分 + themes/symbol_industry 词边界关联，
+   `scripts/signals/event_link.py`，daily 步骤 6b，池级事务）。**LLM/agent
+   打标不进 daily**：走 agent/skill 通道（skills/message-tag-skill +
+   scripts/llm/inputs.py），手触发打标后过人审 gate（§6.3）进
+   /message-review 复核；原 API 自动通道已移除（执行日志续⑭，2026-08-28）。
+   公告/电报 source_tier 随采集写入；flow（龙虎榜/大宗 tier=3）静默入库；
+   event_calendar 到期项在报告"日历提醒"与 /cards 横幅展示。）
 7. 生成单股报告，再汇总全池日报。
 8. 保存报告输入快照和各阶段状态，结束 pipeline run。
 

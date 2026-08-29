@@ -1,26 +1,9 @@
-# LLM 评价链配置（消息面 r2 Phase 3，设计 r2 §6/§11）
-# 边界（AGENTS.md/r2 §6.2 铁律）：LLM 只消费结构化底稿、只产出严格 JSON 评价；
-# 不产生规范化数字（价格/收益只由确定性代码）、不预测价格、不建议买卖；
-# action_hint 仅为提示不构成触发；activate/review 由人工执行。
-#
-# 启用方式：enabled: true 且导出 api_key_env 指定的环境变量。
-# 未启用时 daily 的 LLM 阶段记 notes "llm disabled" 并跳过（非 degraded，属设计关闭）。
+# 消息面打标配置（r2 Phase 3）
+# 打标通道：agent/skill（skills/message-tag-skill + scripts/llm/inputs.py），
+# 原自动 API 通道已移除（执行日志续⑭）。本文件只剩人审 gate 与 prompt 版本。
 
-enabled: false
-provider: zhipu                       # openai-compatible chat completions
-base_url: https://open.bigmodel.cn/api/paas/v4
-model: glm-4-flash
-api_key_env: ZHIPUAI_API_KEY
-temperature: 0.2
-timeout_seconds: 30
-max_retries: 3
-
-# 成本护栏（r1 §6.3）
-batch_size: 20                        # 事件级批量
-max_concurrency: 8
-max_llm_calls_per_run: 1200
-
-# 混合人审 gate（r2 §6.3）：命中任一 → status='needs_review'
+# 混合人审 gate（r2 §6.3）：命中任一 → status='needs_review'，人工在
+# /message-review 复核；未命中 → ok（可进报告"### 消息面"，人工仍可后补推翻）。
 review_gate:
   high_materiality: [high, critical]
   low_confidence: 0.4
