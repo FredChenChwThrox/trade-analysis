@@ -1,16 +1,18 @@
 """agent/skill 打标通道（消息面 r2 Phase 3，产出 llm_v1 行）。
 
 用法（配合 skills/message-tag-skill/SKILL.md）：
-    # 1. 导出未评价事件底稿（JSONL）。默认全池最新 N 条；--symbol 可只看个股。
+    # 1. 导出未评价事件底稿（JSONL）。默认全池最新 N 条；--symbol 只看个股；
+    #    --start 限定 available_at 窗口下界（"最近一周"类批量打标）。
     uv run python -m scripts.llm.inputs export --as-of 2026-08-28 --limit 20
     uv run python -m scripts.llm.inputs export --as-of 2026-08-28 --symbol 601088.SH
-    #    → data/llm_tags/<as-of>[_<symbol>]_input.jsonl
+    uv run python -m scripts.llm.inputs export --as-of 2026-08-29 \\
+        --start 2026-08-22 --limit 500
     # 2. agent（skill）逐条打标 → tags JSONL（schema 同 scripts/llm/schema.py，
     #    另加可选 "narratives": [{"symbol": ..., "narrative": ...}]）
     # 3. 导入：事件事实（event_type/source_tier）以 events 表为准；
     #    schema 校验（非法行拒绝不冒充）→ gate（r2 §6.3）→ llm_v1 行 → 6c 关联
     uv run python -m scripts.llm.inputs import --tags data/llm_tags/tags.jsonl \\
-        --actor claude --as-of 2026-08-28
+        --actor claude --as-of 2026-08-29
 
 导入语义：已评价（llm_v1 存在）跳过；gate 与设计一致（needs_review 进
 /message-review 人审）；model 记 `agent:<actor>` 可追溯打标主体。
@@ -34,20 +36,24 @@ LLM_CONFIG = ROOT / "config" / "llm.yaml"
 
 CANDIDATE_SQL = """
 SELECT e.event_id, e.event_type, e.title, e.summary, e.published_at,
-       e.source, e.source_tier
+       e.source, e.source_tier,
+       (SELECT GROUP_CONCAT(DISTINCT es.symbol) FROM event_symbols es
+        WHERE es.event_id = e.event_id) AS linked_symbols
 FROM events e
 WHERE e.event_type IN ('announcement', 'news')
-  AND e.available_at <= ?
+  AND e.available_at <= :as_of
+  {start_filter}
   AND NOT EXISTS (SELECT 1 FROM event_assessments a
                   WHERE a.event_id = e.event_id AND a.symbol = '__event__'
                     AND a.assessment_version = 'llm_v1')
   {symbol_filter}
 ORDER BY e.published_at DESC
-LIMIT ?
+LIMIT :limit
 """
 _SYMBOL_FILTER = (
     " AND EXISTS (SELECT 1 FROM event_symbols es "
-    "WHERE es.event_id = e.event_id AND es.symbol = ?) ")
+    "WHERE es.event_id = e.event_id AND es.symbol = :symbol) ")
+_START_FILTER = " AND e.available_at >= :start "
 
 # gate 参数（r2 §6.3）读 config/llm.yaml 的 review_gate；prompt_version 同文件。
 
@@ -76,10 +82,12 @@ def gate(review_gate: dict, scope: str, source_tier: int | None, result: dict) -
 
 
 def export_inputs(conn: sqlite3.Connection, as_of: str, limit: int, out: Path,
-                  symbol: str | None = None) -> int:
-    """导出未评价事件底稿 JSONL（事件字段 + 宏观因子快照行）。
+                  symbol: str | None = None,
+                  start: str | None = None) -> int:
+    """导出未评价事件底稿 JSONL（事件字段 + 已关联池内股票 + 宏观因子快照行）。
 
-    symbol 给定时只导出与该股关联（event_symbols）的未评价事件——个股深查模式；
+    symbol 给定时只导出与该股关联的未评价事件——个股深查模式；
+    start 给定时限定 available_at 窗口下界（"最近一周"类批量打标）；
     缺省为全池最新 N 条。宏观因子背景为全市场快照（两种模式都带）。
     """
     import yaml
@@ -89,15 +97,17 @@ def export_inputs(conn: sqlite3.Connection, as_of: str, limit: int, out: Path,
         SELECT code || ' ' || name || ' ' || close || COALESCE(unit, '')
                || '（' || trade_date || '）' AS line
         FROM (SELECT code, name, close, unit, trade_date, MAX(trade_date)
-              FROM macro_factors WHERE trade_date <= ? GROUP BY code)
+              FROM macro_factors WHERE trade_date <= :as_of GROUP BY code)
         ORDER BY code
-        """, (as_of,))]
+        """, {"as_of": as_of})]
     sql = CANDIDATE_SQL.format(
-        symbol_filter=_SYMBOL_FILTER if symbol else "")
-    params: list = [f"{as_of}T23:59:59+00:00"]
+        symbol_filter=_SYMBOL_FILTER if symbol else "",
+        start_filter=_START_FILTER if start else "")
+    params: dict = {"as_of": f"{as_of}T23:59:59+00:00", "limit": limit}
     if symbol:
-        params.append(symbol)
-    params.append(limit)
+        params["symbol"] = symbol
+    if start:
+        params["start"] = f"{start}T00:00:00+00:00"
     rows = conn.execute(sql, params).fetchall()
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +118,8 @@ def export_inputs(conn: sqlite3.Connection, as_of: str, limit: int, out: Path,
                 "title": r["title"], "summary": r["summary"],
                 "published_at": r["published_at"], "source": r["source"],
                 "source_tier": r["source_tier"],
+                "linked_symbols": (r["linked_symbols"].split(",")
+                                   if r["linked_symbols"] else []),
                 "macro_context": macro_lines,
             }, ensure_ascii=False) + "\n")
     return len(rows)
@@ -202,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--symbol", default=None,
                         help="export：只导出与该股关联的未评价事件（个股深查）")
+    parser.add_argument("--start", default=None,
+                        help="export：available_at 窗口下界 YYYY-MM-DD（批量打标）")
     parser.add_argument("--out", default=None, help="export：底稿输出路径")
     parser.add_argument("--tags", default=None, help="import：标签 JSONL 路径")
     parser.add_argument("--actor", default="agent",
@@ -213,13 +227,15 @@ def main(argv: list[str] | None = None) -> int:
             default_out = f"data/llm_tags/{args.as_of}" + (
                 f"_{args.symbol.replace('.', '')}" if args.symbol else "")
             out = Path(args.out or f"{default_out}_input.jsonl")
-            n = export_inputs(conn, args.as_of, args.limit, out, symbol=args.symbol)
+            n = export_inputs(conn, args.as_of, args.limit, out, symbol=args.symbol,
+                              start=args.start)
             print(f"[export] {n} 条底稿 → {out}")
         else:
             if not args.tags:
                 parser.error("import 需要 --tags")
             stats = import_tags(conn, Path(args.tags), actor=args.actor,
                                 as_of=args.as_of)
+            conn.commit()  # CLI 直连无外部事务，必须显式提交（缺了会整体回滚）
             print(f"[import] 接受 {stats['accepted']}，拒绝 {stats['rejected']}，"
                   f"跳过(已评) {stats['skipped']}；关联 +{stats['links_added']}，"
                   f"scope 更新 {stats['scope_updated']}")

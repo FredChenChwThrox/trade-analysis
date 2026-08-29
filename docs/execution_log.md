@@ -1256,3 +1256,11 @@
 - **config/llm.yaml** 瘦身为 review_gate + prompt_version（API 字段全删；用户此前手工 enabled:true 一并失效，无需回滚）。
 - **测试 474→473 全绿**（删 eval 4 项；新增 gate 规则 6 断言、--symbol 过滤、非法标签拒绝等 3 项）。
 - **偏差决定（对 r2）**：①§6.1 的 6b1/6b2 API 自动编排不建，6b1/6b2 语义由 skill 通道的 agent 打标 + narratives 等价实现（同 schema 同 gate 同人审页）；②每日 daily 只做确定性 L2，LLM 打标人工触发；③API 通道如未来需要可从 git 历史（5800f27）恢复。
+
+## 2026-08-29（skill 通道首轮真实打标——最近一周 180 事件）
+
+- **通道增强**：inputs.py export 新增 `--start`（available_at 窗口下界，"最近一周"类批量打标）与 `--symbol` 个股过滤；底稿带 `linked_symbols`（已关联池内股，供 narrative 定位）。修 **CLI 提交 bug**：main() 直连库 import 后未 commit，close() 整体回滚——180 条首轮导入全部丢失后补 `conn.commit()`（export 只读不受影响）。
+- **打标口径**（180 条 = 公告 167 + 电报 13，窗口 08-22~08-29 available）：程序性公告（董事会/摘要/制度/股东会等）neutral/low 批量规则；实质事件单条判——中报类 medium+schedule+eps+quarter（触发 8/31 底稿复核）、分红 positive/low/sentiment、减值 negative/eps/quarter（豫光/埃斯顿/天赐）、豫光定增受理 neutral/medium、万华装置复产 positive/eps/month、长电控股股东增持完成 positive/sentiment/week、圣农/恒力高管变动 negative/week、套保类 neutral/quarter；电报 13 条按行业/宏观/政策归类，非池内公司不给 narrative。
+- **纪律执行**：不猜——中报无数据底稿不给业绩方向（neutral + "以报告原文为准"）；程序性不给 narrative；narratives 只给池内股。
+- **gate 分布（已提交）**：company tier=1 needs_review 89（本周新采集）；company tier=NULL ok 78（历史回填通道公告，未分级按 gate 现规则放行——已知点：后续可考虑 NULL 也强制人审）；industry 6 ok + 2 needs_review；macro 2 needs_review（confidence<0.4 自动触发 ✓）+ 1 ok；policy 2 ok。
+- **人工复核入口**：/message-review 现列 180 条（公告类 167 条为公司 tier1/未分级，逐一确认工作量较大——如需批量确认按钮说一声）。
