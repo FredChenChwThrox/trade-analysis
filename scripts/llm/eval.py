@@ -176,3 +176,38 @@ def run_llm_eval(conn: sqlite3.Connection, *, run_id: str, as_of: str,
     if res.skipped:
         res.status = "degraded"
     return res
+
+
+
+def main(argv: list[str] | None = None) -> int:
+    """手触发 LLM 评价链（review/补跑用；日常由 daily 步骤 6b 自动执行）。"""
+    import argparse
+    from dataclasses import replace
+
+    from scripts.pipeline.db import DEFAULT_DB_PATH, connect
+
+    parser = argparse.ArgumentParser(prog="scripts.llm.eval")
+    parser.add_argument("--as-of", required=True, help="交易日 YYYY-MM-DD")
+    parser.add_argument("--db", default=str(DEFAULT_DB_PATH))
+    parser.add_argument("--limit", type=int, default=None,
+                        help="临时覆盖 max_llm_calls_per_run（抽检用）")
+    args = parser.parse_args(argv)
+    cfg = load_config()
+    if args.limit:
+        cfg = replace(cfg, max_llm_calls_per_run=args.limit)
+    conn = connect(args.db)
+    try:
+        res = run_llm_eval(
+            conn, run_id=f"llm_eval_{args.as_of}",
+            as_of=f"{args.as_of}T23:59:59+00:00", cfg=cfg)
+    finally:
+        conn.close()
+    print(f"[llm_eval] {res.status} assessed={res.assessed} narratives={res.narratives} "
+          f"skipped={res.skipped} links=+{res.links_added} scope~{res.scope_updated}")
+    for note in res.notes:
+        print(f"  {note}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
