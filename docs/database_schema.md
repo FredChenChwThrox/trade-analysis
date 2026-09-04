@@ -43,6 +43,7 @@
 | cash_flow_facts | [事实] | report_id（引用） | 现金流量表事实（0007；FCF 为派生不落库） | adapters/akshare.py |
 | financial_indicator_snapshots | [事实] | snapshot_id；UNIQUE(symbol, period_end, source) | THS 源算指标全量快照，仅交叉核对（0007） | adapters/akshare.py |
 | holder_stats | [事实] | id；UNIQUE(symbol, stat_date) | 股东户数序列（筹码集中度间接指标，0009） | adapters/akshare.py（--sources gdhs，手触发） |
+| chip_distribution | [派生] | id；UNIQUE(symbol, trade_date) | 自算筹码分布四项快照（0010，模型估算观察项） | indicators/chip_distribution.py（手触发/--all） |
 | share_capital_events | [事实] | sce_id | 股本变动事件/快照 | indicators/valuation.py |
 | fx_rates | [事实] | (from, to, rate_date) | 财务币种→交易币种日汇率 | adapters/yahoo_finance.py |
 | forecasts | [事实] | snapshot_id | 分析师预测历史快照 | adapters/stock_finance_data.py |
@@ -212,6 +213,10 @@ report_id PK 引用 financial_reports。字段（TEXT 定点、元）：ocf（�
 ### holder_stats — 股东户数序列 [事实]（0009，2026-09-04）
 
 主键 UNIQUE(symbol, stat_date)。字段：holder_count（本次户数）/ holder_count_prev（上次）/ holder_count_delta（增减，户）/ holder_count_delta_pct（增减比例，**小数** -0.0545=-5.45%，采集侧归一）/ avg_hold_value（户均持股市值，元）/ avg_hold_shares（户均持股数量，股）/ total_share（总股本，股）/ share_change（股本变动，股）/ announced_at（公告日期，**PIT 可见日**）。来源 akshare `stock_zh_a_gdhs_detail_em`（东财 datacenter，仅 A 股；手触发 `--sources gdhs`，落盘 `{symbol}_gdhs.csv`，ingest 路由 ("akshare","gdhs")）。upsert：同 (symbol, stat_date) 内容一致幂等跳过、变化原地更新（快照风格，无 revision 链）。事件驱动披露（财报配套+少数自愿月度），非逐日序列。**2026-09-04 回填 1862 行/30 只**（2013 起全历史）；601899/600029/603993/600115 四只东财源侧无数据（RPT_HOLDERNUM_DET 返回空，实测），缺口留待他源。用途：筹码集中度间接指标（§5.7）；tdx quotes 快照 gdrs 字段为第二源备援。
+
+### chip_distribution — 自算筹码分布快照 [派生]（0010，2026-09-04）
+
+主键 UNIQUE(symbol, trade_date)。换手率衰减模型（chip_v1_close_tri，A=0.7/k_cap=0.8/close 峰三角核/网格 2000，参数固化 `params_json` + `config_hash`，设计 `docs/superpowers/specs/2026-09-04-chip-distribution-design.md` v2）。字段：winner_ratio（获利比例 [0,1]）/ avg_cost、cost_5、cost_95（**不复权口径**，复权域计算后 ÷ 当日 factor 折回）/ concentration_90（=(c95−c5)/(c95+c5)）/ estimation_status（**burn_in 前 90 日 / mature**；初始化偏差残差见设计 §3）/ turnover_used、amount_used（输入快照审计）。**定位纪律：模型估算观察项，不进信号链/daily 默认链/卡片触发（§2.5）**；现金分红在前复权口径下平移历史成本，不还原真实股东成本（偏差声明，设计 §2.3/§7）。幂等 DELETE+重插+pipeline_runs（stage='chip_distribution'），--all 单一全局 run_id。CLI：`uv run python -m scripts.indicators.chip_distribution <symbol|--all>`。**2026-09-04 首算 25558 行/34 只**；adjust.py 因子重建后须全量重算（adjust 结果 notes 已加提示）。
 
 ### financial_indicator_snapshots — THS 源算指标快照 [事实]（0007）
 

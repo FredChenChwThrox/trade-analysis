@@ -446,6 +446,10 @@ def apply_adjustment(
         res.bars_updated += 1
 
     # 因子版本记录（算法、origin、来源、平台段明细）
+    res.notes.append(
+        "NOTE: 因子已重建，chip_distribution 需重算："
+        "uv run python -m scripts.indicators.chip_distribution --all"
+    )
     notes_json = {
         "source_factor_at_origin": f_origin,
         "tolerance_rel": tol,

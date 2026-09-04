@@ -1735,3 +1735,13 @@
 - **消息面**：电报 7 条全 tier4 不进决策链——花旗推迟美联储降息预期至 2027（与昨日沃勒鹰派同向，海外利率收紧主线延续）、非农大超预期后下周美国通胀数据成关键、中东航线运费大幅跳涨、合成橡胶夜盘 +5%。池内公告：恒瑞药品注册批准 + 上市许可受理（连续第二日管线进展）、南航转债到期兑付第二次提示、珀莱转债回售第二次提示、洽洽转债停止交易、电信中期分红实施、神华临时股东会通知、海天回购进展 + H 股中报。大宗：万华 2.32 亿元平价成交（折溢价 -0.004%，中信总部自国泰海通营业部接盘，tier3 静默入库）。
 - **宏观**：OIL 95.32 回落、CL 90.83 同步回落；AU0 965.96 续涨（鹰派言论未压回金价）；USDCNY 677.87 / CU0 108780 / LH0 11765 平稳。日历：09-09 CPI/PPI、09-11 社融。
 - **下周一清单**：①迈瑞/平安 601318 右侧确认待执行人工决定（距止损 9.5%/6.7%，不跟单也须明确闭环）；②P4 贴边群盯转正——洛钼距 T2 仅 0.1% 最优先，美的/恒瑞次之；③卖区三只人工复核（平安银行贴箱顶 0.1% 最紧）；④油价 95+ 高位，航空双卡锚复核预备不解除；⑤09-09 CPI/PPI 发布前留意。
+
+## 2026-09-04（续③：自算筹码分布落地——migration 0010 + chip_v1_close_tri 全池首算）
+
+- **前置**：存量未提交工作（09-03 基本面/审查修复等 58 文件）先行综合提交 `f711a40`（用户指令；.gitignore 补 data/*.db 杂散忽略）。
+- **实施（设计 v2 §9 七步）**：①migration 0010 `chip_distribution`（UNIQUE(symbol,trade_date)，params_json+rule_version+config_hash 三重可审计，不存网格——派生可重建）；②config/indicators.yaml chip 段（A=0.7/k_cap=0.8/peak=close/triangular/n_bins=2000/burn_in=90，⚠️ 待东财交叉验证）；③`scripts/indicators/chip_distribution.py`：纯函数 `compute_chip_series`（right_side.evaluate_segment 模式）+ CLI（单股/--all 单一全局 run_id，DELETE+重插+pipeline_runs stage='chip_distribution' 同事务）；④adjust.py 因子重建结果 notes 加 chip 重算提示（仅提示不耦合事务，评审 #8）；⑤真实库 migrate 0010（纯 CREATE TABLE 未另行备份）→ **全池首算 25558 行/34 只 ok=34**（单 run_id）。
+- **实现期抓虫一处**：`_tri_cdf_at` 初版用 np.where 顺序覆盖，支撑区以下（x<a）边缘被 val_left=(x−a)² 误抬致 kernel 和为 −1——改布尔索引分区域赋值修复；golden 测试同时纠正两处测试预期错误（uniform 支撑 F(12)=1.0 非 0.5；送转后 raw 等效成本合法移出当前 raw 区间，不变量改复权域）。
+- **测试**：新增 10 项（golden 2 日手算/涨停右三角/一字板点分布/冻结三态/衰减与 cap/除权连续性/次新 burn_in/性质不变量/rule_version 编码/CLI smoke），**537 全绿**。
+- **抽查**：①珀莱雅 09-04 winner=0.5468 而现价低于 avg_cost 65.38——成本分布右偏（低位密集+上方长尾）自洽；②turnover_used 与 daily_bars.turnover 全量一致（0 不一致）、NULL 语义一致；③concentration 公式全量自洽；④winner 全池 [0,1] 均值 0.5031；⑤burn_in 精确 3060=34×90。**回归锚**：golden 手算样例锁公式，真实数据锚=首算 run_id=chip_20260904T161228Z 可复算对照。
+- **文档**：database_schema（chip_distribution 节+速查）、system_design（§7 表清单）、handoff、本日志。
+- **提醒（非本任务）**：①09-04（周五）bars 已随 turnover 回填顺带入库（34 行，因子继承逻辑正常），但正式盘后 daily 未跑——indicators/signals/报告仍截止 09-03，需补跑 `daily --date 2026-09-04`；②报告 §7/UI 展示层接入筹码分布按需另做。

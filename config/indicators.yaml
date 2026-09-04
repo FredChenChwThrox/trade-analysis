@@ -23,5 +23,15 @@ defaults:
   pe_ttm:
     share_count: issued      # 默认已发行股数，不得运行中切换
   history_years: 3           # 采集与保留区间
+  chip:                      # ⚠️ 筹码分布模型参数为第一版默认值，待东财恢复后
+                             #    交叉验证（设计 §6）再定；人工核对期纪律同 §5.2
+    decay_factor: 0.7        # A：换手强度系数（评审 #2：1.0 高估新筹码，0.6–0.7
+                             #    行业经验区间；待验证，不默认正确）
+    turnover_cap: 0.8        # k_cap：异常数据护栏（A=0.7 下仅 turnover≥114% 触发）
+    peak_mode: close         # close | vwap（评审 #4：close 峰默认，vwap 对照保留）
+    dist_shape: triangular   # triangular | uniform（对照保留；尖峰族暂缓）
+    n_bins: 2000             # 复权域价格网格数
+    burn_in_days: 90         # 初始化影响期打标（评审 #3：90 日残差 ~28%@A=0.7）
+    price_pad: 0.1           # 网格上下界外扩 10%
 
 overrides: {}
