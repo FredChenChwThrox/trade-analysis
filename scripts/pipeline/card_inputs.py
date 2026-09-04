@@ -5,18 +5,21 @@
 fred-valuation-card-skill 作为主输入消费（Token 节约：LLM 只消费存档事实，
 缺口数据才回源 kimi-datasource 插件）。
 
-底稿九段（schema card_inputs_v1）：
+底稿十段（schema card_inputs_v2）：
 1. meta              标的信息 + 各来源数据截止日期 + 口径注记；
 2. earnings          盈利底稿：年报+季报营收/归母净利/EPS 及同比序列、TTM 现值；
 3. forecasts         最新一致预期 FY1–FY3 与最近季报实际增速的裂口对照；
-4. valuation_scale   估值刻度候选：恐慌低点清单（复权/不复权价 + 当日 pe_ttm）、
+4. factor_snapshot   行业因子快照：按 config/industry_factors.yaml 映射取该股相关
+                     因子的对齐读数（外盘 T-1，§2.1）、近 20/60 读数变动与 stale 标记
+                     （scripts/signals/factor_watch.py）；无映射时输出 note 不报错；
+5. valuation_scale   估值刻度候选：恐慌低点清单（复权/不复权价 + 当日 pe_ttm）、
                      pe_ttm 分位数（5/25/50/75/95）与当前值；**样本区间强制标注（§3.2）**；
-5. market_snapshot   现价（不复权）、当前 PE(TTM)、总股本；
-6. exhaustion_params 衰竭信号具体化参数：当前锚点不复权前低、下跌起点后前 4 周
+6. market_snapshot   现价（不复权）、当前 PE(TTM)、总股本；
+7. exhaustion_params 衰竭信号具体化参数：当前锚点不复权前低、下跌起点后前 4 周
                      均量基数、2 倍放量阈值、40–60% 缩量阈值（config/signals.yaml 实数）；
-7. signal_status     当前完成周五项衰竭信号状态与活跃计数（≥2 项口径）；
-8. daily_watch       当前档位监测（tier/证伪/箱体/均线）最近 facts 摘要 + active 卡概要；
-9. config_params     参与计算的信号参数回声与 config_hash（§4.2 可追溯）。
+8. signal_status     当前完成周五项衰竭信号状态与活跃计数（≥2 项口径）；
+9. daily_watch       当前档位监测（tier/证伪/箱体/均线）最近 facts 摘要 + active 卡概要；
+10. config_params    参与计算的信号参数回声与 config_hash（§4.2 可追溯）。
 
 纯读取，不写库。价格口径：价区/前低一律不复权（§3.4），量能为调整量
 （与周线信号口径一致）。
@@ -37,11 +40,12 @@ from pathlib import Path
 from scripts.indicators import valuation
 from scripts.pipeline.db import DEFAULT_DB_PATH, ROOT, connect, utc_now
 from scripts.signals import cards as card_mod
+from scripts.signals import factor_watch
 from scripts.signals.common import RULE_VERSION, WEEKLY_SIGNALS, load_params
 from scripts.signals.daily_watch import DAILY_WATCH_SIGNALS
 from scripts.signals.exhaustion import count_active_signals
 
-SCHEMA = "card_inputs_v1"
+SCHEMA = "card_inputs_v2"
 QUANTILE_PS = (5, 25, 50, 75, 95)
 
 
@@ -422,9 +426,20 @@ def _daily_watch(conn: sqlite3.Connection, symbol: str) -> dict:
     }
 
 
-def _config_params(params: dict, config_hash: str) -> dict:
+def _factor_snapshot(conn: sqlite3.Connection, symbol: str,
+                     wl: sqlite3.Row, as_of: str, mapping: dict) -> dict:
+    """行业因子快照段（factor_watch 公共层）；无映射输出 note，不报错。"""
+    snap = factor_watch.snapshot_for_symbol(
+        conn, symbol, as_of, wl["industry_code"], mapping)
+    snap["source"] = "config/industry_factors.yaml + macro_factors"
+    return snap
+
+
+def _config_params(params: dict, config_hash: str,
+                   industry_factors_hash: str) -> dict:
     return {
         "config_hash": config_hash,
+        "industry_factors_hash": industry_factors_hash,
         "rule_version": RULE_VERSION,
         "source": "config/signals.yaml defaults",
         "anchors": params["anchors"],
@@ -446,23 +461,26 @@ def _config_params(params: dict, config_hash: str) -> dict:
 def build_inputs(conn: sqlite3.Connection, symbol: str,
                  params: dict | None = None,
                  config_hash: str | None = None) -> dict:
-    """构建九段底稿 dict（纯读取）。"""
+    """构建十段底稿 dict（纯读取）。"""
     if params is None or config_hash is None:
         params, config_hash = load_params()
-    meta, _ = _meta(conn, symbol)
+    meta, wl = _meta(conn, symbol)
     share_events = valuation.load_share_events(conn, symbol)
     shares = valuation.shares_at(share_events, meta["data_cutoff"]["daily_bars"])
     earnings = _earnings(conn, symbol, shares)
+    ind_mapping, ind_hash = factor_watch.load_industry_factors()
     return {
         "meta": meta,
         "earnings": earnings,
         "forecasts": _forecasts(conn, symbol, earnings),
+        "factor_snapshot": _factor_snapshot(
+            conn, symbol, wl, meta["data_cutoff"]["daily_bars"], ind_mapping),
         "valuation_scale": _valuation_scale(conn, symbol),
         "market_snapshot": _market_snapshot(conn, symbol, shares),
         "exhaustion_params": _exhaustion_params(conn, symbol, params),
         "signal_status": _signal_status(conn, symbol, params),
         "daily_watch": _daily_watch(conn, symbol),
-        "config_params": _config_params(params, config_hash),
+        "config_params": _config_params(params, config_hash, ind_hash),
     }
 
 
@@ -504,6 +522,19 @@ def _summary(doc: dict, path: Path) -> str:
         lines.append(f"一致预期裂口: FY1 预期 {gap['forecast_fy1_yoy']:.2%}"
                      f" vs {gap['actual_period']} 实际 {gap['actual_net_profit_yoy']:.2%}"
                      f"（{gap['gap_pp']}pp）")
+    fs = doc["factor_snapshot"]
+    if fs["factors"]:
+        parts = []
+        for f in fs["factors"]:
+            if f["status"] == "missing":
+                parts.append(f"{f['code']} 缺失（对齐窗口内无读数）")
+            else:
+                stale = "，stale" if f["status"] == "stale" else ""
+                parts.append(f"{f['code']} {f['close']}{f['unit'] or ''}"
+                             f"（{f['trade_date']}{stale}）")
+        lines.append("行业因子: " + " ".join(parts))
+    else:
+        lines.append(f"行业因子: 无（{fs['note']}）")
     return "\n".join(lines)
 
 

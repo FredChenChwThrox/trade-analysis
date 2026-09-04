@@ -1,9 +1,9 @@
 """agent/skill 打标通道测试（消息面 r2 Phase 3）。
 
-锁定：export 底稿格式、候选过滤（available_at 点时、--symbol 个股过滤）、
+锁定：export 底稿格式（含 canonical_url）、候选过滤（available_at 点时、--symbol 个股过滤）、
 import schema 校验（非法拒绝不冒充）、事件事实以 events 表为准（tier 取库值）、
 gate（company+tier1 → needs_review、banned word → needs_review）、
-narratives 逐股行、已评价跳过、6c 关联自动执行。
+narratives 逐股行（非法叙事单条丢弃不冒充）、已评价跳过、6c 关联自动执行。
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ def test_export_import_roundtrip(tmp_path):
     assert inputs_mod.export_inputs(conn, "2026-08-28", 10, out) == 1
     rec = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
     assert rec["event_id"] == "evt_a" and rec["event_type"] == "announcement"
+    assert "canonical_url" in rec  # 底稿带原文链接（查原文用，无则 None）
 
     # --symbol 过滤：别的股票 → 0 条；本股 → 1 条
     assert inputs_mod.export_inputs(conn, "2026-08-28", 10,
@@ -79,6 +80,25 @@ def test_export_import_roundtrip(tmp_path):
     # 已评价跳过
     stats2 = inputs_mod.import_tags(conn, tags, actor="claude", as_of="2026-08-28")
     assert stats2["skipped"] == 1 and stats2["accepted"] == 0
+    conn.close()
+
+
+def test_import_drops_invalid_narrative(tmp_path):
+    """narrative 非法（如超 150 字）→ 单条丢弃记 notes，事件标签照常入库。"""
+    conn = _mkconn(tmp_path)
+    tags = tmp_path / "tags.jsonl"
+    tags.write_text(json.dumps({
+        "event_id": "evt_a", "scope": "industry", "direction": "positive",
+        "materiality": "low", "confidence": 0.8, "action_hint": "none",
+        "rationale": "库存下行",
+        "narratives": [{"symbol": "601899.SH", "narrative": "长" * 151}],
+    }, ensure_ascii=False), encoding="utf-8")
+    stats = inputs_mod.import_tags(conn, tags, actor="claude", as_of="2026-08-28")
+    assert stats["accepted"] == 1 and stats["rejected"] == 0
+    assert any("叙事丢弃" in n for n in stats["notes"])
+    assert conn.execute(
+        "SELECT COUNT(*) FROM event_assessments WHERE symbol='601899.SH'"
+    ).fetchone()[0] == 0
     conn.close()
 
 

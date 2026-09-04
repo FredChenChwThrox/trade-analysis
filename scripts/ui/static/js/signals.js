@@ -40,29 +40,33 @@
   async function loadOptions() {
     const data = await UI.fetchJSON('/api/signals?page_size=1');
     const types = (await UI.fetchJSON('/api/signals?page_size=1')).items;
-    const signalTypes = await fetchDistinct('signal');
-    const states = await fetchDistinct('state');
+    const signalTypes = await fetchDistinct('signal', 'signal_name');
+    const states = await fetchDistinct('state', 'state_text');
     renderTypeChecks(signalTypes);
     renderStateChecks(states);
   }
 
-  async function fetchDistinct(col) {
+  async function fetchDistinct(col, textCol) {
     // 通过大数据量分页 + 服务端返回排序近似获取 distinct；简化：调用 200 条取去重
+    // 返回 [{value, text}]：value 为枚举（提交/筛选用），text 为中文展示（后端 signal_name/state_text）
     const data = await UI.fetchJSON('/api/signals?page_size=200');
-    return Array.from(new Set(data.items.map((it) => it[col]))).sort();
+    const m = new Map();
+    data.items.forEach((it) => { if (!m.has(it[col])) m.set(it[col], it[textCol] || it[col]); });
+    return Array.from(m, ([value, text]) => ({ value, text }))
+      .sort((a, b) => String(a.value).localeCompare(String(b.value)));
   }
 
   function renderTypeChecks(types) {
     const box = document.getElementById('sig-type-checks');
     box.innerHTML = types.map((t) =>
-      `<label class="inline-flex items-center gap-1"><input type="checkbox" class="sig-type-cb" value="${UI.escapeHtml(t)}" ${state.signals.includes(t) ? 'checked' : ''}> ${UI.escapeHtml(t)}</label>`
+      `<label class="inline-flex items-center gap-1"><input type="checkbox" class="sig-type-cb" value="${UI.escapeHtml(t.value)}" ${state.signals.includes(t.value) ? 'checked' : ''}> ${UI.escapeHtml(t.text)}</label>`
     ).join('');
   }
 
   function renderStateChecks(states) {
     const box = document.getElementById('sig-state-checks');
     box.innerHTML = states.map((t) =>
-      `<label class="inline-flex items-center gap-1"><input type="checkbox" class="sig-state-cb" value="${UI.escapeHtml(t)}" ${state.states.includes(t) ? 'checked' : ''}> ${UI.escapeHtml(t)}</label>`
+      `<label class="inline-flex items-center gap-1"><input type="checkbox" class="sig-state-cb" value="${UI.escapeHtml(t.value)}" ${state.states.includes(t.value) ? 'checked' : ''}> ${UI.escapeHtml(t.text)}</label>`
     ).join('');
   }
 
@@ -114,8 +118,8 @@
     return `<tr>
       <td>${UI.formatDate(s.observed_on)}</td>
       <td><a class="text-blue-600 hover:underline" href="${priceLink}">${s.symbol}</a></td>
-      <td>${UI.escapeHtml(s.signal)}</td>
-      <td>${UI.renderStatusBadge(s.state)}</td>
+      <td>${UI.escapeHtml(s.signal_name || s.signal)}</td>
+      <td>${UI.renderStatusBadge(s.state, s.state_text)}</td>
       <td>${s.triggered ? '<span class="text-green-600">✓</span>' : '<span class="text-gray-400">—</span>'}</td>
       <td>${UI.formatDate(s.active_until)}</td>
       <td>${s.anchor_id || '—'}</td>
@@ -157,8 +161,8 @@
   async function showDetail(factId) {
     try {
       const d = await UI.fetchJSON('/api/signals/' + factId);
-      showModal(d.signal + ' · ' + d.observed_on + ' · ' + d.symbol, `
-        ${UI.renderStatusBadge(d.state)} ${d.triggered ? '<span class="text-green-600">已触发</span>' : '<span class="text-gray-400">未触发</span>'}
+      showModal((d.signal_name || d.signal) + ' · ' + d.observed_on + ' · ' + d.symbol, `
+        ${UI.renderStatusBadge(d.state, d.state_text)} ${d.triggered ? '<span class="text-green-600">已触发</span>' : '<span class="text-gray-400">未触发</span>'}
         <pre class="json-view mt-2">${UI.escapeHtml(JSON.stringify(d.details, null, 2))}</pre>
         ${d.anchor ? `<div class="text-xs mt-1">anchor #${d.anchor.anchor_id}：${d.anchor.anchor_type} @ ${UI.formatDate(d.anchor.trade_date)}（复权 ${UI.formatNumber(d.anchor.adjusted_price)} / 不复权 ${UI.formatNumber(d.anchor.raw_price)}）</div>` : ''}
         <div class="text-xs text-gray-400 mt-1">run_id=${UI.escapeHtml(d.run_id || '')} · rule=${UI.escapeHtml(d.rule_version || '')} · config=${UI.escapeHtml((d.config_hash || '').slice(0, 8))}</div>

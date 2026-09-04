@@ -68,6 +68,7 @@
     executions = execData.items;
     document.getElementById('chart-note').textContent = PRICE_NOTE[state.price] || '';
     renderNumCards(ovData);
+    renderFactors(ovData.factor_snapshot);
     renderFundamentals(ovData);
     renderSummary(ovData);
     renderCardPanel(ovData).catch((e) => UI.showToast(e.message, 'error'));
@@ -119,7 +120,9 @@
 
     const card = state.meta.active_card || {};
     const box = card.swing_box_json || {};
-    setCard('box', (ov.box && ov.box.text) || '—',
+    // 波段箱体已废弃的卡（swing_box 为空）显示"不适用"，不再渲染空价区
+    const boxNA = ov.has_card && box.box_low == null;
+    setCard('box', boxNA ? '不适用' : ((ov.box && ov.box.text) || '—'),
             box.box_low != null ? g(box.box_low) + '–' + g(box.box_high) : '');
     const rst = card.right_side_trigger_json || {};
     setCard('right', (ov.right_side && ov.right_side.text) || '—',
@@ -152,8 +155,8 @@
              vs ? '同花顺快照 ' + UI.formatDate(vs.snapshot_at) : '');
     _setFund('fd-ps', vs && vs.ps_lyr != null ? vs.ps_lyr : '—',
              vs ? '同花顺快照 ' + UI.formatDate(vs.snapshot_at) : '');
-    _setFund('fd-fc', fc ? `FY1 ${fc.fy1 ?? '—'} / FY2 ${fc.fy2 ?? '—'} / FY3 ${fc.fy3 ?? '—'} 亿` : '—',
-             fc ? '净利一致预期 ' + UI.formatDate(fc.snapshot_at) : '');
+    _setFund('fd-fc', fc ? `${fc.fy1 ?? '—'} / ${fc.fy2 ?? '—'} / ${fc.fy3 ?? '—'} 亿` : '—',
+             fc ? 'FY1/FY2/FY3 净利 · ' + UI.formatDate(fc.snapshot_at) : '');
     const notes = [];
     if (vs) notes.push('PB/PS 为快照单点值（非历史序列）');
     if (!a && !it) notes.push('财报数据缺失（§2.5）');
@@ -170,7 +173,7 @@
     box.innerHTML = ov.summaries.map((s) => `
       <div class="flex items-center gap-3 py-2">
         <span class="w-28 shrink-0 font-medium">${UI.escapeHtml(s.name)}</span>
-        <span class="w-20 shrink-0">${UI.renderStatusBadge(s.state)}</span>
+        <span class="w-20 shrink-0">${UI.renderStatusBadge(s.state, s.state_text)}</span>
         <span class="text-gray-600">${UI.escapeHtml(s.detail || '—')}</span>
         ${s.fact_id ? `<button class="sig-detail ml-auto shrink-0 text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-100" data-id="${s.fact_id}">详情</button>` : ''}
       </div>`).join('');
@@ -183,105 +186,59 @@
     try {
       const d = await UI.fetchJSON('/api/signals/' + factId);
       const html = `<pre class="json-view mt-2">${UI.escapeHtml(JSON.stringify(d.details, null, 2))}</pre>
-        ${d.anchor ? `<div class="text-xs mt-1">anchor: ${d.anchor.anchor_type} @ ${UI.formatDate(d.anchor.trade_date)}（复权 ${UI.formatNumber(d.anchor.adjusted_price)} / 不复权 ${UI.formatNumber(d.anchor.raw_price)}）</div>` : ''}
+        ${d.anchor ? `<div class="text-xs mt-1">锚：${d.anchor.anchor_type} @ ${UI.formatDate(d.anchor.trade_date)}（复权 ${UI.formatNumber(d.anchor.adjusted_price)} / 不复权 ${UI.formatNumber(d.anchor.raw_price)}）</div>` : ''}
         <div class="text-xs text-gray-400 mt-1">run_id=${UI.escapeHtml(d.run_id || '')} · rule_version=${UI.escapeHtml(d.rule_version || '')} · config_hash=${UI.escapeHtml(d.config_hash ? d.config_hash.slice(0, 8) : '')}</div>`;
-      showModal('信号详情 ' + d.signal + '（' + d.observed_on + '）', html);
+      showModal('信号详情 ' + (d.signal_name || d.signal) + '（' + d.observed_on + '）', html);
     } catch (e) {
       UI.showToast(e.message, 'error');
     }
   }
 
+  // ---------------------------------------------------------------- 关联因子（顶部区块）
+  function renderFactors(fs) {
+    /* 关联因子现状（overview.factor_snapshot；factor_watch 口径：缺失/陈旧如实标注），顶部独立区块 */
+    const body = document.getElementById('factor-body');
+    document.getElementById('factor-asof').textContent =
+      fs && fs.as_of ? '截至 ' + fs.as_of : '';
+    let html;
+    if (!fs) {
+      html = '<p class="text-gray-400 text-xs">无行情日期，因子快照不可用</p>';
+    } else if (!fs.factors || !fs.factors.length) {
+      html = `<p class="text-gray-400 text-xs">${UI.escapeHtml(fs.note || '无因子映射')}</p>`;
+    } else {
+      html = fs.factors.map((f) => {
+        const dirBadge = f.direction === 'positive'
+          ? '<span class="text-red-700">上行利好</span>'
+          : (f.direction === 'negative' ? '<span class="text-green-700">上行利空</span>' : '');
+        const fmtChg = (v) => v == null ? '—' : (v > 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
+        const val = f.status === 'missing'
+          ? '<span class="text-gray-400">缺数据</span>'
+          : `<span class="font-medium">${UI.escapeHtml(f.close)} ${UI.escapeHtml(f.unit || '')}</span>
+             <span class="text-gray-400">${UI.formatDate(f.trade_date)}${f.status === 'stale' ? '（陈旧）' : ''}</span>`;
+        return `<div class="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-1 text-xs">
+          <span class="font-medium">${UI.escapeHtml(f.name || f.code)}</span>
+          <span class="text-gray-400">${UI.escapeHtml(f.code)}</span>
+          ${dirBadge} ${val}
+          <span class="text-gray-500">近20读数 ${fmtChg(f.change_20d)} · 近60读数 ${fmtChg(f.change_60d)}</span>
+          ${f.note ? `<span class="text-gray-400">${UI.escapeHtml(f.note)}</span>` : ''}
+        </div>`;
+      }).join('') + (fs.note ? `<p class="text-gray-400 text-xs mt-1">${UI.escapeHtml(fs.note)}</p>` : '');
+    }
+    body.innerHTML = html;
+  }
+
   // ---------------------------------------------------------------- 排期卡
-  function kv(label, value) {
-    return `<div class="flex gap-2 py-0.5"><span class="flex-none w-20 text-gray-400 text-xs leading-5">${UI.escapeHtml(label)}</span><span class="text-xs leading-5">${UI.escapeHtml(value)}</span></div>`;
-  }
-
-  function tierImplied(t, eps) {
-    /* 每档价区反推隐含 EPS×PE 口径（纯算术展示） */
-    const lo = parseFloat(t.zone_low), hi = parseFloat(t.zone_high);
-    const base = eps.base != null ? parseFloat(eps.base) : null;
-    const bear = eps.bear != null ? parseFloat(eps.bear) : null;
-    if (t.tier === 3 && bear) {
-      return '≈ 悲观EPS ' + g(bear) + ' × PE ' + (lo / bear).toFixed(1) + '–' + (hi / bear).toFixed(1);
-    }
-    if (base) {
-      return '≈ 中性EPS ' + g(base) + ' × PE ' + (lo / base).toFixed(1) + '–' + (hi / base).toFixed(1);
-    }
-    return '—';
-  }
-
+  /* 面板渲染接共享渲染器 card_detail.js（与 /cards 详情同口径），此处只负责取数 */
   async function renderCardPanel(ov) {
     const box = document.getElementById('card-detail');
+    let html;
     if (!ov.has_card) {
-      box.innerHTML = '<p class="text-gray-400 text-sm">无 active 卡片</p>';
-      return;
-    }
-    const d = await UI.fetchJSON('/api/cards/' + ov.card_id);
-    const tiers = (d.price_tiers_json || {}).tiers || [];
-    const eps = (d.earnings_scenarios_json || {}).eps || {};
-    const val = d.valuation_scenarios_json || {};
-    const pe = val.pe || {};
-    const scales = val.panic_floor_scales || [];
-    const win = val.sample_window || {};
-    const inv = d.invalidation_json || {};
-    const bx = d.swing_box_json || {};
-    const rst = d.right_side_trigger_json || {};
-
-    const trs = tiers.map((t) => `
-      <tr class="border-t border-gray-100"><td class="py-1">T${t.tier}</td>
-      <td class="font-mono">${UI.escapeHtml(t.zone_low)}–${UI.escapeHtml(t.zone_high)}</td>
-      <td class="text-xs text-gray-500">${UI.escapeHtml(tierImplied(t, eps))}</td></tr>`).join('');
-    const scalesTxt = scales.map((s) => `${s.date} PE ${s.pe_ttm}`).join(' → ');
-
-    // 锚定指标明示：优先 valuation.anchor（新卡结构化字段），回退 input_snapshot.anchor_type_note，再回退默认 PE 刻度
-    const ANCHOR_LABELS = {pe_scale: 'PE(TTM) 刻度', pe_static_scale: '静态折算 PE 刻度',
-      pb: 'PB', ps: 'PS', price_band: '价格底带', mixed: '混合锚'};
-    const anchor = val.anchor || null;
-    const snapNote = ((d.input_snapshot_json || {}).anchor_type_note) || '';
-    let anchorTxt, anchorIsPe;
-    if (anchor && anchor.metric) {
-      anchorTxt = `${ANCHOR_LABELS[anchor.metric] || anchor.metric}${anchor.note ? '——' + anchor.note : ''}`;
-      anchorIsPe = anchor.metric === 'pe_scale' || anchor.metric === 'pe_static_scale';
-    } else if (snapNote) {
-      anchorTxt = snapNote;
-      anchorIsPe = null;  // 老卡快照说明，不据此改标注
+      html = '<p class="text-gray-400 text-sm">无生效中的排期卡</p>';
     } else {
-      anchorTxt = 'PE(TTM) 刻度（默认，未显式声明）';
-      anchorIsPe = true;
+      const d = await UI.fetchJSON('/api/cards/' + ov.card_id);
+      html = CardDetail.render(d);
     }
-    const peRowLabel = anchorIsPe === false ? 'PE 三情景（非锚，仅分位参考）' : 'PE 三情景';
-
-    box.innerHTML = `
-      <div class="text-xs text-gray-500 mb-2">${UI.escapeHtml(d.card_version_id)} · ${UI.escapeHtml(d.status)} ·
-        ${UI.formatDate(d.effective_from)} 生效 · 下次复核 ${UI.formatDate(d.next_review_at)} · 口径不复权</div>
-
-      <div class="text-xs font-medium text-gray-600 mt-2 mb-1">三档价区（估值锚定）</div>
-      <table class="text-sm w-full"><thead><tr class="text-left text-gray-500 text-xs">
-      <th>档位</th><th>价区</th><th>反推口径</th></tr></thead><tbody>${trs}</tbody></table>
-
-      <div class="text-xs font-medium text-gray-600 mt-3 mb-1">情景假设</div>
-      ${kv('锚定指标', anchorTxt)}
-      ${kv('EPS 三情景', `悲观 ${eps.bear || '—'} / 中性 ${eps.base || '—'} / 乐观 ${eps.bull || '—'}`)}
-      ${kv(peRowLabel, `悲观 ${pe.pessimistic || '—'} / 中性 ${pe.neutral || '—'} / 乐观 ${pe.optimistic || '—'}`)}
-      ${kv('恐慌底刻度', scalesTxt || '—')}
-      ${kv('样本窗口', `${win.from || '—'} ~ ${win.to || '—'}（${win.note || '—'}）`)}
-      ${kv('体系判断', val.regime || '—')}
-
-      <div class="text-xs font-medium text-gray-600 mt-3 mb-1">交易框架</div>
-      ${kv('证伪线', `${inv.line || '—'} —— ${inv.note || ''}`)}
-      ${kv('波段箱体', `${bx.box_low || '—'}–${bx.box_high || '—'}：买区 ${bx.buy_zone_low || '—'}–${bx.buy_zone_high || '—'}，卖区 ${bx.sell_zone_low || '—'}–${bx.sell_zone_high || '—'}，跌破 ${bx.box_invalidation || '—'} 箱体失效`)}
-      ${kv('右侧确认', `收盘站上 ${rst.trigger_level || '—'} 触发，止损 ${rst.stop_level || '—'}`)}
-
-      <button id="btn-card-json" class="mt-2 text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-100">查看完整 JSON</button>`;
-    document.getElementById('btn-card-json').addEventListener('click', () => {
-      const json = JSON.stringify({
-        price_tiers_json: d.price_tiers_json, invalidation_json: d.invalidation_json,
-        swing_box_json: d.swing_box_json, right_side_trigger_json: d.right_side_trigger_json,
-        earnings_scenarios_json: d.earnings_scenarios_json,
-        valuation_scenarios_json: d.valuation_scenarios_json,
-      }, null, 2);
-      showModal('卡片 ' + d.card_version_id, `<pre class="json-view">${UI.escapeHtml(json)}</pre>`);
-    });
+    box.innerHTML = html;
   }
 
   // ---------------------------------------------------------------- 执行记录

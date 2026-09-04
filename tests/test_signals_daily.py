@@ -310,12 +310,13 @@ def _day(d, close, low, vol=250.0, base=100.0):
 
 
 def test_right_side_confirmed_path():
-    """idle →（放量突破）waiting_retest →（回踩不破）confirmed。"""
+    """idle →（放量突破）waiting_retest →（回踩不破）confirmed；无止损位直接回 idle。"""
     days = [_day("2026-01-05", 102, 101), _day("2026-01-06", 100.5, 101.0)]
-    trans, final = rs.evaluate_segment(days, Decimal("100"), P["right_side"])
+    trans, tracks, final = rs.evaluate_segment(days, Decimal("100"), P["right_side"])
     assert [(t["from_state"], t["to_state"]) for t in trans] == [
         ("idle", "waiting_retest"), ("waiting_retest", "confirmed")]
-    assert final == "idle"  # terminal 次日回 idle
+    assert tracks == [] and final == "idle"  # 无 stop_level：confirmed 后回 idle
+    assert trans[1]["tracking"] == "no_stop_level"
     t0 = trans[0]
     assert t0["trigger_level"] == "100"
     assert t0["volume_adj"] == 250.0 and t0["vol_base"] == 100.0
@@ -327,7 +328,7 @@ def test_right_side_invalidated_path():
     for close, expect in [(99.00, "invalidated"), (98.99, "invalidated"),
                           (99.01, None)]:
         days = [_day("2026-01-05", 102, 101), _day("2026-01-06", close, 102.5)]
-        trans, final = rs.evaluate_segment(days, Decimal("100"), P["right_side"])
+        trans, _, _ = rs.evaluate_segment(days, Decimal("100"), P["right_side"])
         kinds = [t["to_state"] for t in trans]
         assert (kinds[-1] if len(kinds) > 1 else None) == expect, close
 
@@ -336,31 +337,85 @@ def test_right_side_expired_path():
     """10 个交易日内无合格回踩 → 第 10 日 expired；第 9 日仍等待。"""
     days = [_day("2026-01-05", 102, 101)]
     days += [_day(f"2026-01-{6 + k:02d}", 101.5, 102.5) for k in range(9)]
-    trans, final = rs.evaluate_segment(days, Decimal("100"), P["right_side"])
+    trans, _, _ = rs.evaluate_segment(days, Decimal("100"), P["right_side"])
     assert [t["to_state"] for t in trans] == ["waiting_retest"]
     days.append(_day("2026-01-15", 101.5, 102.5))  # 第 10 个等待日
-    trans, final = rs.evaluate_segment(days, Decimal("100"), P["right_side"])
+    trans, _, _ = rs.evaluate_segment(days, Decimal("100"), P["right_side"])
     assert [t["to_state"] for t in trans] == ["waiting_retest", "expired"]
     assert trans[-1]["days_waited"] == 10
 
 
 def test_right_side_breakout_boundaries():
-    """突破边界：收盘恰好 +1% 触发（≥）；量恰好 2 倍触发；量不足/样本不足不触发。"""
+    """突破边界：收盘恰好 +1% 触发（≥）；量恰好 vol_multiple 倍触发；量不足/样本不足不触发。"""
     lvl = Decimal("100")
     # 收盘 101.00 恰好 +1% → 突破；100.99 不突破
     for close, expect in [(101.00, True), (100.99, False)]:
-        trans, _ = rs.evaluate_segment([_day("d1", close, close)], lvl, P["right_side"])
+        trans, _, _ = rs.evaluate_segment([_day("d1", close, close)], lvl,
+                                          P["right_side"])
         assert bool(trans) is expect, close
-    # 量 200.0 恰好 2 倍 → 突破；199.99 不突破
-    for vol, expect in [(200.0, True), (199.99, False)]:
-        trans, _ = rs.evaluate_segment(
+    # 量边界从配置推导：恰好 vol_multiple 倍 → 突破；差 0.01 不突破
+    thr = 100.0 * float(P["right_side"]["vol_multiple"])
+    for vol, expect in [(thr, True), (thr - 0.01, False)]:
+        trans, _, _ = rs.evaluate_segment(
             [_day("d1", 102, 101, vol=vol)], lvl, P["right_side"])
         assert bool(trans) is expect, vol
     # 量/价任一不满足、均量样本不足 → 不突破
-    assert rs.evaluate_segment([_day("d1", 102, 101, vol=150.0)], lvl,
+    assert rs.evaluate_segment([_day("d1", 102, 101, vol=thr - 5.0)], lvl,
                                P["right_side"])[0] == []
     assert rs.evaluate_segment([_day("d1", 105, 104, base=None)], lvl,
                                P["right_side"])[0] == []
+
+
+def test_right_side_holding_track_and_stopped_out():
+    """confirmed 后（卡有止损位）→ holding 逐日跟踪；收盘 ≤ 止损位 → stopped_out（≤ 锁定）。"""
+    p = P["right_side"]
+    stop = Decimal("95")
+    days = [_day("2026-01-05", 102, 101),      # 放量突破
+            _day("2026-01-06", 100.5, 101.0),  # confirmed
+            _day("2026-01-07", 100.2, 99.8),   # holding 第 1 日
+            _day("2026-01-08", 96.0, 95.5)]    # holding 第 2 日（>95 不止损）
+    trans, tracks, final = rs.evaluate_segment(days, Decimal("100"), p, stop=stop)
+    assert [t["to_state"] for t in trans] == ["waiting_retest", "confirmed"]
+    assert trans[1]["tracking"] == "holding"
+    assert [(r["observed_on"], r["to_state"], r["days_since_confirm"])
+            for r in tracks] == [("2026-01-07", "holding", 1),
+                                 ("2026-01-08", "holding", 2)]
+    assert tracks[0]["stop_level"] == "95" and final == "holding"
+    # 恰好收在止损位 → stopped_out（≤ 锁定）；高 0.01 → 仍 holding
+    days.append(_day("2026-01-09", 95.0, 94.5))
+    trans, tracks, final = rs.evaluate_segment(days, Decimal("100"), p, stop=stop)
+    assert trans[-1]["to_state"] == "stopped_out"
+    assert trans[-1]["reason"] == "close_below_stop_level"
+    assert trans[-1]["confirmed_on"] == "2026-01-06" and final == "idle"
+    days[-1] = _day("2026-01-09", 95.01, 94.5)
+    trans, tracks, final = rs.evaluate_segment(days, Decimal("100"), p, stop=stop)
+    assert [t["to_state"] for t in trans] == ["waiting_retest", "confirmed"]
+    assert len(tracks) == 3 and final == "holding"
+
+
+def test_right_side_states_always_reset_not_silently_held():
+    """结构性护栏：非 idle/waiting_retest/holding 状态抛 ValueError 而非静默按
+    holding 处理（防未来重构引入未归位状态被 else 吞掉）。
+
+    状态机只由局部 state 驱动、合法转换不可能产生非法状态，故本测试锁定可观察
+    不变式：stopped_out 后必须回到 idle 才能开启新一轮 episode，绝不滞留疑似
+    holding 的模糊状态。
+    """
+    p = P["right_side"]
+    stop = Decimal("95")
+    days = [
+        _day("2026-01-05", 102, 101),            # ep1 放量突破
+        _day("2026-01-06", 100.5, 101.0),        # ep1 confirmed → holding
+        _day("2026-01-07", 100.0, 99.5),         # holding 跟踪
+        _day("2026-01-08", 94.9, 94.5),          # 破止损 → stopped_out → idle
+        _day("2026-01-09", 103, 102, vol=250.0),  # ep2 新一轮突破（要求 idle 已归位）
+        _day("2026-01-12", 100.5, 101.0),        # ep2 confirmed → holding
+    ]
+    trans, tracks, final = rs.evaluate_segment(days, Decimal("100"), p, stop=stop)
+    assert [t["to_state"] for t in trans] == [
+        "waiting_retest", "confirmed", "stopped_out", "waiting_retest", "confirmed"]
+    assert [r["observed_on"] for r in tracks] == ["2026-01-07"]
+    assert final == "holding"
 
 
 def test_right_side_integration(tmp_path):
@@ -376,11 +431,56 @@ def test_right_side_integration(tmp_path):
     with conn:
         res = rs.run_right_side(conn, SYM)
     assert res.status == "ok"
+    assert res.current_state == "holding"  # 卡有 stop_level：confirmed 后转跟踪
     rows = facts(conn, "right_side")
     assert [(r[0], r[1]) for r in rows] == [
         ("2026-01-30", "waiting_retest"), ("2026-02-02", "confirmed")]
     assert rows[0][3]["vol_base"] == pytest.approx(100.0)
     assert rows[0][3]["trigger_level"] == "100.00"
+    conn.close()
+
+
+def test_right_side_holding_integration(tmp_path):
+    """真实库：confirmed 后逐日落 holding 行（triggered=0），破止损位落 stopped_out（triggered=1）。"""
+    conn = make_conn(tmp_path)
+    add_card(conn, trigger=("100.00", "95.00"))
+    for k in range(20):
+        add_bar(conn, f"2026-01-{5 + k:02d}", 95.0, volume=100.0)   # 01-05..01-24
+    add_bar(conn, "2026-01-30", 102.0, low=101.0, volume=250.0)    # 突破
+    add_bar(conn, "2026-02-02", 100.5, low=101.0, volume=120.0)    # confirmed
+    add_bar(conn, "2026-02-03", 100.2, low=99.8, volume=120.0)     # holding
+    add_bar(conn, "2026-02-04", 94.9, low=94.5, volume=120.0)      # 破止损位
+    with conn:
+        res = rs.run_right_side(conn, SYM)
+    assert res.status == "ok" and res.current_state == "idle"
+    rows = facts(conn, "right_side")
+    assert [(r[0], r[1], r[2]) for r in rows] == [
+        ("2026-01-30", "waiting_retest", 1),
+        ("2026-02-02", "confirmed", 1),
+        ("2026-02-03", "holding", 0),
+        ("2026-02-04", "stopped_out", 1)]
+    assert rows[2][3]["stop_level"] == "95.00"
+    assert rows[3][3]["confirmed_on"] == "2026-02-02"
+    conn.close()
+
+
+def test_right_side_as_of_gap_uses_effective_window(tmp_path):
+    """新旧卡交替空档：旧卡 superseded 但窗口仍覆盖 as_of → 照常计算（§5.1 窗口语义，
+    不用 load_active_card 的 status 口径，否则误报 no_active_card）。"""
+    conn = make_conn(tmp_path)
+    add_card(conn, card_id="cv_old", trigger=("100.00", "95.00"), status="superseded")
+    conn.execute("UPDATE strategy_card_versions SET effective_to = '2026-03-01' "
+                 "WHERE card_version_id = 'cv_old'")
+    add_card(conn, card_id="cv_new", eff_from="2026-03-01",
+             trigger=("110.00", "100.00"))
+    for k in range(20):
+        add_bar(conn, f"2026-01-{5 + k:02d}", 95.0, volume=100.0)
+    with conn:
+        res = rs.run_right_side(conn, SYM, as_of="2026-01-24")
+    assert res.status == "ok"
+    run = conn.execute("SELECT card_version_id, status FROM pipeline_runs "
+                       "WHERE run_id = ?", (res.run_id,)).fetchone()
+    assert run["card_version_id"] == "cv_old" and run["status"] == "success"
     conn.close()
 
 
@@ -436,6 +536,22 @@ def test_daily_watch_null_close_bar_skipped(tmp_path):
     # 正常日仍产出卡片信号，NULL 日不产出
     assert [r[0] for r in facts(conn, "tier_triggered")] == [
         "2026-01-08", "2026-01-12"]
+    conn.close()
+
+
+def test_daily_watch_as_of_gap_uses_effective_window(tmp_path):
+    """新旧卡交替空档：旧卡 superseded 但窗口覆盖 as_of → 照常产出，不写
+    incomplete 汇总行（§5.1 窗口语义，与逐日循环口径一致）。"""
+    conn = make_conn(tmp_path)
+    add_card(conn, card_id="cv_old", status="superseded")
+    conn.execute("UPDATE strategy_card_versions SET effective_to = '2026-03-01' "
+                 "WHERE card_version_id = 'cv_old'")
+    add_card(conn, card_id="cv_new", eff_from="2026-03-01")
+    add_bar(conn, "2026-01-09", 55.00)
+    with conn:
+        res = dw.run_daily_watch(conn, SYM, as_of="2026-01-09")
+    assert res.status == "ok"
+    assert all(r[1] != "incomplete" for r in facts(conn, "daily_watch"))
     conn.close()
 
 

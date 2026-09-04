@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta
 from scripts.llm import labels                       # r2 Phase 3：标签中文呈现
 from scripts.signals import calendar_due             # r2 Phase 1：日历到期提醒（只读查询复用）
 from scripts.signals import event_link               # r2 Phase 3：effective_status 解析复用
+from scripts.signals import factor_watch             # 2026-08-29：单股关联因子快照复用
 # 价格刻度类指标：与价格轴同量纲，不复权展示时需要 ÷ 当日因子折回（§5.1）
 PRICE_SCALE_FIELDS = {
     "ma5", "ma10", "ma20", "ma60", "ma120", "ma250",
@@ -48,6 +49,12 @@ SIGNAL_NAMES = {
     "card_conversion": "卡片换算",
 }
 
+# 排期卡状态 → 中文（DB 枚举为存储契约不动，仅展示映射）
+CARD_STATUS_CN = {
+    "active": "生效中", "draft": "草稿", "superseded": "已替代",
+    "rejected": "已否决", "suspended": "已暂停",
+}
+
 # 单股页信号摘要的展示顺序
 SUMMARY_ORDER = ["tier_proximity", "tier_triggered", "falsification_breach",
                  "box_position", "right_side", "accumulation"] + WEEKLY_SIGNALS
@@ -58,6 +65,7 @@ STATE_TEXT = {
     "pending_signals": "待确认", "suspended": "停牌",
     "confirmed": "已确认", "failed": "已失败", "consolidating": "横盘整理",
     "invalidated": "已失效", "expired": "已过期", "waiting_retest": "等待回踩",
+    "holding": "持仓跟踪中", "stopped_out": "止损触发",
     "above": "均线上方", "below": "均线下方", "mixed": "均线交叉",
 }
 
@@ -483,6 +491,7 @@ def _event_text(signal: str, state: str, triggered: bool, details: dict | None) 
     if signal == "right_side":
         return {"confirmed": "右侧确认成立", "waiting_retest": "突破触发位，等待回踩",
                 "invalidated": "跌破止损位，已失效", "expired": "已过期",
+                "holding": "确认后持仓跟踪中", "stopped_out": "收盘跌破止损位，止损触发",
                 "idle": "回到空闲"}.get(state, f"转为{_state_text(signal, state)}")
     if signal in WEEKLY_SIGNALS and state == "active":
         extra = _summary_detail(signal, state, d)
@@ -636,7 +645,7 @@ def _fundamentals(conn: sqlite3.Connection, symbol: str) -> dict:
 def get_stock_overview(conn: sqlite3.Connection, symbol: str,
                        event_limit: int = 20, event_offset: int = 0) -> dict | None:
     """单股页首屏总览：关键数字 + 信号摘要 + 事件流（缺数据字段 None，前端显示"—"）。"""
-    w = conn.execute("SELECT symbol, name, market FROM watchlist WHERE symbol = ?",
+    w = conn.execute("SELECT symbol, name, market, industry_code FROM watchlist WHERE symbol = ?",
                      (symbol,)).fetchone()
     if w is None:
         return None
@@ -709,6 +718,16 @@ def get_stock_overview(conn: sqlite3.Connection, symbol: str,
             })
 
     events = list_signal_events(conn, symbol, limit=event_limit, offset=event_offset)
+    # 关联因子快照（industry_factors.yaml 映射；配置错误或缺数据如实标注，不猜 §2.5）
+    factor_snapshot = None
+    if latest:
+        try:
+            mapping, _ = factor_watch.load_industry_factors()
+            factor_snapshot = factor_watch.snapshot_for_symbol(
+                conn, symbol, latest["trade_date"], w["industry_code"], mapping)
+        except factor_watch.IndustryFactorsError as e:
+            factor_snapshot = {"as_of": latest["trade_date"], "factors": [],
+                               "note": f"因子映射配置错误：{e}"}
     return {
         "symbol": symbol, "name": w["name"], "market": w["market"],
         "latest_trade_date": latest["trade_date"] if latest else None,
@@ -726,6 +745,7 @@ def get_stock_overview(conn: sqlite3.Connection, symbol: str,
         "exhaustion": exhaustion,
         "summaries": summaries,
         "fundamentals": _fundamentals(conn, symbol),
+        "factor_snapshot": factor_snapshot,
         "events": events["items"], "events_total": events["total"],
     }
 
@@ -949,6 +969,9 @@ def list_signals(conn: sqlite3.Connection, filters: dict | None = None,
     for r in rows:
         r["triggered"] = bool(r["triggered"])
         r["details"] = _safe_json(r["details_json"])
+        # 中文展示字段（映射唯一来源在本模块，前端不再自行翻译枚举）
+        r["signal_name"] = SIGNAL_NAMES.get(r["signal"], r["signal"])
+        r["state_text"] = _state_text(r["signal"], r["state"])
     return {"page": page, "page_size": page_size, "total": total, "items": rows}
 
 
@@ -960,6 +983,8 @@ def get_signal_details(conn: sqlite3.Connection, fact_id: int) -> dict | None:
     d["triggered"] = bool(d["triggered"])
     d["details"] = _safe_json(d["details_json"])
     del d["details_json"]
+    d["signal_name"] = SIGNAL_NAMES.get(d["signal"], d["signal"])
+    d["state_text"] = _state_text(d["signal"], d["state"])
     if d["anchor_id"]:
         a = conn.execute("SELECT * FROM weekly_anchors WHERE anchor_id = ?",
                          (d["anchor_id"],)).fetchone()
@@ -1030,17 +1055,21 @@ def list_cards(conn: sqlite3.Connection, filters: dict | None = None,
     for r in rows:
         tiers = _safe_json(r["price_tiers_json"])
         r["tier_summary"] = _tier_summary(tiers)
+        r["status_cn"] = CARD_STATUS_CN.get(r["status"], r["status"])
         del r["price_tiers_json"]
     return {"page": page, "page_size": page_size, "total": total, "items": rows}
 
 
 def get_card_detail(conn: sqlite3.Connection, card_version_id: str) -> dict | None:
     row = conn.execute(
-        "SELECT * FROM strategy_card_versions WHERE card_version_id = ?", (card_version_id,)
+        "SELECT c.*, w.name AS name FROM strategy_card_versions c"
+        " LEFT JOIN watchlist w ON w.symbol = c.symbol"
+        " WHERE c.card_version_id = ?", (card_version_id,)
     ).fetchone()
     if row is None:
         return None
     d = _parse_card(dict(row))
+    d["status_cn"] = CARD_STATUS_CN.get(d["status"], d["status"])
     d["tier_summary"] = _tier_summary(d.get("price_tiers_json"))
     # 版本链：沿 supersedes_id 递归向上
     chain = [d["card_version_id"]]
@@ -1441,6 +1470,14 @@ def _safe_json(s: str | None):
         return {"_raw": s}
 
 
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    """表是否存在（0006 symbol_names 等展示层表可能未迁移，调用方须降级不 500）。"""
+    r = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,)).fetchone()
+    return r is not None
+
+
 # ---------------------------------------------------------------- 消息面人审（r2 Phase 3）
 
 def list_message_review(conn: sqlite3.Connection, limit: int = 200) -> list[dict]:
@@ -1456,6 +1493,14 @@ def list_message_review(conn: sqlite3.Connection, limit: int = 200) -> list[dict
              AND a.symbol = '__event__' AND a.assessment_version = 'llm_v1'
         ORDER BY a.assessed_at DESC LIMIT ?
         """, (limit,)).fetchall()
+    # 名称目录：symbol_names（全市场缓存，0006 migration）打底，watchlist 覆盖优先；
+    # 0006 未迁移时跳过名称查询（只显示代码，不 500）
+    names: dict = {}
+    if _table_exists(conn, "symbol_names"):
+        names.update({r["symbol"]: r["name"] for r in
+                      conn.execute("SELECT symbol, name FROM symbol_names")})
+    names.update({w["symbol"]: w["name"] for w in
+                  conn.execute("SELECT symbol, name FROM watchlist")})
     out = []
     for r in rows:
         eff = event_link.resolve_effective(conn, r["event_id"])
@@ -1471,11 +1516,51 @@ def list_message_review(conn: sqlite3.Connection, limit: int = 200) -> list[dict
             "status": eff["status"], "hidden": eff["hidden"],
             "status_cn": labels.STATUS_CN.get(eff["status"], eff["status"] or ""),
             "tags_cn": labels.tags_line(eff_view),
+            # 徽章级只读展示字段（人审页卡片用）：取值同 eff，None → 空串（模板判空跳过）；
+            # 映射走 labels.cn 不猜未知枚举。spec: docs/superpowers/specs/2026-08-29-message-review-ui-redesign.md §4.1
+            "direction_cn": labels.cn(labels.DIRECTION_CN, eff["direction"], ""),
+            "materiality_cn": labels.cn(labels.MATERIALITY_CN, eff["materiality"], ""),
+            "target_cn": labels.cn(labels.TARGET_CN, eff["target"], ""),
+            "half_life_cn": labels.cn(labels.HALF_LIFE_CN, eff["half_life"], ""),
+            "action_hint_cn": labels.cn(labels.ACTION_HINT_CN, eff["action_hint"], ""),
+            "confidence_pct": (f"把握 {eff['confidence']:.0%}"
+                               if eff["confidence"] is not None else "把握 —"),
             "direction": eff["direction"], "materiality": eff["materiality"],
             "confidence": eff["confidence"], "rationale": eff["rationale"],
             "target": eff["target"], "half_life": eff["half_life"],
             "expectation_gap": eff["expectation_gap"],
             "falsification": eff["falsification"], "action_hint": eff["action_hint"],
             "symbols": symbols,
+            # 关联股展示标签："代码 名称"，名称查 watchlist，缺名回退纯代码（不猜）
+            "symbols_label": [f"{s} {names[s]}" if s in names else s
+                              for s in symbols],
         })
     return out
+
+
+def list_message_review_for_confirm(conn: sqlite3.Connection,
+                                    company: str = "") -> list[str]:
+    """confirm-all 专用：只返回「待确认且未处置」的事件 id。
+
+    有效状态语义与 list_message_review 一致（r2 §3.3 replay）：基础 status 为
+    needs_review，且事件级无 confirm/dismiss 记录（已处置的不重复确认）；company
+    非空时限定关联股（event_symbols）。SQL 侧过滤，避免全量拉取后 Python 过滤
+    （1.7：数据量大时节约 DB 与内存）。
+    """
+    rows = conn.execute(
+        """
+        SELECT DISTINCT e.event_id
+        FROM events e
+        JOIN event_assessments a ON a.event_id = e.event_id
+             AND a.symbol = '__event__' AND a.assessment_version = 'llm_v1'
+        WHERE a.status = 'needs_review'
+          AND NOT EXISTS (
+              SELECT 1 FROM event_human_review hr
+              WHERE hr.event_id = e.event_id AND hr.symbol = '__event__'
+                AND hr.action IN ('confirm', 'dismiss'))
+          AND (? = '' OR EXISTS (
+              SELECT 1 FROM event_symbols es2
+              WHERE es2.event_id = e.event_id AND es2.symbol = ?))
+        ORDER BY e.event_id
+        """, (company, company)).fetchall()
+    return [r["event_id"] for r in rows]

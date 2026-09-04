@@ -16,7 +16,13 @@
 - swing_box_json:          {"box_low", "box_high", "buy_zone_low", "buy_zone_high",
                             "sell_zone_low", "sell_zone_high", "box_invalidation"}
 - right_side_trigger_json: {"trigger_level": "60.00", "stop_level": "56.00"}
-- earnings_scenarios_json: {"eps": {"bear": "3.20", "base": "3.70", "bull": "4.20"}}
+- earnings_scenarios_json: {"eps": {"bear": "3.20", "base": "3.70", "bull": "4.20"},
+                            "factor_assumptions": [{"code": "OIL", "name": "布伦特原油",
+                            "unit": "美元/桶", "level": "85.00",
+                            "as_of_date": "2026-08-28", "note": ...}, ...]}
+                            （factor_assumptions 可选：skill 第 4 步行业因子假设，
+                            原样存档备审计；非价格字段，不参与 parse_card 校验与
+                            §5.4b 机械换算）
 - valuation_scenarios_json:{"pe": {...}, ...}（换算不动，§5.4b）
 
 机械换算（§5.4b 第二步，纯 Python 不经 LLM）：
@@ -174,8 +180,14 @@ def card_for_day(versions: list[Card], trade_date: str) -> Card | None:
 
 def load_active_card(conn: sqlite3.Connection, symbol: str,
                      trade_date: str) -> Card | None:
-    """trade_date 当日生效的 active 版本（无则 None——调用方按 §2.5 记 incomplete；
-    JSON 非法被 parse_card 拒绝同样返回 None）。"""
+    """trade_date 当日 status='active' 且生效区间覆盖的版本（无则 None——调用方
+    按 §2.5 记 incomplete；JSON 非法被 parse_card 拒绝同样返回 None）。
+
+    注意口径：本函数是"当前活跃卡"语义（status + 窗口双过滤），只用于
+    execution 关联快照 / card_inputs 底稿这类"当下"语境。as_of 逐日信号与
+    报告必须用 card_for_day（纯窗口语义，§5.1）——新旧卡交替空档期
+    （旧卡 superseded 但窗口仍覆盖、新卡尚未生效）下本函数会误报无卡。
+    """
     row = conn.execute(
         """
         SELECT * FROM strategy_card_versions

@@ -39,6 +39,10 @@
 | macro_factors | [事实] | (factor_type, code, trade_date) | 宏观因子日快照（商品/外汇；0004，r2 Phase 2） | collect/akshare_collect.py（--sources macro，清单 config/macro_factors.yaml） |
 | financial_reports | [事实] | report_id；UNIQUE(symbol, period_end, period_type, is_cumulative, revision) | 财报头（修订新增 revision） | adapters/stock_finance_data.py |
 | financial_facts | [事实] | report_id（引用） | 财务事实（营收/归母净利/EPS/股本） | adapters/stock_finance_data.py |
+| balance_sheet_facts | [事实] | report_id（引用 financial_reports） | 资产负债表事实（0007） | adapters/akshare.py |
+| cash_flow_facts | [事实] | report_id（引用） | 现金流量表事实（0007；FCF 为派生不落库） | adapters/akshare.py |
+| financial_indicator_snapshots | [事实] | snapshot_id；UNIQUE(symbol, period_end, source) | THS 源算指标全量快照，仅交叉核对（0007） | adapters/akshare.py |
+| holder_stats | [事实] | id；UNIQUE(symbol, stat_date) | 股东户数序列（筹码集中度间接指标，0009） | adapters/akshare.py（--sources gdhs，手触发） |
 | share_capital_events | [事实] | sce_id | 股本变动事件/快照 | indicators/valuation.py |
 | fx_rates | [事实] | (from, to, rate_date) | 财务币种→交易币种日汇率 | adapters/yahoo_finance.py |
 | forecasts | [事实] | snapshot_id | 分析师预测历史快照 | adapters/stock_finance_data.py |
@@ -126,6 +130,7 @@
 | volume_raw | REAL | 成交量（股） |
 | amount_raw | REAL | 成交额（元，不做股份调整）。历史缺口已于 2026-08-27 由 akshare-sina 全量回填（15 只 10896 行更新、零价差，run_amt_backfill*）；港股 24 行及 42 个采集起点边界行仍缺 |
 | currency | TEXT | |
+| turnover | REAL | 换手率（小数，0.010478=1.0478%；0008，2026-09-04）。sina 原生小数 / 东财百分点采集侧归一；港股与 forward 行不采集留 NULL。派生快照元数据：差异更新**不记 data_revisions**（价格事实字段 revision 语义不变），2026-09-04 全量回填 25524/25524 CN bars（run_turnover_backfill，sina） |
 | price_adj_factor | REAL | 前向累积复权因子，origin 日归一 1.0；复权价 = raw × factor（§3.3）。由 adjust.py 平台段检测写入/重建 |
 | share_factor | REAL | 只反映拆股/送转等股数变化；调整量 = volume_raw ÷ share_factor |
 | trading_status | TEXT | normal / suspended |
@@ -177,6 +182,10 @@ PK (event_id, symbol, reviewed_at)，多次操作留痕，**不改写原始 LLM 
 
 PK (symbol, source, classification_date)：东财细分行业 BK 码（与 watchlist.industry_code 同口径——每股最细三级板块）。采集 `scripts/collect/industry_collect.py`（push2delay 域，**季度刷新、不进 daily**），ingest 路由 ("akshare","industry")。消费：关联层 ②（事件文本命中行业名 → 该行业 watchlist 股，r2 §5.3）。2026-08-28 首采 5641 只。
 
+### symbol_names — 股票名称目录 [事实]（0006）
+
+PK (symbol)：全市场 A 股代码→官方简称缓存。背景：event_symbols 可关联 watchlist 池外股票（打标通道写入的涉事公司），watchlist 无其名称。采集 `scripts/collect/symbol_names_collect.py`（push2delay clist f12/f14，与 industry_collect 同源同域；**缺名时手触发、不进 daily**），重采 upsert 覆盖（名称改名以最新为准）。消费：UI 名称查询口径 watchlist ∪ symbol_names（watchlist 优先），缺名回退纯代码（不猜）。2026-08-29 首采 5905 只。
+
 ### macro_factors — 宏观因子快照 [事实]（0004，r2 §3.2）
 
 主键 (factor_type, code, trade_date)：商品（内盘连续合约 AU0/CU0/I0/RB0/SR0/SC0 + 外盘 OIL 布伦特/CL WTI）与外汇（中行牌价 USDCNY/HKDCNY/EURCNY）的每日收盘快照。close 为来源原始值定点 TEXT **不换算**（外汇单位 CNY/100外币，中行牌价口径）；change_pct 来源无则 NULL（adapter 不代算，§2.5）。同日重采 `ON CONFLICT DO UPDATE` 覆盖（事实刷新，非版本化）。清单固化 `config/macro_factors.yaml`（jsonschema 校验），采集全部走 sina 系域名（push2 风控规避，2026-08-28 实测）。消费：Phase 3 LLM 宏观类事件评价的底稿。
@@ -190,6 +199,25 @@ PK (symbol, source, classification_date)：东财细分行业 BK 码（与 watch
 ### financial_facts — 财务事实 [事实]
 
 report_id 引用 financial_reports。金额/股数为关键决策值存 TEXT 定点：revenue、net_profit_attr（归母净利，TTM 与 PE 口径）、eps_basic/eps_diluted、shares_issued_end（期末已发行股数，PE 默认口径）、shares_float_end、share_count_type（issued/float；来源只有流通股数时必须标注，§3.7）。
+
+### balance_sheet_facts — 资产负债表事实 [事实]（0007）
+
+report_id PK 引用 financial_reports（与 financial_facts 同模式，一表头多事实表）。金额一律 TEXT 定点、**单位元**：total_assets（资产总计）、total_liabilities（负债合计）、total_equity_attr（归母权益，ROE 分母口径）、monetary_fund（货币资金）、short_term_borrowing / long_term_borrowing / bonds_payable / noncurrent_liab_1y（有息负债四项：短期借款/长期借款/应付债券/一年内到期非流动负债；导出层求和缺项按 0）、inventory（存货）、accounts_receivable / accounts_payable（应收/应付账款，均不含票据）、goodwill（商誉）、updated_at（UTC）。
+来源：akshare `--sources balance_sheet`（sina stock_financial_report_sina 全历史，仅 A 股；**手触发不进 daily**；落盘 `{symbol}_bs.csv` 每期一行）→ `adapters/akshare.py::parse_balance_sheet_csv`，ingest 路由 ("akshare","balance_sheet")。表头复用 financial_reports：2023 前无表头期次由 adapter 新建（published_at=NULL、available_at=入库时间降级，同 D1.3 口径；远古期次仅服务趋势分析不进信号链，PIT 方向安全）。幂等：内容一致跳过；变化原地更新 + data_revisions（header revision 语义仍专属利润表）。
+
+### cash_flow_facts — 现金流量表事实 [事实]（0007）
+
+report_id PK 引用 financial_reports。字段（TEXT 定点、元）：ocf（经营活动现金流量净额）、capex（购建固定资产、无形资产和其他长期资产支付的现金）、icf（投资活动净额）、financing_cf（筹资活动净额）、net_cash_increase（现金及等价物净增加额）、updated_at。**FCF = ocf − capex 为派生指标不落库**，由导出层 `pipeline/fundamental_inputs.py` Python 计算。来源/表头复用/幂等同 balance_sheet_facts（采集源 `cash_flow`，落盘 `{symbol}_cf.csv`，ingest 路由 ("akshare","cash_flow")）。
+
+### holder_stats — 股东户数序列 [事实]（0009，2026-09-04）
+
+主键 UNIQUE(symbol, stat_date)。字段：holder_count（本次户数）/ holder_count_prev（上次）/ holder_count_delta（增减，户）/ holder_count_delta_pct（增减比例，**小数** -0.0545=-5.45%，采集侧归一）/ avg_hold_value（户均持股市值，元）/ avg_hold_shares（户均持股数量，股）/ total_share（总股本，股）/ share_change（股本变动，股）/ announced_at（公告日期，**PIT 可见日**）。来源 akshare `stock_zh_a_gdhs_detail_em`（东财 datacenter，仅 A 股；手触发 `--sources gdhs`，落盘 `{symbol}_gdhs.csv`，ingest 路由 ("akshare","gdhs")）。upsert：同 (symbol, stat_date) 内容一致幂等跳过、变化原地更新（快照风格，无 revision 链）。事件驱动披露（财报配套+少数自愿月度），非逐日序列。**2026-09-04 回填 1862 行/30 只**（2013 起全历史）；601899/600029/603993/600115 四只东财源侧无数据（RPT_HOLDERNUM_DET 返回空，实测），缺口留待他源。用途：筹码集中度间接指标（§5.7）；tdx quotes 快照 gdrs 字段为第二源备援。
+
+### financial_indicator_snapshots — THS 源算指标快照 [事实]（0007）
+
+UNIQUE(symbol, period_end, source)，source='akshare'（THS stock_financial_abstract；采集源 `fin_abstract` 手触发，摘要宽表转置长表 `{symbol}_abstract.csv`，列 period_end,group,indicator,value）。payload_json 存 80 项指标全量（`{选项: {指标: 值}}`，金额单位元）；raw_object_id 引用 raw_objects；索引 (symbol, period_end)。
+**定位：只作交叉核对与兜底，不作规范化数字来源**（规范化派生指标由 fundamental_inputs 导出层 Python 计算，公式单测锁定）。入库时对存量 financial_facts 做归母净利/营收 0.5% 容差对账，超差记 incomplete 不覆盖（现存 1 处：603993 洛阳钼业 2008 年报归母净利，摘要 16.41 亿 vs 库 14.88 亿，重述差异待人工核）；对缺 income facts 的历史期次回填只补 NULL 列。毛利率等 THS 独有指标在导出层引用时带 `_ths` 后缀标源。
+回填现状（2026-09-02）：全池 34 只 A 股 BS 2487 行 / CF 2463 行 / 快照 2538 行；0700.HK 无源标缺口。
 
 ### share_capital_events — 股本变动 [事实]
 
@@ -263,7 +291,7 @@ signal 取值与写入模块：
 |---|---|---|---|
 | panic / dry_up / no_new_low_3w / divergence / duration | weekly_signals | 周 | 五项衰竭信号（§5.3） |
 | daily_watch / tier_proximity / tier_triggered / falsification_breach / box_position / ma_comparison | daily_watch | 日 | 日频监测（§5.4；无 active 卡只写 incomplete 行） |
-| right_side | right_side | 日 | 右侧确认状态机 |
+| right_side | right_side | 日 | 右侧确认状态机（signals_v2 起含 holding 逐日跟踪行与 stopped_out 止损触发） |
 | accumulation | accumulation | 日 | 吸筹形态状态机（§5.4c，仅观察点） |
 | corporate_action_freeze / 换算相关 | corporate_action | 日 | §5.4b 冻结与换算事实 |
 
@@ -314,8 +342,8 @@ append-only；错录用冲正（action_type=reversal + reverses_execution_id）�
 ## 12. 关键引用关系
 
 ```
-raw_objects ──< daily_bars / index_bars / events / financial_reports / share_capital_events / fx_rates / corporate_actions / forecasts
-financial_reports ──< financial_facts
+raw_objects ──< daily_bars / index_bars / events / financial_reports / share_capital_events / fx_rates / corporate_actions / forecasts / financial_indicator_snapshots
+financial_reports ──< financial_facts / balance_sheet_facts / cash_flow_facts
 events ──< event_symbols、event_assessments
 weekly_anchors ──< signal_facts.anchor_id（同锚点活跃信号计数）
 strategy_card_versions ──< strategy_card_versions.supersedes_id（自引用版本链）

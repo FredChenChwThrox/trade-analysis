@@ -11,9 +11,9 @@
         <span class="text-sm font-normal text-gray-500">{{ symbol }}</span></h1>
       <span class="text-xs text-gray-400">数据截止 {{ meta.latest.trade_date if meta.latest else '—' }}</span>
       {% if meta.active_card %}
-      <span class="text-xs">卡片 <a class="text-blue-600" href="/cards?q={{ meta.active_card.card_version_id }}">{{ meta.active_card.card_version_id }}</a></span>
+      <span class="text-xs">排期卡 <a class="text-blue-600" href="/cards?q={{ meta.active_card.card_version_id }}">{{ meta.active_card.card_version_id }}</a>（生效中）</span>
       {% else %}
-      <span class="text-xs text-yellow-600">无 active 卡片</span>
+      <span class="text-xs text-yellow-600">无生效中的排期卡</span>
       {% endif %}
     </div>
     <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2" id="num-cards">
@@ -28,6 +28,15 @@
     </div>
   </section>
 
+  <!-- 关联因子现状：stock.js 经 overview.factor_snapshot 填充（factor_watch 口径，缺失/陈旧如实标注） -->
+  <section class="bg-white rounded-lg border border-gray-200 p-3">
+    <div class="flex items-baseline gap-2 mb-1">
+      <h3 class="text-sm font-medium text-gray-700">关联因子</h3>
+      <span class="text-[11px] text-gray-400" id="factor-asof"></span>
+    </div>
+    <div id="factor-body"><p class="text-gray-400 text-xs">加载中…</p></div>
+  </section>
+
   <!-- 基本面：年报/季报、PB/PS 快照、一致预期（stock.js 经 overview.fundamentals 填充，缺失显示 —） -->
   <section class="bg-white rounded-lg border border-gray-200 p-3">
     <div class="flex items-baseline gap-2 mb-2">
@@ -40,7 +49,7 @@
       <div class="num-card"><div class="label" id="fd-interim-label">最新季报净利</div><div class="value" id="fd-interim">—</div><div class="sub" id="fd-interim-sub"></div></div>
       <div class="num-card"><div class="label">PB(MRQ)</div><div class="value" id="fd-pb">—</div><div class="sub" id="fd-pb-sub"></div></div>
       <div class="num-card"><div class="label">PS(LYR)</div><div class="value" id="fd-ps">—</div><div class="sub" id="fd-ps-sub"></div></div>
-      <div class="num-card"><div class="label">券商一致预期</div><div class="value text-sm" id="fd-fc">—</div><div class="sub" id="fd-fc-sub"></div></div>
+      <div class="num-card"><div class="label">券商一致预期</div><div class="value text-sm long" id="fd-fc">—</div><div class="sub" id="fd-fc-sub"></div></div>
     </div>
   </section>
 
@@ -101,5 +110,6 @@
 </div>
 {% endblock %}
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/card_detail.js') }}"></script>
 <script src="{{ url_for('static', filename='js/stock.js') }}"></script>
 {% endblock %}

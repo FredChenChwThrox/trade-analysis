@@ -36,7 +36,7 @@ LLM_CONFIG = ROOT / "config" / "llm.yaml"
 
 CANDIDATE_SQL = """
 SELECT e.event_id, e.event_type, e.title, e.summary, e.published_at,
-       e.source, e.source_tier,
+       e.source, e.source_tier, e.canonical_url,
        (SELECT GROUP_CONCAT(DISTINCT es.symbol) FROM event_symbols es
         WHERE es.event_id = e.event_id) AS linked_symbols
 FROM events e
@@ -118,6 +118,7 @@ def export_inputs(conn: sqlite3.Connection, as_of: str, limit: int, out: Path,
                 "title": r["title"], "summary": r["summary"],
                 "published_at": r["published_at"], "source": r["source"],
                 "source_tier": r["source_tier"],
+                "canonical_url": r["canonical_url"],
                 "linked_symbols": (r["linked_symbols"].split(",")
                                    if r["linked_symbols"] else []),
                 "macro_context": macro_lines,
@@ -131,7 +132,8 @@ def import_tags(conn: sqlite3.Connection, tags_path: Path, *, actor: str,
     """tags JSONL → 校验（非法行拒绝不冒充）→ gate → llm_v1 行 → 6c 关联。
 
     model 记 `agent:<actor>`（可追溯打标主体）；event_type / source_tier 以
-    events 表事实为准（不信任标签行）。
+    events 表事实为准（不信任标签行）；narratives 逐条过 NARRATIVE_SCHEMA，
+    非法叙事单条丢弃（不影响事件标签入库），原因记入 notes。
     """
     review_gate = review_gate if review_gate is not None else _llm_settings()[0]
     prompt_version = prompt_version or _llm_settings()[1]
@@ -188,6 +190,12 @@ def import_tags(conn: sqlite3.Connection, tags_path: Path, *, actor: str,
                      (tag["scope"], event_id))
         for n in narratives:
             if not (n.get("symbol") and n.get("narrative")):
+                continue
+            try:
+                schema.validate_narrative({"narrative": n["narrative"]})
+            except jsonschema.ValidationError as exc:
+                notes.append(f"{event_id} 叙事丢弃({n['symbol']}): "
+                             f"{exc.message[:80]}")
                 continue
             conn.execute(
                 """

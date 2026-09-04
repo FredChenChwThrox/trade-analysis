@@ -461,7 +461,9 @@ def run_daily_watch(
         rows_for_latest = day_rows
 
     # ---- as_of 当日无生效卡 → incomplete（§2.5 不猜）
-    active_card = card_mod.load_active_card(conn, symbol, as_of)
+    # 窗口语义（card_for_day，§5.1），与逐日循环口径一致：superseded 但生效区间
+    # 仍覆盖 as_of 的版本照常算（新旧卡交替空档期不误报无卡）。
+    active_card = card_mod.card_for_day(versions, as_of)
     if active_card is None:
         reason = "no_active_card" if not versions else "card_not_effective_at_as_of"
         write(as_of, "daily_watch", "incomplete", 0, {"reason": reason}, None)

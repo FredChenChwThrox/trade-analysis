@@ -6,6 +6,9 @@
 # - 外汇取中行牌价"央行中间价"（缺失回退"中行折算价"），单位为 CNY/100外币（中行牌价口径）；
 # - 内盘期货取连续合约（AU0/CU0/I0/RB0/SR0/SC0），外盘取 sina 全球期货（OIL=布伦特、CL=WTI）；
 # - 新增/调整因子只改本文件，不改代码（采集器按清单驱动）。
+# - alert_threshold_pct：因子偏离建卡假设 ±该阈值 → 锚复核提醒（skill 第 8 步 /
+#   后续日报因子偏离监控用，比较在来源原生单位上做）。
+#   ⚠️ 第一版人工初值，核对期内不得擅自调整（同 signals.yaml 纪律）。
 
 schema_version: 1
 factors:
@@ -16,36 +19,56 @@ factors:
     market: CN
     unit: 元/克
     api: domestic
+    alert_threshold_pct: 0.10
   - factor_type: commodity
     code: CU0
     name: 沪铜
     market: CN
     unit: 元/吨
     api: domestic
+    alert_threshold_pct: 0.10
   - factor_type: commodity
     code: I0
     name: 铁矿石
     market: CN
     unit: 元/吨
     api: domestic
+    alert_threshold_pct: 0.12
   - factor_type: commodity
     code: RB0
     name: 螺纹钢
     market: CN
     unit: 元/吨
     api: domestic
+    alert_threshold_pct: 0.12
   - factor_type: commodity
     code: SR0
     name: 白糖
     market: CN
     unit: 元/吨
     api: domestic
+    alert_threshold_pct: 0.10
+  - factor_type: commodity
+    code: LH0
+    name: 生猪
+    market: CN
+    unit: 元/吨
+    api: domestic
+    alert_threshold_pct: 0.12
+  - factor_type: commodity
+    code: M0
+    name: 豆粕
+    market: CN
+    unit: 元/吨
+    api: domestic
+    alert_threshold_pct: 0.12
   - factor_type: commodity
     code: SC0
     name: SC原油
     market: CN
     unit: 元/桶
     api: domestic
+    alert_threshold_pct: 0.12
   # ---- 商品：外盘（sina 全球期货） ----
   - factor_type: commodity
     code: OIL
@@ -53,12 +76,14 @@ factors:
     market: GLOBAL
     unit: 美元/桶
     api: foreign
+    alert_threshold_pct: 0.15
   - factor_type: commodity
     code: CL
     name: WTI原油
     market: GLOBAL
     unit: 美元/桶
     api: foreign
+    alert_threshold_pct: 0.15
   # ---- 外汇：中行牌价（央行中间价） ----
   - factor_type: fx
     code: USDCNY
@@ -67,6 +92,7 @@ factors:
     unit: CNY/100USD
     api: boc
     boc_symbol: 美元
+    alert_threshold_pct: 0.02
   - factor_type: fx
     code: HKDCNY
     name: 港币兑人民币
@@ -74,6 +100,7 @@ factors:
     unit: CNY/100HKD
     api: boc
     boc_symbol: 港币
+    alert_threshold_pct: 0.02
   - factor_type: fx
     code: EURCNY
     name: 欧元兑人民币
@@ -81,3 +108,4 @@ factors:
     unit: CNY/100EUR
     api: boc
     boc_symbol: 欧元
+    alert_threshold_pct: 0.03

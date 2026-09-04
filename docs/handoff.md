@@ -7,7 +7,7 @@
 
 - Python ≥3.12，用 **uv** 管理：依赖 `pyproject.toml`（pandas/pyyaml/jsonschema/flask，dev: pytest），锁文件 `uv.lock`。
 - 所有命令前缀 `uv run`；包下载失败时走系统代理。
-- 测试：`uv run pytest -q`（当前 474 项，全绿才算完成）。
+- 测试：`uv run pytest -q`（当前 522 项，全绿才算完成）。
 - 数据库：SQLite `data/market.db`（schema `scripts/pipeline/migrations/0001_init.sql`，`scripts/pipeline/db.py` 的 `migrate` 建库）。
 - 数据源（2026-08-21 起）：**通达信 tdx-connector 第一优先**（`scripts/adapters/tdx.py`，A 股+港股+指数行情+公告+估值/股本快照，采集规范 `skills/tdx-collect/SKILL.md`）；kimi-datasource 兜底（`stock_finance_data` A 股全量 + `yahoo_finance` 港股/股本/FX，access_token 易失效需 `/login`，公告接口自 8/13 持续 EMPTY_DATA）；tianyancha 公告补采兜底；- **akshare 采集器**（可选数据源，字段对齐现有 adapter 约定，实测通过）：`scripts/collect/akshare_collect.py` + `scripts/adapters/akshare.py`，sources = price/forward/financials/index/telegraph/**forecast/stock_info/announcement**（后三者 2026-08-26 新增：forecast=同花顺盈利预测，stock_info=东财股本结构集团总股本快照，均仅 A 股；announcement=巨潮 cninfo 公告，2026-08-27 补齐采集侧：接口日期参数须紧凑 YYYYMMDD，采集落盘标准公告线格式后经公共引擎薄壳入库，events.source='akshare' 与 tdx dedup 命名空间隔离；与 kimi 源可切换，stock_info 跨源同股本幂等跳过/异股本冲突）；需 `uv sync --extra akshare`；财联社电报→events、财报披露日 NOTICE_DATE 回填、指数全历史、A/H 行情，字段对齐既有 adapter 约定）。接口探测记录见 `docs/probe_20260809_stock_finance_data.md`、`docs/probe_20260815_tianyancha.md`、`docs/probe_20260821_tdx.md`。**港股源已通过 tdx 接入**（setcode=31，0700.HK 在 watchlist 待采集）。
 
@@ -22,7 +22,8 @@ scripts/
   collect/        mcp_client.py（插件调用）+ init_collect.py（首次全量采集）
   indicators/     core.py（指标公式，golden tests 锁定口径）+ compute.py（全量重算）
   pipeline/       db/ingest/adjust（复权因子）/weekly/calendar_check/daily（每日管线）
-                  card（排期卡 CLI）/execution（执行记录 CLI）/card_inputs（skill 底稿导出）/report（报告生成）
+                  card（排期卡 CLI）/execution（执行记录 CLI）/card_inputs（skill 底稿导出）
+                  /fundamental_inputs（基本面分析底稿导出，2026-09-03 新增）/report（报告生成）
   signals/        anchors（周线锚点）/exhaustion（衰竭信号 5 项）/weekly_signals（重算入口）
                   daily_watch（日频监测）/right_side（右侧状态机）/accumulation（吸筹形态）
                   cards（卡片加载）/corporate_action（除权处置）
@@ -41,7 +42,7 @@ tests/            161 项；test_indicators.py 是 golden tests（公式边界�
 cards/{symbol}/   排期卡存档（current.md、版本归档、inputs_*.json 底稿）
 reports/{symbol}/ 单股报告；reports/daily/ 全池日报
 docs/             设计/计划/执行日志/本文件
-skills/           排期卡 skill（draft-only）等
+skills/           排期卡 skill / 消息打标 skill / 基本面分析 skill（均 draft-only）等
 ```
 
 ## 3. 常用命令
@@ -70,6 +71,12 @@ uv run python -m scripts.pipeline.card reject <card_version_id>
 
 # 执行记录（正常 / 补录历史手工单）
 uv run python -m scripts.pipeline.execution add ... [--backfill --note "..."]
+
+# 基本面分析底稿（fundamental-analysis-skill 主输入，2026-09-03 新增）
+uv run python -m scripts.pipeline.fundamental_inputs <symbol>   # → reports/{symbol}/fundamental_inputs_*.json
+# 财务三表补采（手触发，不进 daily 默认 sources；仅 A 股）
+uv run python -m scripts.collect.akshare_collect --sources balance_sheet,cash_flow,fin_abstract \
+    --date <日期> --run-id <run_id>   # 然后 ingest 对应三个目录
 
 # 只读 Web UI（第一期，docs/ui_design_phase1.md）
 uv run python -m scripts.ui.app                    # http://127.0.0.1:5000/，/health 探活
@@ -119,7 +126,15 @@ uv run python -m scripts.pipeline.ingest data/raw/akshare/{financials,telegraph,
 - （2026-08-28 补记⑨）**消息面研判 r2 Phase 1 完成**（设计 `docs/superpowers/specs/2026-08-28-message-eval-design-r2.md` §13，交接 `...-phase1-handoff.md`；做完即停等人工 review）：migration 0003（event_calendar + events.scope/source_tier + watchlist.industry_code/themes_json，真实库已迁移、备份 `data/market.db.bak_20260828`）；公告（cninfo）进 akshare 采集默认 sources 且事件带 tier=1（电报=4；tyc/kimi 历史公告路径 NULL=未分级）；报告新增"## 5. 日历与消息面"（原 5/6/7 段顺延为 6/7/8，快照加 calendar_due 计数）；/cards 顶部日历横幅。**真实库 event_calendar 已激活（36 行）**：手工种子 6 条（FOMC 精确 + CPI/社融/LPR 惯例预填待官方确认，用户已核执行 `db seed`）+ 半年报批次采集 30 条（披露预约 23 + 解禁 7，用户批准入库；近窗提醒=08-29 美的/南航/神华半年报、08-31 长电）；2026三季预约源侧为空，9 月底补采 `--calendar-period 2026三季`。industry_code 23 只经 push2delay 反查回填（东财细分行业 BK 码）。Phase 2–4 未动。
 - （2026-08-28 补记⑩）**消息面 r2 Phase 2 完成**（无 LLM；做完即停等人工 review）：migration 0004 macro_factors（商品/外汇每日快照，真实库已迁移）；akshare 采集默认 sources 新增 **macro**（config/macro_factors.yaml 清单驱动：内盘期货 AU0/CU0/I0/RB0/SR0/SC0 + 外盘 OIL/CL + 中行牌价 USDCNY/HKDCNY/EURCNY，全部 sina 系域名直连可达，close 存原始值不换算）与 **flow**（龙虎榜按股×日合并多上榜原因 + 大宗每笔一行，仅 watchlist 行；查询窗口硬上限 10 天）。flow 事件入 events（event_type='flow'、scope='flow'、tier=3 聚合加工视图）**静默入库，不推送不进日报**，报告零改动。首采实测：macro 11/11 因子全实值（08-28 收盘）；flow 当日 23 只无龙虎榜上榜（正常）、大宗命中紫金两笔。两融（粒度未定）与热度榜（tier 5）明确缓办。测试 463 全绿（+7）。
 - （2026-08-29 补记⑪）入池联影医疗 688271.SH / 迈瑞医疗 300760.SZ（watchlist 25 只）：六源采集 + daily 首跑 ok=25，无卡期 degraded 属预期。行业码均为 BK1605 医疗设备（symbol_industry 反查）。新坑：cninfo 公告接口两度 JSONDecodeError，手打接口核实为 502 Bad Gateway（tengine 上游故障，非参数/风控），约十分钟后第三次重试自愈。两股财报全历史 25/40 期且 published_at 全非空（akshare 直回）；pe_ttm（snapshot_group_total 口径）最新 49.20 / 25.41。详见执行日志 2026-08-29 节。
-- （2026-08-29 补记⑫）联影/迈瑞首期排期卡已生成并**激活**（用户指令；effective 2026-08-31，next_review 2026-10-31）：688271SH_b7daa877 / 300760SZ_b257c0cd，全池 active 25 张。锚均 pe_scale：联影 PE 带 42.65–47.74（2024-09 谷底轮 38.5 排除，同恒力卡处理）、三档 88.56–92.25/79.09–83.25/70.95–76.63、证伪 70.95、FY1 裂口 -34.5pp（Q2 -20.7% 加速下滑，胜率 T1 30-45 为全池最低档）；迈瑞底部带 20.2–22.7 四轮缓降趋平（2023 旧体系弃用）、三档 167.90–174.90/151.05–159.00/117.70–127.12、证伪 117.70、中报 Q2 转正 +1.1%。人工复核项：联影干涸量能阈值 None、迈瑞衰竭锚滞后 16 个月（锚前低 206.8 vs 现价 164.3）。pytest 476 全绿（474 为 pyc 缓存假象，清缓存核实）。详见执行日志 2026-08-29（续）节。
+- （2026-08-29 补记⑬）入池油气三巨头+电信双龙头（watchlist 30 只）：601857.SH 中石油/600028.SH 中石化（BK1569）/600938.SH 海油（BK1574）/600941.SH 移动/601728.SH 电信（BK1587），六源采集 + daily 首跑 ok=30 + stock_info 回补。pe_ttm 12.99/18.36/11.74/16.10/19.37。**五张排期卡已激活**（用户指令，effective 2026-08-31，next_review 2026-10-31，全池 active 30 张）：601857SH_6ec22096 / 600028SH_60fd1681 / 600938SH_f51971c7 / 600941SH_0f926a39 / 601728SH_2cf61fc0。缺口：海油/移动 forecast EMPTY；OIL 因子读数 missing（08-28 起数待积累）；BK1574/BK1587 无因子映射；4 只衰竭锚滞后（2026-06-29~07-02 普跌新低未入锚，卡内 front_low 人工记录）；中石化/移动/电信股息率/PB 锚核对=激活前人工项。踩坑：factor_assumptions 须放卡片 JSON 的 earnings 内（根级 earnings_scenarios 被 schema 拒），SKILL.md 已修正。测试 486 全绿。详见执行日志 2026-08-29（续⑭）节。
+- （2026-08-30 补记⑭）入池创新药双龙头+CXO 龙头（watchlist 33 只）：688235.SH 百济神州/600276.SH 恒瑞医药（BK1594 化学制剂）/603259.SH 药明康德（BK1600 医疗研发外包），五源采集（push2his 断连改 sina 重采，已知坑）+ daily 首跑 ok=33 + stock_info 回补 + 指标重算 pe_ttm 全非空（08-28：百济 97.87 / 恒瑞 40.65 / 药明 21.77；百济中报入库致 TTM 上修）。缺口：百济/药明 forecast EMPTY（同花顺接口）；三股无卡，日报 degraded 属预期。测试 493 全绿。详见执行日志 2026-08-30（续②）节。
+- （2026-08-31 补记⑱）**收尾清理：全池 33 只 active 卡全覆盖**。①有友卡复核通过后续期：同值 refresh draft 603697SH_e86a63ae 激活（effective 2026-09-01，next_review 2026-10-31）；②药明/恒瑞/百济三张 08-30 draft 经用户确认**激活**（603259SH_9681230e / 600276SH_438f17da / 688235SH_f820a833，effective 2026-09-01）——此前"3 张遗留 draft 待 reject"表述有误（实为有效新卡，恒力初稿早已清理）。draft 清零，09-01 起日报 no_active_card 降级归零。注意：本日志更早的"3 张待 reject"勿再当作待办。
+- （2026-08-31 补记⑰）**11 张锚过期卡批量重建并激活**：11 张 v2 draft 入库（珀莱雅 9d997d38 / 南航 a2fc672e / 天赐 a2e04513 / 牧原 c0e31adf / 圣农 387e8e84 / 洽洽 a6dd769e / 埃斯顿 6fd732f1 / 豫光 6e36e4af / 平安 153b6efc / 紫金 616cc92c / 海天 fb3699b8），用户确认**全部激活，effective 2026-09-01，next_review 2026-10-31**；旧 8/10-8/14 批次 11 张 superseded（effective_to=2026-09-01 排他，08-31 当日信号仍按旧卡，无空档）。全池 active 30 张。要点：平安/紫金/豫光三张档位结构大变（基数错位修正/深熊刻度回归/锚上移）；南航 T1 贴价但 v2 口径 Kelly=0；珀莱雅右侧沿用 61.00/59.50。09-01 盘后注意事项见执行日志 2026-08-31（续②）节。
+- （2026-08-31 补记⑯）盘后 daily ok=33（revision=4）+ 12 张到期卡批量审核完成：**11 张锚过期需重建**（卡生效后新披露 2026 中报：珀莱雅/南航/天赐/牧原/圣农/洽洽/埃斯顿/豫光/平安/紫金/海天），**有友复核通过复用**（T1+3 信号触发有效）。重建优先级与中报预期差详表见执行日志 2026-08-31 节——珀莱雅右侧 holding 距止损仅 1.4% 为最高优先（人工决策）。**新坑**：`akshare_collect --start` 默认 2023-08-10，老批次 6 只因子 origin=2023-08-09 早于窗口 → daily 首跑 failed=6（origin 校验防御性回滚），forward 显式 `--start 2023-08-01` 重采后 ok。缺口：31 只 08-29~08-31 公告簿增量（cninfo 抽风，明日回补）。测试未跑（无代码改动）。
+- （2026-08-31 补记⑮）**code/skill 审查修复完成**（交接 `docs/superpowers/specs/2026-08-31-code-skill-review-handoff.md`）：10 项代码缺陷 + 3 项 skill 文档全部修复——right_side 非法状态护栏/报告 holding 决策点；factor_watch f-string SQL 参数化 + market 批量查询 + mtime 缓存；人审页 symbol_names 降级 + confirm-all SQL 过滤 + data-symbols 分隔符；followup LEFT JOIN 聚合；card_detail anchorIsPe 三态。测试 500 全绿。详见执行日志 2026-08-31 节。
+- （2026-09-04 补记⑱）**换手率 + 股东户数落地（§5.7 缺口闭合 2/3，用户指令）**：①migration 0008 `daily_bars.turnover`（小数口径，sina 原生/东财百分点归一；派生快照元数据不记 revisions），0009 新表 `holder_stats`（UNIQUE(symbol,stat_date)，announced_at=PIT 可见日；真实库先备份 `market.db.bak_20260904`）；②akshare price 三路径写 turnover 列 + 新手触发源 `gdhs`（`--sources gdhs`，不进 daily 默认；ingest 路由 ("akshare","gdhs")）；③回填 turnover **25524/25524 CN bars 100%**、holder_stats **1862 行/30 只**（2013 起）；**缺口**：紫金/南航/洛钼/东航四只东财源侧无数据（curl 手验"返回数据为空"，tdx gdrs 备援）、筹码分布 cyq 仍被 push2his 阻断缓办；④测试 +5 = **527 全绿**。未做：展示层接入、4 只他源补采。详见执行日志 2026-09-04 节。
+- （2026-09-03 补记⑰）**daily ok=34 一次通过 + right_side vol_multiple 2.0→1.5**（用户指令）：全池参数回放显示 2.0 漏接平安/迈瑞"1.5 倍量过线"突破、1.4 会放入埃斯顿 −14.5% 假突破，取 1.5；测试边界断言配置相对化，522 全绿；全池重放后平安/迈瑞 09-02 confirmed（新增"右侧持仓跟踪+待执行"决策点，执行在人）；报告 revision=2。另：002747.SZ 是**埃斯顿**不是晨光（晨光文具 603899 池外）。公告簿 3 只缺口（电信/紫金/海天 cninfo 抽风）待回补；OIL 布伦特 96.68 五日连涨逼近航空双卡提醒线 103.5。详见执行日志 2026-09-03 各节。
+- （2026-09-03 补记⑯）**基本面深度分析落地**（起因：用户"华尔街式 8 段提示词"改造需求）：①migration 0007 三表（balance_sheet_facts / cash_flow_facts 挂 financial_reports.report_id + financial_indicator_snapshots 存 THS 摘要快照），真实库已迁移（备份 `market.db.bak_20260903`）；②akshare 新增手触发源 balance_sheet/cash_flow/fin_abstract（sina 全历史+THS 摘要，仅 A 股，**不进 daily 默认 sources**），全池 34 只回填 BS 2487/CF 2463/快照 2538 行零冲突；③新导出器 `scripts/pipeline/fundamental_inputs.py`（八段底稿，派生指标全 Python 算，隐含回报区间表替代 DCF）+ 新 skill `skills/fundamental-analysis-skill/`（draft-only 三模块：事实解读→定性研判→对抗呈现，不进日报/信号链）；④首单 603605 全链路验证，draft 在 `reports/603605.SH/fundamental_2026-09-02_draft.md` 待人工定稿。第二单 601318 平安 draft 同日产出（`reports/601318.SH/fundamental_2026-09-03_draft.md`：盈利超预期 vs 估值刻度上沿张力、PE 锚对保险业适配弱待 EV 重锚）。测试 522 全绿。缺口：0700.HK 无源；603993 2008 年报对账超差 1 处待人工核；**注意真实库 financial_reports 实际覆盖 2013 起全历史**（此前"2023Q3 起 12 期"仅指 published_at 点时口径）。详见执行日志 2026-09-03 节与 probe 文档。
 
 ## 6. 常见任务怎么做
 
@@ -127,3 +142,5 @@ uv run python -m scripts.pipeline.ingest data/raw/akshare/{financials,telegraph,
 - **改信号阈值**：config/signals.yaml（defaults；overrides 第一版不用）→ 重跑对应信号模块 → config_hash 随事实入库可追溯。锚点/衰竭/吸筹参数先过人工核对期。
 - **加新信号**：照 `scripts/signals/accumulation.py` 模式（每日一行 signal_facts + DELETE 重插 + pipeline_runs 记录 + CLI），接入 daily.py 信号链，report.py 加展示，配 tests。
 - **排查数据疑问**：先看报告"8. 来源与异常"段与 signal_facts.details_json（含阈值/原值/原因码），再核对口径（复权 vs 不复权）。
+- **录入执行记录（executions）前**：先完成当日采集 + daily，确保信号快照截止日不早于 T-1（2026-08-30 恒力止损复盘教训：8-25 两笔执行用的是 8-21 的冻结快照）。右侧确认/止损触发后及时录入执行，否则报告会持续列"待执行"提醒。
+- **Bugfix 接力**：`docs/superpowers/specs/2026-08-31-code-skill-review-handoff.md` 汇总了最近一次代码审查与 skill 审查的 10 项代码缺陷 + 3 项 skill 文档滞后，按任务拆分建议可并行分配。

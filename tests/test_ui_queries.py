@@ -453,3 +453,50 @@ def test_get_stock_overview_fundamentals_missing(ui_conn):
     f = ov["fundamentals"]
     assert f["annual"] is None and f["interim"] is None
     assert f["valuation_snapshot"] is None and f["forecast_np_yi"] is None
+
+
+def test_get_stock_overview_factor_snapshot(ui_conn):
+    """关联因子快照接入 overview：as_of 对齐最新交易日；无映射的股如实标注（§2.5）。"""
+    ov = queries.get_stock_overview(ui_conn, "603605.SH")
+    fs = ov["factor_snapshot"]
+    assert fs["as_of"] == ov["latest_trade_date"]
+    assert fs["factors"] == []
+    assert "无因子映射" in fs["note"]
+
+
+# ---------------------------------------------------------------- 消息面人审（r2 Phase 3）
+
+def test_list_message_review_without_symbol_names_table(tmp_path):
+    """0006 未迁移（无 symbol_names 表）：list_message_review 降级为只显示代码，不 500；
+    watchlist 覆盖仍优先生效（000001.SZ 平安银行在 watchlist）。"""
+    from scripts.pipeline import db as pipeline_db
+    from scripts.ui import queries as q
+
+    path = tmp_path / "mr.db"
+    conn = pipeline_db.connect(path)
+    pipeline_db.migrate(conn)
+    pipeline_db.seed(conn)
+    conn.execute("DROP TABLE symbol_names")  # 模拟只恢复到 0005 之前的库
+    conn.commit()
+    now = "2026-08-28T10:00:00+00:00"
+    conn.execute(
+        "INSERT INTO events (event_id, event_type, published_at, published_tz,"
+        " available_at, title, summary, source, content_hash, ingested_at,"
+        " source_tier) VALUES ('evt_n', 'news', ?, 'Asia/Shanghai', ?,"
+        " 'LME铜 大跌', NULL, 'akshare', 'h', ?, 4)", (now, now, now))
+    conn.execute(
+        "INSERT INTO event_symbols (event_id, symbol) VALUES ('evt_n', '000001.SZ')")
+    conn.execute(
+        "INSERT INTO event_assessments (event_id, symbol, assessment_version,"
+        " model, prompt_version, assessed_at, event_type, direction, materiality,"
+        " confidence, rationale, status, run_id)"
+        " VALUES ('evt_n', '__event__', 'llm_v1', 'fake', 'llm_v1', ?, 'news',"
+        " 'negative', 'medium', 0.7, '库存上升', 'needs_review', 'r')", (now,))
+    conn.commit()
+    try:
+        rows = q.list_message_review(conn)
+    finally:
+        conn.close()
+    assert len(rows) == 1
+    assert rows[0]["symbols"] == ["000001.SZ"]
+    assert rows[0]["symbols_label"] == ["000001.SZ 平安银行"]

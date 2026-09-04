@@ -30,11 +30,11 @@
 
   function initStatusChecks() {
     const box = document.getElementById('card-status-checks');
-    [['active', 'active'], ['draft', 'draft'], ['superseded', 'superseded'], ['rejected', 'rejected']]
-      .forEach(([v]) => {
+    [['active', '生效中'], ['draft', '草稿'], ['superseded', '已替代'], ['rejected', '已否决']]
+      .forEach(([v, label]) => {
         const l = document.createElement('label');
         l.className = 'inline-flex items-center gap-1';
-        l.innerHTML = `<input type="checkbox" class="card-status-cb" value="${v}"> ${v}`;
+        l.innerHTML = `<input type="checkbox" class="card-status-cb" value="${v}"> ${label}`;
         box.appendChild(l);
       });
   }
@@ -45,12 +45,12 @@
                      effective_from: state.ef, effective_to: state.et,
                      page: state.page, page_size: state.page_size };
     const tbody = document.getElementById('card-tbody');
-    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400 py-6">加载中…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400 py-6">加载中…</td></tr>';
     try {
       const data = await UI.fetchJSON('/api/cards' + UI.buildQueryString(params));
       render(data);
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="9" class="text-center text-red-500 py-6">${UI.escapeHtml(e.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center text-red-500 py-6">${UI.escapeHtml(e.message)}</td></tr>`;
     }
   }
 
@@ -65,11 +65,10 @@
       const tiers = (c.tier_summary || []).map((t) => `T${t[0]} ${t[1]}–${t[2]}`).join('；');
       return `<tr>
         <td class="font-mono text-xs">${UI.escapeHtml(c.card_version_id)}</td>
-        <td><a class="text-blue-600 hover:underline" href="/stock/${c.symbol}">${c.symbol}</a></td>
-        <td>${UI.renderStatusBadge(c.status)}</td>
+        <td><a class="text-blue-600 hover:underline" href="/stock/${c.symbol}">${c.symbol}</a>${c.name ? `<span class="text-xs text-gray-500 ml-1">${UI.escapeHtml(c.name)}</span>` : ''}</td>
+        <td>${UI.renderStatusBadge(c.status, c.status_cn)}</td>
         <td>${UI.formatDate(c.effective_from)}</td>
         <td>${UI.formatDate(c.effective_to)}</td>
-        <td class="font-mono text-xs">${UI.escapeHtml(c.supersedes_id || '—')}</td>
         <td class="text-xs">${UI.escapeHtml(tiers || '—')}</td>
         <td>${UI.formatDate(c.next_review_at)}</td>
         <td><button class="card-detail px-2 py-1 text-xs rounded border border-gray-300 hover:bg-gray-100" data-id="${UI.escapeHtml(c.card_version_id)}">详情</button></td>
@@ -83,24 +82,7 @@
   async function showDetail(cardId) {
     try {
       const d = await UI.fetchJSON('/api/cards/' + cardId);
-      const tierRows = (d.tier_summary || []).map((t) => `<tr><td>T${t[0]}</td><td class="font-mono">${t[1]}</td><td class="font-mono">${t[2]}</td></tr>`).join('');
-      const chain = (d.version_chain || []).map((v, i) => `<div class="text-xs ${i === 0 ? 'font-semibold text-blue-600' : ''}">${i === 0 ? '当前' : '被替代'}：${UI.escapeHtml(v)}</div>`).join('');
-      const json = JSON.stringify({
-        earnings_scenarios_json: d.earnings_scenarios_json,
-        valuation_scenarios_json: d.valuation_scenarios_json,
-        invalidation_json: d.invalidation_json,
-        swing_box_json: d.swing_box_json,
-        right_side_trigger_json: d.right_side_trigger_json,
-        input_snapshot_json: d.input_snapshot_json,
-      }, null, 2);
-      showModal(`卡片 ${cardId}`, `
-        <div class="text-sm mb-2">${d.symbol} · ${UI.renderStatusBadge(d.status)}
-          生效 ${UI.formatDate(d.effective_from)} → ${UI.formatDate(d.effective_to)}
-          · next_review ${UI.formatDate(d.next_review_at)} · run_id=${UI.escapeHtml(d.run_id || '')}</div>
-        <div class="mb-3"><div class="font-semibold text-xs text-gray-500 mb-1">版本链</div>${chain}</div>
-        <div class="mb-3"><div class="font-semibold text-xs text-gray-500 mb-1">价区</div>
-          <table class="data-table"><thead><tr><th>档</th><th>低</th><th>高</th></tr></thead><tbody>${tierRows}</tbody></table></div>
-        <pre class="json-view">${UI.escapeHtml(json)}</pre>`);
+      showModal(`卡片 ${cardId}`, CardDetail.render(d, { showChain: true }));
     } catch (e) {
       UI.showToast(e.message, 'error');
     }

@@ -55,6 +55,10 @@ BANNED_WORDS = ["看涨", "看跌", "建议买入", "建议卖出", "建议持�
 
 PROXIMITY_PCT_DEFAULT = 0.03
 
+# 已触发未执行提醒窗口（日历日）：右侧 confirmed/stopped_out 后超过该窗口
+# 仍无执行记录则不再提醒（过期交给卡片复核日历跟踪）
+FOLLOWUP_WINDOW_DAYS = 10
+
 
 # ---------------------------------------------------------------- 结果结构
 
@@ -166,6 +170,37 @@ def _pending_conversion_drafts(conn: sqlite3.Connection,
     return out
 
 
+def _right_side_followups(conn: sqlite3.Connection, symbol: str,
+                          trade_date: str) -> list[str]:
+    """右侧 confirmed/stopped_out 触发后窗口期内无执行记录 → 提醒（执行闭环）。
+
+    只跟踪右侧点事件（confirmed 待建仓 / stopped_out 待清仓）；档位/箱体是
+    持续状态不提醒（避免长驻噪音）。窗口期内人工录入 executions 后提醒消失。
+    单条 LEFT JOIN 聚合，避免逐事件 COUNT 的 N+1（1.8）。
+    """
+    out = []
+    rows = conn.execute(
+        """
+        SELECT s.observed_on, s.state, COUNT(e.execution_id) AS n
+        FROM signal_facts s
+        LEFT JOIN executions e ON e.symbol = s.symbol
+            AND substr(e.executed_at, 1, 10) >= s.observed_on
+        WHERE s.symbol = ? AND s.signal = 'right_side'
+          AND s.state IN ('confirmed', 'stopped_out')
+          AND s.observed_on <= ?
+          AND s.observed_on >= date(?, '-' || ? || ' days')
+        GROUP BY s.observed_on, s.state
+        ORDER BY s.observed_on
+        """, (symbol, trade_date, trade_date, FOLLOWUP_WINDOW_DAYS)).fetchall()
+    for r in rows:
+        if r["n"] == 0:
+            label = "右侧确认" if r["state"] == "confirmed" else "右侧止损"
+            out.append(f"[{label}待执行] {r['observed_on']} 触发至今无执行记录"
+                       f"（来源 signal_facts right_side + executions，截止 {trade_date}；"
+                       f"人工录入 executions 后本提醒消失）")
+    return out
+
+
 def _pct(frac: float | None, digits: int = 1) -> str:
     return "—" if frac is None else f"{frac * 100:.{digits}f}%"
 
@@ -195,7 +230,8 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
         "SELECT * FROM indicators_daily WHERE symbol = ? AND trade_date <= ? "
         "ORDER BY trade_date DESC LIMIT 1",
         (symbol, trade_date)).fetchone()
-    card = card_mod.load_active_card(conn, symbol, trade_date)
+    card = card_mod.card_for_day(card_mod.load_card_versions(conn, symbol),
+                                 trade_date)  # §5.1 窗口语义，与信号层口径一致
     rep.card_version_id = card.card_version_id if card else None
     next_review_at = None
     if card:
@@ -279,17 +315,32 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
                   f"不触发（来源 signal_facts tier_triggered @ {trade_date}）")
     rs = facts["right_side"]
     if rs and rs["observed_on"] == trade_date and rs["state"] in (
-            "confirmed", "invalidated", "expired"):
+            "confirmed", "invalidated", "expired", "stopped_out"):
         det = rs["details"]
-        label = {"confirmed": "右侧确认成立", "invalidated": "右侧确认失效",
-                 "expired": "右侧确认窗口过期"}[rs["state"]]
-        dp.append(f"[{label}] 关键位 {det.get('trigger_level')}，{det.get('reason')}；"
-                  f"来源 signal_facts right_side @ {trade_date}）")
+        if rs["state"] == "stopped_out":
+            dp.append(f"[右侧止损触发] 收盘 {det.get('close_raw')} ≤ 止损位 "
+                      f"{det.get('stop_level')}（右侧确认日 {det.get('confirmed_on')}，"
+                      f"关键位 {det.get('trigger_level')}；"
+                      f"来源 signal_facts right_side @ {trade_date}）")
+        else:
+            label = {"confirmed": "右侧确认成立", "invalidated": "右侧确认失效",
+                     "expired": "右侧确认窗口过期"}[rs["state"]]
+            dp.append(f"[{label}] 关键位 {det.get('trigger_level')}，{det.get('reason')}；"
+                      f"来源 signal_facts right_side @ {trade_date}）")
+    elif rs and rs["state"] == "holding" and rs["observed_on"] == trade_date:
+        # holding 是 triggered=0 的逐日跟踪行：多日持仓期不得静默（§6.2 第 3 段）
+        det = rs["details"]
+        dp.append(f"[右侧持仓跟踪] 止损位 {det.get('stop_level')}，现价距止损 "
+                  f"{_pct(det.get('distance_to_stop_pct'))}，已跟踪 "
+                  f"{det.get('days_since_confirm')} 日"
+                  f"（来源 signal_facts right_side @ {rs['observed_on']}）")
     bp = facts["box_position"]
     if bp and bp["observed_on"] == trade_date and bp["triggered"] == 1:
         dp.append(f"[波段箱体 {bp['state']}] 收盘 {bp['details'].get('close_raw')}，"
                   f"存档边界 {bp['details'].get('boundaries')}；"
                   f"来源 signal_facts box_position @ {trade_date}）")
+    followups = _right_side_followups(conn, symbol, trade_date)
+    dp.extend(followups)
     rep.decision_points = dp
 
     # ================= 优先级（§6.3）=================
@@ -306,10 +357,11 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
             else "；".join(rep.reasons)
         rep.sort_reason = "数据异常优先；同级按 symbol"
     elif suspensions or conv_drafts or (fb and fb["state"] == "active") or (
-            next_review_at and next_review_at < trade_date):
+            next_review_at and next_review_at < trade_date) or (
+            rs and rs["observed_on"] == trade_date and rs["state"] == "stopped_out"):
         rep.priority = 2
         rep.headline = "；".join(d.split("]")[0].lstrip("[") for d in dp)
-        rep.sort_reason = "证伪/复核逾期/换算待确认；同级按 symbol"
+        rep.sort_reason = "证伪/复核逾期/换算待确认/右侧止损；同级按 symbol"
     elif (tt and tt["observed_on"] == trade_date and tt["triggered"] == 1) or (
             rs and rs["observed_on"] == trade_date
             and rs["state"] in ("confirmed", "invalidated")) or (
@@ -327,6 +379,10 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
         rep.headline = (f"距 T{t0.get('tier')} {bound} {t0.get('nearest_boundary')} "
                         f"还差 {_pct(t0.get('distance_to_nearest_boundary_pct'))}")
         rep.sort_reason = f"同级按距边界百分比（{_pct(min_dist)}）、symbol"
+    elif followups:
+        rep.priority = 4
+        rep.headline = "；".join(f.split("]")[0].lstrip("[") for f in followups)
+        rep.sort_reason = "已触发未执行提醒；同级按 symbol"
     else:
         rep.priority = 5
         rep.headline = "普通状态更新"
@@ -354,7 +410,9 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
     a(f"- 报告状态: {rep.status}" + (f"（{'；'.join(rep.reasons)}）" if rep.reasons else ""))
     if card:
         a(f"- 当前卡片: `{card.card_version_id}`（生效 [{card.effective_from}, "
-          f"{card.effective_to or '开口'})，来源 strategy_card_versions）")
+          f"{card.effective_to or '开口'})，来源 strategy_card_versions）"
+          + (f"；status={card.status}，生效区间仍覆盖当日（§5.1 窗口语义）"
+             if card.status != "active" else ""))
     else:
         a("- 当前卡片: 无 active 版本（§2.5：卡片相关信号不输出，不猜）")
     a(f"- rule_version: {SIGNALS_RULE_VERSION}/{REPORT_RULE_VERSION}；"
@@ -441,12 +499,20 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
               + f"；来源 signal_facts dry_up @ {du['observed_on']}）")
     if card and card.trigger_level is not None and close is not None:
         p = params["right_side"]
-        line = card.trigger_level * (Decimal("1") + Decimal(str(p["breakout_pct"])))
-        dist = (line - close) / line
-        a(f"- 右侧: 突破线 {line:.2f}（触发位 {card.trigger_level} ×(1+"
-          f"{p['breakout_pct']:.0%})）；现价距突破线还差 {_pct(dist)}；"
-          f"状态机最近转换 {rs['state'] if rs else 'idle'}（terminal 后回 idle）"
-          f"（来源 strategy_card_versions + signal_facts right_side，截止 {trade_date}）")
+        if rs and rs["state"] == "holding":
+            det = rs["details"]
+            a(f"- 右侧: 确认后持仓跟踪中（确认日 {det.get('confirmed_on')}，止损位 "
+              f"{det.get('stop_level')}，现价距止损 {_pct(det.get('distance_to_stop_pct'))}，"
+              f"已跟踪 {det.get('days_since_confirm')} 日；"
+              f"来源 signal_facts right_side @ {rs['observed_on']}）")
+        else:
+            line = card.trigger_level * (Decimal("1") + Decimal(str(p["breakout_pct"])))
+            dist = (line - close) / line
+            a(f"- 右侧: 突破线 {line:.2f}（触发位 {card.trigger_level} ×(1+"
+              f"{p['breakout_pct']:.0%})）；现价距突破线还差 {_pct(dist)}；"
+              f"状态机最近转换 {rs['state'] if rs else 'idle'}"
+              f"（terminal 后回 idle；confirmed 后若卡有止损位转持仓跟踪）"
+              f"（来源 strategy_card_versions + signal_facts right_side，截止 {trade_date}）")
     acc = facts["accumulation"]
     if acc:
         det = acc["details"]

@@ -1,0 +1,34 @@
+# 行业 → 宏观因子暴露映射（底稿 factor_snapshot 段的数据源，设计 §3.6 关联层）
+# 解析：scripts/signals/factor_watch.py::load_industry_factors
+# 口径：
+# - industries 按东财 BK 码（与 watchlist.industry_code / symbol_industry 同口径）；
+# - symbols 为个股覆盖，优先于行业映射（替换，不合并）；
+# - direction 语义：positive = 因子上行利好主业（收入端），negative = 上行利空（成本端）；
+#   direction/note 仅供 skill 研判参考，确定性侧不据此计算任何东西；
+# - code 必须存在于 config/macro_factors.yaml 因子清单（加载时交叉校验，拼错即报错）；
+# - 本表人工维护；新增/调整只改本文件，不改代码。
+# 已知缺口（macro_factors.yaml 暂无可用因子）：煤炭（BK1493 神华/陕煤——动力煤期货
+# ZC0 自 2022 年底无流动性停摆，现货指数接口未接）。禽料成本已于 2026-08-29
+# 由 M0 豆粕补上（BK1511 圣农）；玉米 C0 未纳入（待需要时加）。
+
+schema_version: 1
+industries:
+  BK1479:   # 航空（南方航空 600029.SH）
+    - {code: OIL, direction: negative, note: 航油成本（布伦特）}
+    - {code: USDCNY, direction: negative, note: 美元负债与航材采购}
+  BK1615:   # 铜/矿业（西部矿业、洛阳钼业；紫金的金暴露见 symbols 覆盖）
+    - {code: CU0, direction: positive, note: 铜价}
+  BK1569:   # 石油石化炼化（恒力石化 600346.SH）
+    - {code: OIL, direction: negative, note: 原油原料成本（炼化）}
+  BK1426:   # 化工（万华化学 600309.SH）
+    - {code: OIL, direction: negative, note: 石化原料成本}
+  BK1512:   # 生猪养殖（牧原股份 002714.SZ）
+    - {code: LH0, direction: positive, note: 猪价（收入端）}
+  BK1511:   # 肉鸡养殖（圣农发展 002299.SZ）
+    - {code: M0, direction: negative, note: 饲料成本（豆粕）}
+symbols:
+  601899.SH:  # 紫金矿业：铜 + 金
+    - {code: CU0, direction: positive, note: 铜价}
+    - {code: AU0, direction: positive, note: 金价}
+  600531.SH:  # 豫光金铅：铅冶炼，金银副产品
+    - {code: AU0, direction: positive, note: 金银副产品价格}

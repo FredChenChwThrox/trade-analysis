@@ -81,6 +81,7 @@ app_version 或 git_commit
 - SQLite 是结构化状态的唯一事实源。
 - `cards/` 和 `reports/` 下的 Markdown 都由数据库记录渲染，是不可手工回写数据库的存档或视图。
 - LLM 不能直接覆盖当前生效卡片，只能生成待确认的卡片草稿。
+- LLM/agent skill 一律 draft-only：排期卡 `skills/fred-valuation-card-skill/`（§1.1）、消息打标 `skills/message-tag-skill/`（§8.1 步骤 6）、基本面深度分析 `skills/fundamental-analysis-skill/`（2026-09-02）——后者按需手触发、不进日报与信号链，消费 `fundamental_inputs` 导出底稿（§3.7），产出 `reports/{symbol}/fundamental_{date}_draft.md`，人工定稿后去后缀；不产规范化数字，不做买卖建议（仓位归排期卡体系）。
 
 ### 2.5 失败原则
 
@@ -191,7 +192,7 @@ adjusted_volume_t = raw_volume_t / share_factor_t
 | 全市场快讯 | 财联社（政策/宏观主渠道，`--sources telegraph`） | 政策、宏观 | ●（采集/入库通道已备，事件带 source_tier=4；持续采集编排属 r2 Phase 2） |
 | 行业新闻 | 东财行业频道 | 行业 | ○ |
 | 财报披露预约 / 解禁日程 | akshare `stock_report_disclosure` / `stock_restricted_release_queue_em` → `event_calendar`（`--sources calendar` 手触发） | 日历层 | ●（r2 Phase 1，2026-08-28） |
-| 宏观因子（商品/外汇） | akshare sina 期货接口 + 中行牌价（清单 config/macro_factors.yaml） | 宏观 | ●（r2 Phase 2，2026-08-28：macro_factors 每日快照，进默认 sources） |
+| 宏观因子（商品/外汇） | akshare sina 期货接口 + 中行牌价（清单 config/macro_factors.yaml） | 宏观 | ●（r2 Phase 2，2026-08-28：macro_factors 每日快照，进默认 sources；2026-08-29 起清单带 alert_threshold_pct，消费方新增底稿 factor_snapshot 段） |
 | 龙虎榜 / 大宗交易 | akshare（data.eastmoney.com/datacenter-web，不踩 push2） | 资金/情绪（flow） | ●（r2 Phase 2，2026-08-28：events scope='flow' tier=3 静默入库，不推送不进日报） |
 | 全市场行业归属 | `scripts/collect/industry_collect.py`（push2delay 域，季度刷新手触发）→ symbol_industry | 关联层 | ●（r2 Phase 3，2026-08-28，5641 只；与 watchlist.industry_code 同口径） |
 
@@ -207,6 +208,7 @@ content_hash, raw_object_id
 
 - 股票关联放在 `event_symbols(event_id, symbol)`，支持一条事件关联多只股票。
 - **行业/政策/宏观事件的个股关联（二期）**：`watchlist` 扩展 `keywords`（人工维护，如「黄金→紫金/豫光」「航油→南航」）做初筛，LLM 可建议关联但必须人工确认后才写 `event_symbols`——与卡片 draft-only 同纪律，不允许 LLM 自动关联直接生效。
+- **行业因子暴露映射（2026-08-29）**：`config/industry_factors.yaml` 人工维护「行业（东财 BK 码，与 watchlist.industry_code 同口径）/个股 → macro_factors code」映射，symbol 覆盖优先于行业（替换不合并），code 加载时交叉校验因子清单。消费方为 card_inputs 底稿 `factor_snapshot` 段（schema card_inputs_v2 起，十段）。对齐口径（`scripts/signals/factor_watch.py`）：外盘（GLOBAL）因子对 A 股 as_of 取 T-1 收盘（`trade_date < as_of`——外盘当日收盘在 A 股收盘时不存在，§2.1），内盘同日；最新读数超 5 个 CN 交易日无更新标 stale（沿用 fx_rates 降级）；变动/比较一律在来源原生单位上做，连续合约换月跳变 v1 不拼接；弹性推导只在 skill 层，随卡片 `factor_assumptions` 存档。已知缺口：煤炭（动力煤 ZC0 自 2022 年底停摆无流动性）、航油现货价——待因子清单补充后再挂映射。
 - 优先用来源 ID 去重，其次使用规范化 URL 和内容哈希；URL 查询参数不能直接作为唯一身份。
 - PDF、HTML 和新闻正文均作为不可信内容处理，进入 LLM 前移除脚本和隐藏文本，不允许正文中的指令改变系统提示或工具调用。
 
@@ -246,6 +248,14 @@ TTM 在任意 `as_of` 上按当时可见的最新修订计算：
 ```
 
 三个组成项都必须在 `as_of` 时可见；任一缺失时 TTM 为空，不用今天已知的数据补历史空洞。
+
+**资产负债表/现金流量表与源算指标快照（0007，2026-09-02）**：
+
+- `balance_sheet_facts` / `cash_flow_facts` 挂 `report_id`（与 financial_facts 同模式，一表头多事实表）：akshare 采集器手触发源 `balance_sheet`/`cash_flow`（sina stock_financial_report_sina 全历史，仅 A 股，每期一行、金额单位元定点 TEXT，**不进 daily 默认 sources**），adapter `parse_balance_sheet_csv`/`parse_cash_flow_csv`，ingest 路由 `("akshare","balance_sheet"/"cash_flow")`。
+- 表头复用 `financial_reports`：2023 年以前无表头的历史期次由 adapter 新建（published_at=NULL、available_at 降级=入库时间，同 D1.3 口径）。远古期次仅服务长期趋势分析、不进信号链；available_at=入库时间使历史 as-of 查询看不到这些行，PIT 方向安全。
+- 幂等：内容一致跳过；内容变化原地更新 + data_revisions 记录（报表更正罕见，header revision 语义仍专属利润表，见上文）。
+- `financial_indicator_snapshots`：THS stock_financial_abstract 80 项源算指标全量 payload（采集源 `fin_abstract`，摘要宽表转置长表；UNIQUE(symbol, period_end, source)），**只作交叉核对与兜底，不作规范化数字来源**。入库时对存量 financial_facts 做归母净利/营收 0.5% 容差对账，超差记 incomplete 不覆盖；对缺 income facts 的历史期次回填只补 NULL 列。
+- 规范化派生指标（净利率、ROE=归母净利÷期末归母权益、资产负债率、有息负债四项求和、FCF=ocf−capex、OCF/净利比等）由导出层 `scripts/pipeline/fundamental_inputs.py`（schema fundamental_inputs_v1，纯读取）Python 计算，公式单测锁定；FCF 等派生指标不落库。
 
 ---
 
@@ -299,6 +309,7 @@ details_json, run_id, rule_version, config_hash
 
 - 历史价格类信号逐日或逐周按当时可见数据计算，禁止用后来形成的低点反推此前信号。
 - 卡片相关信号只对卡片实际生效区间计算，禁止把当前卡片应用到历史日期。
+- "当日生效卡"一律按窗口语义判定（`effective_from <= d < effective_to`，含 superseded 但窗口仍覆盖的版本）；`status='active'` 过滤只用于"当下活跃卡"语境（执行记录关联、底稿导出）。新旧卡交替空档期（旧卡 superseded、新卡未生效）窗口仍由旧卡覆盖，不得误报无卡（2026-08-30 修复：信号层与报告曾混用两种口径）。
 - `details_json` 使用按 signal 类型定义的 JSON Schema，至少包含参与判断的日期、原值、阈值、锚点和原因码。
 
 ### 5.2 周线锚点
@@ -352,9 +363,13 @@ idle
   -> confirmed：10 个交易日内回踩关键位上下 2%，且收盘不低于关键位 1%
   -> invalidated：等待期间收盘低于关键位 1%
   -> expired：10 个交易日内未发生合格回踩
+confirmed 之后（2026-08-30 起，signals_v2）：
+  -> holding：卡片带 stop_level 时进入持仓跟踪，逐日落行（含止损位与距离）
+  -> stopped_out：跟踪期间收盘 <= stop_level（≤ 锁定，不再加容差），随后回 idle
+  卡片无 stop_level：confirmed 后直接回 idle（无线不猜，§2.5）
 ```
 
-每次状态转换写入 `signal_facts`，保存起始日期、截止日期、关键位、容差和成交量明细。
+每次状态转换写入 `signal_facts`，保存起始日期、截止日期、关键位、容差和成交量明细；holding 跟踪行逐日写入（triggered=0），修复"confirmed 后持仓期失声"（2026-08-30 恒力止损复盘发现：破线期间无任何事实行与日报决策点）。stopped_out 当日进日报优先级 2（证伪族）。右侧确认/止损触发后 10 个日历日内无 executions 记录的，报告决策点段列"待执行"提醒（执行闭环，优先级 4），人工录入后消失。
 
 ### 5.4b 公司行为处置（除权 × 生效卡片）
 
@@ -438,6 +453,7 @@ input_snapshot_json, run_id
 ```
 
 - 状态为 `draft/active/superseded/rejected`。同一股票同一时刻最多一个 active 版本。
+- `earnings_scenarios_json` 可带 `factor_assumptions`（行业因子假设清单：`{code, name, unit, level, as_of_date, note}`，skill 第 4 步产物，可选，2026-08-29）——原样存档备审计；非价格字段，不参与 parse_card 校验与 §5.4b 机械换算。因子偏离建卡假设超 `alert_threshold_pct` 只产生锚复核提醒，不自动改卡。
 - LLM 或排期卡 Skill 只创建 draft；经明确确认后才能激活。激活新版本时关闭旧版本的 `effective_to`。
 - Markdown 路径为 `cards/{symbol}/{effective_from}_{card_version_id}.md`；`cards/{symbol}/current.md` 是自动生成的当前视图。
 - 盈利底稿、估值刻度和胜率更新通过新版本增量修订，不修改旧版本。
@@ -475,7 +491,7 @@ reverses_execution_id, created_at
 
 1. **运行状态**：数据截止时间、完整或降级状态、当前卡片和规则版本。
 2. **当前定位**：现价、所处档位、距下一边界百分比、箱体位置。
-3. **决策点**：已触发的证伪、档位、右侧确认、箱体边界和锚复核。没有触发时明确写“今日无决策点”。
+3. **决策点**：已触发的证伪、档位、右侧确认/止损、箱体边界、锚复核，以及右侧触发后的"待执行"提醒；右侧持仓跟踪期（holding）每日跟踪行进决策点（`[右侧持仓跟踪]`，优先级不变，§6.3）。没有触发时明确写“今日无决策点”。
 4. **观察点**：下一交易日的临近度、尚缺哪个条件、财报或公告窗口及新消息摘要。
 5. **日历与消息面**（r2 Phase 1，2026-08-28）：`### 日历提醒（默认 3 日内）`——
    `event_calendar` 到期项（披露预约/解禁/宏观种子，窗口按每行 `remind_before_days`
@@ -491,9 +507,9 @@ reverses_execution_id, created_at
 全池日报采用确定性优先级，不由 LLM 自由排序：
 
 1. 数据不完整或运行失败。
-2. 证伪线有效跌破、卡片复核逾期、公司行为换算 draft 待确认。
+2. 证伪线有效跌破、右侧止损触发（stopped_out）、卡片复核逾期、公司行为换算 draft 待确认。
 3. 已确认的档位、右侧或箱体决策点。
-4. 距触发边界 3% 以内的观察点。
+4. 距触发边界 3% 以内的观察点、右侧触发后未执行提醒。
 5. 新重大消息和普通状态更新。
 
 同级按距触发边界百分比、事件重要性和 symbol 排序，并在报告中显示排序原因。
@@ -525,6 +541,8 @@ reverses_execution_id, created_at
 | 事件 | `events` / `event_symbols` | 公告、新闻及股票关联 |
 | 事件 | `event_assessments` | 版本化 LLM 评价和事件研究 |
 | 财务 | `financial_reports` / `financial_facts` | 点时可追溯的财报及修订 |
+| 财务 | `balance_sheet_facts` / `cash_flow_facts` | 资产负债表/现金流量表事实（0007，挂 report_id） |
+| 财务 | `financial_indicator_snapshots` | THS 源算指标快照，仅交叉核对（0007） |
 | 财务 | `share_capital_events` / `fx_rates` | 每日市值口径支撑 |
 | 财务 | `forecasts` | 分析师预测历史快照 |
 | 派生 | `indicators_daily` / `indicators_weekly` | 当前口径指标，可重算 |
@@ -630,7 +648,7 @@ tests/                        # 单元、集成和 golden tests
 
 在前三步通过验收前，不启用 LLM 自动更新策略状态。
 
-**二期可选扩展**：采集资产负债表自算历史 PB 序列（一期 PB/PS 仅用 forecast 快照单点值，单股页标注来源与快照日期）。
+**二期可选扩展**：自算历史 PB 序列（一期 PB/PS 仅用 forecast 快照单点值，单股页标注来源与快照日期）。其前置的资产负债表采集已落地（0007，2026-09-02，§3.7：balance_sheet_facts 全历史入库，初衷为基本面分析 skill 数据层）；PB 历史序列自算（total_equity_attr × 点时股本口径）本身仍为待做项。
 
 ### 9.5 第一版实现分级（硬门槛 / 软约束）
 

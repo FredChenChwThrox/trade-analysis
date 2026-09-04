@@ -14,7 +14,7 @@ import yaml
 from scripts.adapters.common import sha256_file
 from scripts.pipeline.db import CONFIG_DIR
 
-RULE_VERSION = "signals_v1"
+RULE_VERSION = "signals_v2"  # v2（2026-08-30）：right_side 增 holding/stopped_out 持仓跟踪段
 SIGNALS_CONFIG = CONFIG_DIR / "signals.yaml"
 
 # 五项衰竭信号（设计 §5.3），signal_facts.signal 取值

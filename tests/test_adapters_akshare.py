@@ -60,6 +60,127 @@ def test_parse_price_csv_bad_row_conflict(conn, tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM daily_bars").fetchone()[0] == 0
 
 
+def test_parse_price_csv_turnover_backfill(conn, tmp_path):
+    """migration 0008：带 turnover 列（sina 小数口径）→ 落库；重采差异更新不记 revisions。"""
+    base = tmp_path / "raw" / "akshare" / "price" / "2026-09-04" / "run_tr"
+    base.mkdir(parents=True)
+    path = base / "603605.SH.csv"
+    cols = ["thscode", "time", "open", "high", "low", "close", "volume", "amount",
+            "currency", "turnover"]
+    _write_csv(path, cols, [
+        ["603605.SH", "20260903", "62.4", "63.4", "62.3", "62.72", "4149134", "260648026", "CNY", "0.010478"],
+        ["603605.SH", "20260902", "62.11", "63.77", "62.09", "62.8", "6095629", "383702571", "CNY", ""],
+    ])
+    r = ingest_file(conn, path, source="akshare", data_type="price",
+                    symbol="603605.SH", parse=ak_adapter.parse_price_csv)
+    assert r.status == "ok", r.summary()
+    assert r.inserted == 2
+    bar = conn.execute(
+        "SELECT turnover FROM daily_bars WHERE symbol='603605.SH' AND trade_date='2026-09-03'"
+    ).fetchone()
+    assert bar["turnover"] == pytest.approx(0.010478)
+    # 空值行 turnover 为 NULL（§2.5 不猜）
+    bar2 = conn.execute(
+        "SELECT turnover FROM daily_bars WHERE symbol='603605.SH' AND trade_date='2026-09-02'"
+    ).fetchone()
+    assert bar2["turnover"] is None
+    # 重采改 turnover 内容（hash 变化 → 重新解析）：价格字段不变 skipped、
+    # turnover 差异更新、不新增行、无 data_revisions
+    _write_csv(path, cols, [
+        ["603605.SH", "20260903", "62.4", "63.4", "62.3", "62.72", "4149134", "260648026", "CNY", "0.011"],
+        ["603605.SH", "20260902", "62.11", "63.77", "62.09", "62.8", "6095629", "383702571", "CNY", ""],
+    ])
+    r2 = ingest_file(conn, path, source="akshare", data_type="price",
+                     symbol="603605.SH", parse=ak_adapter.parse_price_csv)
+    assert r2.status == "ok" and r2.inserted == 0 and r2.updated == 0
+    bar3 = conn.execute(
+        "SELECT turnover FROM daily_bars WHERE symbol='603605.SH' AND trade_date='2026-09-03'"
+    ).fetchone()
+    assert bar3["turnover"] == pytest.approx(0.011)
+    revs = conn.execute(
+        "SELECT COUNT(*) FROM data_revisions WHERE table_name='daily_bars'").fetchone()[0]
+    assert revs == 0  # turnover 元数据不进 revision 链
+    # 旧格式 9 列 CSV 兼容：turnover 不被清空
+    legacy = base / "legacy.csv"
+    _write_csv(legacy, ["thscode", "time", "open", "high", "low", "close", "volume", "amount", "currency"], [
+        ["603605.SH", "20260903", "62.4", "63.4", "62.3", "62.72", "4149134", "260648026", "CNY"],
+    ])
+    r3 = ingest_file(conn, legacy, source="akshare", data_type="price",
+                     symbol="603605.SH", parse=ak_adapter.parse_price_csv)
+    assert r3.status == "ok"
+    bar4 = conn.execute(
+        "SELECT turnover FROM daily_bars WHERE symbol='603605.SH' AND trade_date='2026-09-03'"
+    ).fetchone()
+    assert bar4["turnover"] == pytest.approx(0.011)
+
+
+# ---------------------------------------------------------------- gdhs → holder_stats
+
+def test_parse_holder_stats_csv_insert_and_idempotent(conn, tmp_path):
+    path = tmp_path / "raw" / "akshare" / "gdhs" / "2026-09-04" / "run_gd" / "603605.SH_gdhs.csv"
+    path.parent.mkdir(parents=True)
+    cols = ["code", "setcode", "stat_date", "holder_count", "holder_count_prev",
+            "holder_count_delta", "holder_count_delta_pct", "avg_hold_value",
+            "avg_hold_shares", "total_share", "share_change", "announced_at"]
+    _write_csv(path, cols, [
+        ["603605", "17", "2026-06-30", "52000", "55000", "-3000", "-0.0545",
+         "91793.06", "4155.41", "395976100", "0", "2026-08-20"],
+        ["603605", "17", "bad-date", "1", "", "", "", "", "", "", "", ""],
+    ])
+    r = ingest_file(conn, path, source="akshare", data_type="gdhs",
+                    symbol="603605.SH", parse=ak_adapter.parse_holder_stats_csv)
+    assert r.status == "ok", r.summary()
+    assert r.inserted == 1 and r.skipped == 1  # 非法日期行级跳过
+    row = conn.execute(
+        "SELECT * FROM holder_stats WHERE symbol='603605.SH' AND stat_date='2026-06-30'"
+    ).fetchone()
+    assert row["holder_count"] == 52000
+    assert row["holder_count_delta_pct"] == pytest.approx(-0.0545)  # 采集侧已归一小数
+    assert row["announced_at"] == "2026-08-20"
+    assert row["source"] == "akshare"
+    # 重采同内容：raw 层 content_hash 去重，整文件跳过不重复解析（系统行为）
+    r2 = ingest_file(conn, path, source="akshare", data_type="gdhs",
+                     symbol="603605.SH", parse=ak_adapter.parse_holder_stats_csv)
+    assert r2.inserted == 0 and r2.updated == 0
+    assert any("content_hash" in n for n in r2.notes)
+    # 行级幂等：追加新行（内容变化 → 重新解析），旧行 row-level skipped
+    _write_csv(path, cols, [
+        ["603605", "17", "2026-06-30", "52000", "55000", "-3000", "-0.0545",
+         "91793.06", "4155.41", "395976100", "0", "2026-08-20"],
+        ["603605", "17", "2026-03-31", "54000", "53000", "1000", "0.0189",
+         "88000.00", "4000.00", "395976100", "0", "2026-04-25"],
+    ])
+    r3 = ingest_file(conn, path, source="akshare", data_type="gdhs",
+                     symbol="603605.SH", parse=ak_adapter.parse_holder_stats_csv)
+    assert r3.inserted == 1 and r3.skipped == 1
+    assert conn.execute("SELECT COUNT(*) FROM holder_stats").fetchone()[0] == 2
+
+
+def test_parse_holder_stats_csv_update_on_change(conn, tmp_path):
+    path = tmp_path / "raw" / "akshare" / "gdhs" / "2026-09-04" / "run_gd" / "000001.SZ_gdhs.csv"
+    path.parent.mkdir(parents=True)
+    cols = ["code", "setcode", "stat_date", "holder_count", "holder_count_prev",
+            "holder_count_delta", "holder_count_delta_pct", "avg_hold_value",
+            "avg_hold_shares", "total_share", "share_change", "announced_at"]
+    _write_csv(path, cols, [
+        ["000001", "27", "2026-06-30", "500000", "510000", "-10000", "-0.0196",
+         "150000", "2000", "19405918198", "0", "2026-08-15"],
+    ])
+    ingest_file(conn, path, source="akshare", data_type="gdhs",
+                symbol="000001.SZ", parse=ak_adapter.parse_holder_stats_csv)
+    # 披露日更正（重述）→ 原地更新
+    _write_csv(path, cols, [
+        ["000001", "27", "2026-06-30", "500000", "510000", "-10000", "-0.0196",
+         "150000", "2000", "19405918198", "0", "2026-08-16"],
+    ])
+    r2 = ingest_file(conn, path, source="akshare", data_type="gdhs",
+                     symbol="000001.SZ", parse=ak_adapter.parse_holder_stats_csv)
+    assert r2.updated == 1
+    row = conn.execute(
+        "SELECT announced_at FROM holder_stats WHERE symbol='000001.SZ'").fetchone()
+    assert row["announced_at"] == "2026-08-16"
+
+
 # ---------------------------------------------------------------- financials → financial_reports/facts
 
 def test_parse_financials_csv_published_at_aligned(conn, tmp_path):

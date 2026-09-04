@@ -77,6 +77,8 @@ pre.json-view {
 .num-card { background:#fff; border:1px solid #e5e7eb; border-radius:.5rem; padding:.6rem .8rem; min-width:0; }
 .num-card .label { font-size:11px; color:#6b7280; margin-bottom:2px; }
 .num-card .value { font-size:15px; font-weight:600; white-space:nowrap; }
+/* 长文本数字卡（如券商一致预期 FY1/FY2/FY3）：允许换行防止出框 */
+.num-card .value.long { white-space:normal; line-height:1.25; }
 .num-card .sub { font-size:11px; color:#9ca3af; }
 
 /* 红涨绿跌 */

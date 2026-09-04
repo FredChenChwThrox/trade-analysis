@@ -84,10 +84,12 @@
     superseded: 'superseded', inactive: 'inactive', idle: 'idle',
   };
 
-  function renderStatusBadge(status) {
-    if (!status) return '<span class="status-badge status-idle">—</span>';
+  function renderStatusBadge(status, text) {
+    // text 可选：中文等展示文本（配色仍由枚举驱动）；不传则原样显示 status
+    if (!status && !text) return '<span class="status-badge status-idle">—</span>';
     const cls = STATUS_COLORS[String(status).toLowerCase()] || 'idle';
-    return '<span class="status-badge status-' + cls + '">' + escapeHtml(status) + '</span>';
+    const label = (text === undefined || text === null) ? String(status) : String(text);
+    return '<span class="status-badge status-' + cls + '">' + escapeHtml(label) + '</span>';
   }
 
   function escapeHtml(s) {

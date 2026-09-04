@@ -13,6 +13,14 @@ idle
      ×(1−retest_hold_pct)（默认 1%）
   -> invalidated：等待期间收盘 ≤ 关键位 ×(1−invalidate_pct)（默认 1%）
   -> expired：retest_window_days 个交易日内未发生合格回踩
+confirmed 之后（2026-08-30 起，signals_v2）：
+  -> holding：卡片带 stop_level 时进入持仓跟踪，逐日落行（state='holding'，
+     details 含止损位、现价距止损距离、确认日与跟踪天数）——修复"确认后失声"：
+     此前 confirmed 直接回 idle，持仓期破线无任何事实行与日报决策点
+  -> stopped_out：跟踪期间收盘 ≤ stop_level（跌破用 ≤，与证伪线语义一致；
+     stop_level 已是含缓冲的判定线，不再加容差、不要求连续日数），随后回 idle
+  卡片无 stop_level：confirmed 后直接回 idle（§2.5 无线不猜），transition
+  details 记 tracking=no_stop_level
 ```
 
 边界语义锁定：突破/回踩保持用 ≥，跌破用 ≤（与 daily_watch 证伪线一致）。
@@ -22,9 +30,10 @@ idle
 突破（不拿短窗口冒充，§4.1），保持原状态并在 details 记原因。
 
 每次状态转换写 signal_facts（signal='right_side'，observed_on=转换日，
-state=新状态，details 含起始/截止日、关键位、容差与成交量明细，§5.4）。
-逐版本生效区间计算（§5.1），版本切换时状态机重置为 idle（关键位不同）。
-公司行为冻结期间挂起：冻结日不参与判定、不推进窗口（§5.4b）。
+state=新状态，triggered=1，details 含起始/截止日、关键位、容差与成交量明细，
+§5.4）；holding 跟踪行逐日写（triggered=0）。逐版本生效区间计算（§5.1），
+版本切换时状态机重置为 idle（关键位不同）。公司行为冻结期间挂起：
+冻结日不参与判定、不推进窗口（§5.4b）。
 
 无 active 卡片或卡片无触发位：保持 idle，写 signal_facts 行记 incomplete
 （reason=no_active_card / no_trigger_level，§2.5）。
@@ -48,7 +57,8 @@ from scripts.signals import corporate_action as ca_mod
 from scripts.signals.common import RULE_VERSION, load_params
 
 RIGHT_SIDE_SIGNAL = "right_side"
-STATES = ("idle", "waiting_retest", "confirmed", "invalidated", "expired")
+STATES = ("idle", "waiting_retest", "confirmed", "holding", "stopped_out",
+          "invalidated", "expired")
 
 
 @dataclass
@@ -82,13 +92,17 @@ class RightSideResult:
 
 # ---------------------------------------------------------------- 纯状态机
 
-def evaluate_segment(days: list[dict], level: Decimal, p: dict) -> tuple[list[dict], str]:
+def evaluate_segment(days: list[dict], level: Decimal, p: dict,
+                     stop: Decimal | None = None
+                     ) -> tuple[list[dict], list[dict], str]:
     """单卡片版本生效区间上跑状态机（纯函数，便于测试）。
 
     days: [{"trade_date", "close"(Decimal), "low"(Decimal), "volume_adj"(float|None),
             "vol_base"(float|None)}]，vol_base=None 表示均量样本不足。
-    返回 (transitions, final_state)；transition 含 from_state/to_state/observed_on/
-    reason 与全部判定明细。
+    stop: 卡片 right_side_trigger.stop_level；None = confirmed 后不跟踪直接回 idle。
+    返回 (transitions, track_rows, final_state)；transition 含 from_state/to_state/
+    observed_on/reason 与全部判定明细；track_rows 为 holding 期间逐日跟踪行
+    （含止损位与距止损距离）。
     """
     breakout_line = level * (Decimal("1") + Decimal(str(p["breakout_pct"])))
     band_line = level * (Decimal("1") + Decimal(str(p["retest_band_pct"])))
@@ -108,9 +122,12 @@ def evaluate_segment(days: list[dict], level: Decimal, p: dict) -> tuple[list[di
     }
 
     transitions: list[dict] = []
+    track_rows: list[dict] = []
     state = "idle"
     breakout_day: str | None = None
+    confirm_day: str | None = None
     waited = 0
+    held = 0
 
     for d in days:
         det = dict(base_det)
@@ -134,7 +151,7 @@ def evaluate_segment(days: list[dict], level: Decimal, p: dict) -> tuple[list[di
                 })
                 transitions.append(det)
                 state, breakout_day, waited = "waiting_retest", d["trade_date"], 0
-        else:  # waiting_retest
+        elif state == "waiting_retest":
             waited += 1
             det["days_waited"] = waited
             det["window_start"] = breakout_day
@@ -145,11 +162,15 @@ def evaluate_segment(days: list[dict], level: Decimal, p: dict) -> tuple[list[di
                 transitions.append(det)
                 state = "idle"
             elif d["low"] <= band_line and d["close"] >= hold_line:
+                det["tracking"] = "holding" if stop is not None else "no_stop_level"
                 det.update({"from_state": "waiting_retest", "to_state": "confirmed",
                             "observed_on": d["trade_date"],
                             "reason": "retest_within_band_and_held"})
                 transitions.append(det)
-                state = "idle"
+                if stop is not None:
+                    state, confirm_day, held = "holding", d["trade_date"], 0
+                else:
+                    state = "idle"  # 无止损位不跟踪（§2.5：无线不猜）
             elif waited >= window:
                 det.update({"from_state": "waiting_retest", "to_state": "expired",
                             "observed_on": d["trade_date"],
@@ -157,7 +178,25 @@ def evaluate_segment(days: list[dict], level: Decimal, p: dict) -> tuple[list[di
                             "window_deadline": d["trade_date"]})
                 transitions.append(det)
                 state = "idle"
-    return transitions, state
+        elif state == "holding":  # confirmed 后按卡片 stop_level 逐日跟踪
+            held += 1
+            det.update({
+                "from_state": "holding", "observed_on": d["trade_date"],
+                "confirmed_on": confirm_day, "days_since_confirm": held,
+                "stop_level": str(stop),
+                "distance_to_stop_pct": float((d["close"] - stop) / stop),
+            })
+            if d["close"] <= stop:  # 跌破用 ≤；stop 已是判定线，不再加容差
+                det.update({"to_state": "stopped_out",
+                            "reason": "close_below_stop_level"})
+                transitions.append(det)
+                state = "idle"
+            else:
+                det.update({"to_state": "holding", "reason": "tracking"})
+                track_rows.append(det)
+        else:
+            raise ValueError(f"unexpected right_side state: {state}")
+    return transitions, track_rows, state
 
 
 # ---------------------------------------------------------------- 全量重算
@@ -238,35 +277,50 @@ def run_right_side(
                and (frozen_from is None or d["trade_date"] < frozen_from)]
         if not seg:
             continue
-        transitions, final_state = evaluate_segment(seg, card.trigger_level, p)
-        for t in transitions:
+        transitions, track_rows, final_state = evaluate_segment(
+            seg, card.trigger_level, p, stop=card.stop_level)
+        # 转换行 triggered=1；holding 跟踪行 triggered=0；按 observed_on 合并落库
+        rows = ([(t["observed_on"], t["to_state"], 1, t) for t in transitions]
+                + [(r["observed_on"], "holding", 0, r) for r in track_rows])
+        rows.sort(key=lambda x: x[0])
+        for observed_on, state_name, trig, det in rows:
             conn.execute(
                 """
                 INSERT INTO signal_facts (symbol, observed_on, signal, state,
                     anchor_id, triggered, active_until, details_json, run_id,
                     rule_version, config_hash, created_at)
-                VALUES (?, ?, ?, ?, NULL, 1, NULL, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?)
                 """,
-                (symbol, t["observed_on"], RIGHT_SIDE_SIGNAL, t["to_state"],
-                 json.dumps(t, ensure_ascii=False, sort_keys=True),
+                (symbol, observed_on, RIGHT_SIDE_SIGNAL, state_name, trig,
+                 json.dumps(det, ensure_ascii=False, sort_keys=True),
                  run_id, RULE_VERSION, config_hash, now),
             )
+        for t in transitions:
             res.transitions.append({
                 "observed_on": t["observed_on"], "from_state": t["from_state"],
                 "to_state": t["to_state"], "reason": t["reason"],
             })
         res.episodes += sum(1 for t in transitions
                             if t["to_state"] == "waiting_retest")
+        if card.stop_level is None and any(t["to_state"] == "confirmed"
+                                           for t in transitions):
+            res.notes.append(
+                f"卡片 {card.card_version_id} 无 stop_level，confirmed 后不跟踪"
+                "（§2.5：无线不猜）")
         # 最新版本段的结果为当前状态
         current_state = final_state
         current_level = str(card.trigger_level)
 
     res.current_state, res.current_level = current_state, current_level
 
-    # ---- 无生效卡/无触发位 → idle + incomplete（§2.5）
-    active_card = card_mod.load_active_card(conn, symbol, as_of)
+    # ---- as_of 当日无生效卡/无触发位 → idle + incomplete（§2.5）
+    # 生效判定走 §5.1 窗口语义（card_for_day 含 superseded 但窗口仍覆盖的版本），
+    # 与逐日计算口径一致；不用 load_active_card 的 status='active' 口径，
+    # 否则新旧卡交替空档期（旧卡 superseded、新卡未生效）会误报 no_active_card。
+    active_card = card_mod.card_for_day(versions, as_of)
     if active_card is None or active_card.trigger_level is None:
-        reason = "no_active_card" if active_card is None else "no_trigger_level"
+        reason = (("no_active_card" if not versions else "card_not_effective_at_as_of")
+                  if active_card is None else "no_trigger_level")
         conn.execute(
             """
             INSERT INTO signal_facts (symbol, observed_on, signal, state, anchor_id,

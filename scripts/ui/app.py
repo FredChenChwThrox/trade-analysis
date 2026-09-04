@@ -380,8 +380,12 @@ def _register_routes(app: Flask) -> None:
     @app.get("/message-review")
     def page_message_review():
         rows = queries.list_message_review(get_db())
+        # 公司下拉选项：当前列表内出现过的关联股（代码 + 展示标签），去重排序
+        companies = sorted({(s, lbl) for r in rows
+                            for s, lbl in zip(r["symbols"], r["symbols_label"])})
         return render_template("message_review.html", cfg=app.config["UI_CONFIG"],
-                               active="message_review", rows=rows)
+                               active="message_review", rows=rows,
+                               companies=companies)
 
     @app.post("/message-review/<event_id>/action")
     def message_review_action(event_id: str):
@@ -404,6 +408,26 @@ def _register_routes(app: Flask) -> None:
                 (event_id, symbol, action,
                  json.dumps(payload, ensure_ascii=False) if payload else None,
                  request.form.get("actor") or "manual", utc_now()))
+        return redirect("/message-review")
+
+    @app.post("/message-review/confirm-all")
+    def message_review_confirm_all():
+        """一键确认：有效状态 needs_review 且未否决的事件落 confirm（复用单条动作口径）。
+
+        表单带 company 时只确认关联该股的事件（跟随页面公司筛选）。
+        """
+        from scripts.pipeline.db import utc_now
+
+        company = request.form.get("company") or ""
+        conn = get_db()
+        event_ids = queries.list_message_review_for_confirm(conn, company)
+        with conn:
+            for event_id in event_ids:
+                conn.execute(
+                    "INSERT INTO event_human_review (event_id, symbol, action, "
+                    "payload_json, actor, reviewed_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (event_id, "__event__", "confirm", None,
+                     request.form.get("actor") or "manual", utc_now()))
         return redirect("/message-review")
 
 

@@ -27,3 +27,8 @@ data/market.db-wal
 
 # LLM 打标底稿/标签工作目录（agent/skill 通道，不入 git）
 data/llm_tags/
+
+# 杂散/测试 SQLite（market.db 见上；其余同名约定一并忽略）
+data/*.db
+data/*.db-shm
+data/*.db-wal

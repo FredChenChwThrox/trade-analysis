@@ -40,6 +40,18 @@
   多上榜原因）+ 大宗交易（stock_dzjy_mrmx，每笔一行）仅留 watchlist 行 →
   flow/{date}/{run_id}/{lhb,dzjy}.csv → adapters/flow_events.parse_flow_csv
   （ingest 路由 akshare/flow；events scope='flow' 静默入库，不推送不进日报）
+- balance_sheet / cash_flow（基本面分析数据层，手触发不进 daily）：sina
+  stock_financial_report_sina 全历史（仅 A 股）→ 每期一行 `{symbol}_bs.csv` /
+  `{symbol}_cf.csv`（金额单位元，实测与 financial_facts 一致）→
+  akshare.parse_balance_sheet_csv / parse_cash_flow_csv
+- fin_abstract（同手触发）：同花顺 stock_financial_abstract 80 项指标全期次 →
+  转置长表 `{symbol}_abstract.csv`（period_end,group,indicator,value）→
+  akshare.parse_fin_abstract_csv（快照表，交叉核对用）
+- gdhs（股东户数，2026-09-04 新增，手触发不进 daily）：东财
+  stock_zh_a_gdhs_detail_em 全历史（仅 A 股）→ `{symbol}_gdhs.csv` →
+  akshare.parse_holder_stats_csv（holder_stats 表；增减比例归一小数；
+  announced_at=公告日期为 PIT 可见日）。price 源 turnover 换手率列同步新增
+  （sina 原生小数 / 东财百分点归一，migration 0008）
 
 口径换算（与库 schema 对齐，§3.2/§9.5）：
 - 成交量：东财接口单位「手」，落盘前 ×100 换算为项目 volume_raw 口径「股」（指数不换算）；
@@ -148,6 +160,8 @@ def collect_price(ak, symbol: str, start: str, end: str, out_dir: Path,
     api="em"（默认，东财 stock_zh_a_hist，成交量单位「手」需 ×100）；
     api="sina"（新浪 stock_zh_a_daily，A 股备用源，成交量已是「股」不换算，
     东财接口不可用时切换）。
+    turnover（换手率）：统一归一为小数落盘（sina 原生小数；东财「换手率」为
+    百分点须 /100）；港股行不采集留空（流通股口径差异，§2.5 不猜）。
     """
     code, _setcode, currency, _market = _symbol_parts(symbol)
     out = out_dir / "price" / date / run_id
@@ -163,12 +177,13 @@ def collect_price(ak, symbol: str, start: str, end: str, out_dir: Path,
         if df is None or df.empty:
             return None
         with open(fp, "w", newline="", encoding="utf-8") as f:
-            f.write("thscode,time,open,high,low,close,volume,amount,currency\n")
+            f.write("thscode,time,open,high,low,close,volume,amount,currency,turnover\n")
             for _, r in df.iterrows():
                 f.write(",".join([
                     symbol, _date_compact(r["date"]),
                     _num(r["open"]), _num(r["high"]), _num(r["low"]), _num(r["close"]),
                     _num(r["volume"]) or "", _num(r.get("amount")) or "", currency,
+                    _num(r.get("turnover")) or "",
                 ]) + "\n")
         return fp
     if code and symbol.endswith((".SH", ".SZ", ".BJ")):
@@ -176,21 +191,28 @@ def collect_price(ak, symbol: str, start: str, end: str, out_dir: Path,
                                 start_date=_date_compact(start),
                                 end_date=_date_compact(end), adjust=adjust)
         colmap = _A_SHARE_COLS
+        is_a_share = True
     else:
         df = ak.stock_hk_hist(symbol=code, period="daily",
                               start_date=_date_compact(start),
                               end_date=_date_compact(end), adjust=adjust)
         colmap = _HK_COLS
+        is_a_share = False
     if df is None or df.empty:
         return None
     with open(fp, "w", newline="", encoding="utf-8") as f:
-        f.write("thscode,time,open,high,low,close,volume,amount,currency\n")
+        f.write("thscode,time,open,high,low,close,volume,amount,currency,turnover\n")
         for _, r in df.iterrows():
             vol = _to_shares(r.get("成交量"))
+            tr = r.get("换手率")
+            # 东财换手率为百分点（1.0478=1.0478%）→ 归一小数；NaN（tr != tr）留空；
+            # 港股/forward 不采集换手率（流通股口径差异 / ingest 跳过）
+            tr_frac = _num(float(tr) / 100) if tr is not None and tr == tr else ""
             f.write(",".join([
                 symbol, _date_compact(r["日期"]),
                 _num(r["开盘"]), _num(r["最高"]), _num(r["最低"]), _num(r["收盘"]),
                 vol or "", _num(r.get("成交额")) or "", currency,
+                tr_frac if (is_a_share and not adjust) else "",
             ]) + "\n")
     return fp
 
@@ -228,6 +250,159 @@ def collect_financials(ak, symbol: str, out_dir: Path, date: str, run_id: str) -
             ]) + "\n")
         paths.append(fp)
     return paths
+
+
+# ---------------------------------------------------------------- balance_sheet / cash_flow（sina 全历史，仅 A 股）
+
+# sina stock_financial_report_sina 中文列 → 库字段（金额单位元，实测与
+# financial_facts 口径一致；每期一行，报告日 YYYYMMDD）
+_BS_COLS = {
+    "资产总计": "total_assets",
+    "负债合计": "total_liabilities",
+    "归属于母公司股东权益合计": "total_equity_attr",
+    "货币资金": "monetary_fund",
+    "短期借款": "short_term_borrowing",
+    "长期借款": "long_term_borrowing",
+    "应付债券": "bonds_payable",
+    "一年内到期的非流动负债": "noncurrent_liab_1y",
+    "存货": "inventory",
+    "应收账款": "accounts_receivable",
+    "应付账款": "accounts_payable",
+    "商誉": "goodwill",
+}
+
+_CF_COLS = {
+    "经营活动产生的现金流量净额": "ocf",
+    "购建固定资产、无形资产和其他长期资产所支付的现金": "capex",
+    "投资活动产生的现金流量净额": "icf",
+    "筹资活动产生的现金流量净额": "financing_cf",
+    "现金及现金等价物净增加额": "net_cash_increase",
+}
+
+
+def _collect_sina_statement(ak, symbol: str, statement: str, col_map: dict,
+                            suffix: str, out_dir: Path, date: str,
+                            run_id: str) -> Path | None:
+    """sina 资产负债表/现金流量表（全历史一次返回）→ {symbol}_{bs|cf}.csv。
+
+    每股一个文件，每报告期一行（code,setcode,period_end,fiscal_year,
+    is_cumulative,currency,unit + 字段列）；仅 A 股（港股返回 None 由调用方记缺口）。
+    """
+    if not symbol.endswith((".SH", ".SZ", ".BJ")):
+        return None
+    code, setcode, _c, _m = _symbol_parts(symbol)
+    prefix = "sh" if symbol.endswith(".SH") else ("bj" if symbol.endswith(".BJ") else "sz")
+    df = ak.stock_financial_report_sina(stock=f"{prefix}{code}", symbol=statement)
+    if df is None or df.empty:
+        return None
+    out = out_dir / ("balance_sheet" if suffix == "bs" else "cash_flow") / date / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    fp = out / f"{symbol}_{suffix}.csv"
+    fields = list(col_map.values())
+    with open(fp, "w", newline="", encoding="utf-8") as f:
+        f.write("code,setcode,period_end,fiscal_year,is_cumulative,currency,unit,"
+                + ",".join(fields) + "\n")
+        for _, r in df.iterrows():
+            period_end = _date_compact(r["报告日"])
+            pe = f"{period_end[:4]}-{period_end[4:6]}-{period_end[6:8]}"
+            f.write(",".join([
+                code, setcode, pe, period_end[:4], "1", "CNY", "yuan",
+                *[_num(r.get(cn)) or "" for cn in col_map],
+            ]) + "\n")
+    return fp
+
+
+def collect_balance_sheet(ak, symbol: str, out_dir: Path, date: str,
+                          run_id: str) -> Path | None:
+    """资产负债表（sina 全历史）→ {symbol}_bs.csv。"""
+    return _collect_sina_statement(ak, symbol, "资产负债表", _BS_COLS, "bs",
+                                   out_dir, date, run_id)
+
+
+def collect_cash_flow(ak, symbol: str, out_dir: Path, date: str,
+                      run_id: str) -> Path | None:
+    """现金流量表（sina 全历史）→ {symbol}_cf.csv。"""
+    return _collect_sina_statement(ak, symbol, "现金流量表", _CF_COLS, "cf",
+                                   out_dir, date, run_id)
+
+
+# ---------------------------------------------------------------- fin_abstract（THS 财务摘要，仅 A 股）
+
+def collect_fin_abstract(ak, symbol: str, out_dir: Path, date: str,
+                         run_id: str) -> Path | None:
+    """同花顺财务摘要（80 项指标 × 全期次）→ 转置长表 {symbol}_abstract.csv。
+
+    列：period_end,group,indicator,value（金额类指标单位元，比率类为百分数原值，
+    adapter 层不换算、全量保留进 payload_json 快照）。
+    同名指标跨选项组重复（如「归母净利润」同时在常用指标/成长能力）全量保留，
+    去重由消费方按组优先级处理。
+    """
+    if not symbol.endswith((".SH", ".SZ", ".BJ")):
+        return None
+    code, _s, _c, _m = _symbol_parts(symbol)
+    df = ak.stock_financial_abstract(symbol=code)
+    if df is None or df.empty:
+        return None
+    period_cols = [c for c in df.columns if str(c).isdigit() and len(str(c)) == 8]
+    out = out_dir / "fin_abstract" / date / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    fp = out / f"{symbol}_abstract.csv"
+    with open(fp, "w", newline="", encoding="utf-8") as f:
+        f.write("period_end,group,indicator,value\n")
+        for _, r in df.iterrows():
+            group = str(r["选项"])
+            indicator = str(r["指标"])
+            for pc in period_cols:
+                v = _num(r[pc])
+                if v is None:
+                    continue
+                pe = f"{pc[:4]}-{pc[4:6]}-{pc[6:8]}"
+                f.write(",".join([pe, _csv_escape(group),
+                                  _csv_escape(indicator), v]) + "\n")
+    return fp
+
+
+# ---------------------------------------------------------------- gdhs（股东户数，东财 datacenter，仅 A 股）
+
+def collect_holder_stats(ak, symbol: str, out_dir: Path, date: str,
+                         run_id: str) -> Path | None:
+    """股东户数全历史（stock_zh_a_gdhs_detail_em）→ {symbol}_gdhs.csv。
+
+    事件驱动披露（财报配套 + 少数公司自愿月度），手触发源不进 daily 默认 sources。
+    仅 A 股；增减比例采集侧归一为小数（em 原始 -42.79 表示 -42.79%）。
+    """
+    if not symbol.endswith((".SH", ".SZ", ".BJ")):
+        return None
+    code, setcode, _c, _m = _symbol_parts(symbol)
+    df = ak.stock_zh_a_gdhs_detail_em(symbol=code)
+    if df is None or df.empty:
+        return None
+    out = out_dir / "gdhs" / date / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    fp = out / f"{symbol}_gdhs.csv"
+    with open(fp, "w", newline="", encoding="utf-8") as f:
+        f.write("code,setcode,stat_date,holder_count,holder_count_prev,"
+                "holder_count_delta,holder_count_delta_pct,avg_hold_value,"
+                "avg_hold_shares,total_share,share_change,announced_at\n")
+        for _, r in df.iterrows():
+            stat = str(r.get("股东户数统计截止日"))[:10]
+            if len(stat) != 10 or stat[4] != "-":
+                continue  # 日期非法行级跳过（§2.5 不猜）
+            pct = r.get("股东户数-增减比例")
+            pct_frac = _num(float(pct) / 100) if pct is not None and pct == pct else ""
+            f.write(",".join([
+                code, setcode, stat,
+                _num(r.get("股东户数-本次")) or "",
+                _num(r.get("股东户数-上次")) or "",
+                _num(r.get("股东户数-增减")) or "",
+                pct_frac,
+                _num(r.get("户均持股市值")) or "",
+                _num(r.get("户均持股数量")) or "",
+                _num(r.get("总股本")) or "",
+                _num(r.get("股本变动")) or "",
+                str(r.get("股东户数公告日期"))[:10] or "",
+            ]) + "\n")
+    return fp
 
 
 # ---------------------------------------------------------------- index
@@ -561,6 +736,7 @@ _MACRO_SCHEMA = {
                     "unit": {"type": "string"},
                     "api": {"enum": ["domestic", "foreign", "boc"]},
                     "boc_symbol": {"type": "string"},
+                    "alert_threshold_pct": {"type": "number"},
                 },
             },
         },
@@ -914,9 +1090,58 @@ def main(argv: list[str] | None = None) -> int:
                                  "file": None, "status": "error",
                                  "error": f"{type(e).__name__}: {e}"})
                 print(f"[flow] ERROR {e}")
+        elif source == "gdhs":
+            # 股东户数（手触发，不进 daily 默认 sources；仅 A 股）
+            for sym in symbols:
+                try:
+                    fp = collect_holder_stats(ak, sym, out_dir, args.date, args.run_id)
+                    if not sym.endswith((".SH", ".SZ", ".BJ")):
+                        requests.append({"api": "stock_zh_a_gdhs_detail_em",
+                                         "params": {"symbol": sym},
+                                         "file": None, "status": "empty",
+                                         "error": "NON_A_SHARE（东财股东户数仅 A 股）"})
+                        print(f"[gdhs] {sym}: SKIP 非 A 股")
+                        continue
+                    requests.append({"api": "stock_zh_a_gdhs_detail_em",
+                                     "params": {"symbol": sym},
+                                     "file": fp.name if fp else None,
+                                     "status": "ok" if fp else "empty",
+                                     "error": None if fp else "EMPTY_DATA"})
+                    print(f"[gdhs] {sym}: {'ok' if fp else 'EMPTY'}")
+                except Exception as e:  # noqa: BLE001
+                    requests.append({"api": "stock_zh_a_gdhs_detail_em",
+                                     "params": {"symbol": sym},
+                                     "file": None, "status": "error",
+                                     "error": f"{type(e).__name__}: {e}"})
+                    print(f"[gdhs] {sym}: ERROR {e}")
+        elif source in ("balance_sheet", "cash_flow", "fin_abstract"):
+            # 基本面分析数据层（手触发，不进 daily 默认 sources）
+            fn = {"balance_sheet": (collect_balance_sheet, "stock_financial_report_sina(bs)"),
+                  "cash_flow": (collect_cash_flow, "stock_financial_report_sina(cf)"),
+                  "fin_abstract": (collect_fin_abstract, "stock_financial_abstract")}[source]
+            for sym in symbols:
+                try:
+                    fp = fn[0](ak, sym, out_dir, args.date, args.run_id)
+                    if not sym.endswith((".SH", ".SZ", ".BJ")):
+                        requests.append({"api": fn[1], "params": {"symbol": sym},
+                                         "file": None, "status": "empty",
+                                         "error": "NON_A_SHARE（sina 报表接口仅 A 股）"})
+                        print(f"[{source}] {sym}: SKIP 非 A 股")
+                        continue
+                    requests.append({"api": fn[1], "params": {"symbol": sym},
+                                     "file": fp.name if fp else None,
+                                     "status": "ok" if fp else "empty",
+                                     "error": None if fp else "EMPTY_DATA"})
+                    print(f"[{source}] {sym}: {'ok' if fp else 'EMPTY'}")
+                except Exception as e:  # noqa: BLE001
+                    requests.append({"api": fn[1], "params": {"symbol": sym},
+                                     "file": None, "status": "error",
+                                     "error": f"{type(e).__name__}: {e}"})
+                    print(f"[{source}] {sym}: ERROR {e}")
         else:
             print(f"[skip] 未知 source: {source}（可选 price,forward,financials,index,"
-                  f"telegraph,forecast,stock_info,announcement,calendar,macro,flow）")
+                  f"telegraph,forecast,stock_info,announcement,calendar,macro,flow,"
+                  f"gdhs,balance_sheet,cash_flow,fin_abstract）")
             continue
         write_meta(out_dir, source, args.date, args.run_id, requests, args.purpose)
         errs = [r for r in requests if r["status"] == "error"]

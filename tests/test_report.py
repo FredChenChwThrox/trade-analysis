@@ -22,6 +22,7 @@ import pytest
 from scripts.pipeline import db
 from scripts.pipeline import report as report_mod
 from scripts.pipeline.daily import run_daily
+from scripts.signals.common import RULE_VERSION
 
 RUN_DATE = "2026-08-07"  # 周五
 WEEK = ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07"]
@@ -237,7 +238,7 @@ def test_single_report_eight_sections(conn, tmp_path):
     assert by_symbol["TRIG.SH"].snapshot["calendar_due"] == 0
     # 关键数字带来源与截止（§6.4）
     assert "来源 daily_bars" in text and "截止 2026-08-07" in text
-    assert "config_hash" in text and "signals_v1" in text
+    assert "config_hash" in text and RULE_VERSION in text
     # 消息评价口径如实表述：LLM 评价（D3）未接入；确定性事件研究已接入
     assert "LLM 消息评价（D3）未接入" in text
     assert "确定性事件研究 event_study_v1 已接入" in text
@@ -530,10 +531,11 @@ def test_message_section_llm_render(conn, tmp_path):
         conn.execute(
             "INSERT INTO event_assessments (event_id, symbol, assessment_version,"
             " model, prompt_version, assessed_at, event_type, direction,"
-            " materiality, confidence, rationale, status, run_id)"
+            " materiality, confidence, rationale, target, half_life, status,"
+            " run_id)"
             " VALUES (?, '__event__', 'llm_v1', 'fake', 'llm_v1', ?, 'news',"
-            " 'negative', 'medium', 0.7, 'r', ?, 'r')", (event_id, db.utc_now(),
-                                                         status))
+            " 'negative', 'medium', 0.7, 'r', 'eps', 'quarter', ?, 'r')",
+            (event_id, db.utc_now(), status))
         if narrative:
             conn.execute(
                 "INSERT INTO event_assessments (event_id, symbol,"
@@ -548,11 +550,12 @@ def test_message_section_llm_render(conn, tmp_path):
     res = _run(conn, tmp_path)
     by_symbol = {s.symbol: s for s in res.symbols}
     p = Path(by_symbol["TRIG.SH"].file_path)
-    md = p.read_text(encoding="utf-8")
+    md = p.read_text(encoding="utf-8") if p.is_absolute() else \
+        (tmp_path / "reports" / "TRIG.SH" / f"{RUN_DATE}.md").read_text(encoding="utf-8")
 
     assert "### 消息面（LLM 初判 + 人审后）" in md
     assert "铜价大跌事件" in md and "铜价走弱压制利润" in md
-    assert "direction=negative" in md
+    assert "方向 利空" in md and "作用 盈利（EPS 底稿）" in md
     assert "未过审事件" not in md                      # needs_review 不进段
     assert "价格位置: " in md and "活跃衰竭信号" in md
     assert by_symbol["TRIG.SH"].snapshot["message_shown"] == 1
@@ -566,6 +569,93 @@ def test_message_section_llm_render(conn, tmp_path):
     res2 = _run(conn, tmp_path)
     by2 = {s.symbol: s for s in res2.symbols}
     p2 = Path(by2["TRIG.SH"].file_path)
-    md2 = p2.read_text(encoding="utf-8")
+    md2 = p2.read_text(encoding="utf-8") if p2.is_absolute() else \
+        (tmp_path / "reports" / "TRIG.SH" / f"{RUN_DATE}.md").read_text(encoding="utf-8")
     assert "铜价大跌事件" not in md2
     assert "今日无纳入消息面的事件" in md2
+
+
+# ---------------------------------------------------------------- 右侧持仓跟踪（signals_v2）
+
+def _read_report(res, tmp_path, symbol):
+    by_symbol = {s.symbol: s for s in res.symbols}
+    rep = by_symbol[symbol]
+    p = Path(rep.file_path)
+    md = p.read_text(encoding="utf-8") if p.is_absolute() else \
+        (tmp_path / "reports" / symbol / f"{RUN_DATE}.md").read_text(encoding="utf-8")
+    return rep, md
+
+
+def test_right_side_stopped_out_decision_point(conn, tmp_path):
+    """stopped_out 当日：P2 优先级 + 决策点文案含收盘价/止损位/确认日。"""
+    _add_fact(conn, "CALM.SH", RUN_DATE, "right_side", "stopped_out", 1, {
+        "close_raw": "103.00", "stop_level": "103.00",
+        "confirmed_on": "2026-08-05", "trigger_level": "100.00",
+        "reason": "close_below_stop_level"})
+    conn.commit()
+    rep, md = _read_report(_run(conn, tmp_path), tmp_path, "CALM.SH")
+    assert rep.priority == 2
+    assert any("右侧止损触发" in d and "103.00" in d and "2026-08-05" in d
+               for d in rep.decision_points)
+    # stopped_out 当日无执行记录 → 同时出现待执行提醒
+    assert any("右侧止损待执行" in d for d in rep.decision_points)
+
+
+def test_right_side_followup_reminder(conn, tmp_path):
+    """confirmed 后窗口内无执行记录 → [右侧确认待执行] 提醒（P4）；
+    窗口内录入 executions 后提醒消失；超窗口不再提醒。"""
+    _add_fact(conn, "CALM.SH", "2026-08-05", "right_side", "confirmed", 1, {
+        "trigger_level": "100.00", "reason": "retest_within_band_and_held"})
+    conn.commit()
+    rep, md = _read_report(_run(conn, tmp_path), tmp_path, "CALM.SH")
+    assert rep.priority == 4
+    assert rep.sort_reason == "已触发未执行提醒；同级按 symbol"
+    assert any("右侧确认待执行" in d and "2026-08-05" in d
+               for d in rep.decision_points)
+    assert "右侧确认待执行" in md
+
+    # 触发日之后录入执行 → 提醒消失，回 P5
+    conn.execute(
+        "INSERT INTO executions (idempotency_key, symbol, executed_at,"
+        " action_type, created_at) VALUES ('k1', 'CALM.SH',"
+        " '2026-08-06T14:30:00+08:00', 'buy', ?)", (db.utc_now(),))
+    conn.commit()
+    rep2, _ = _read_report(_run(conn, tmp_path), tmp_path, "CALM.SH")
+    assert not any("待执行" in d for d in rep2.decision_points)
+    assert rep2.priority == 5
+
+
+def test_right_side_followup_single_join_query(conn):
+    """1.8：followup 判定走单条 LEFT JOIN 聚合，executions 查询次数与右侧事件数无关。"""
+    _add_fact(conn, "CALM.SH", "2026-08-05", "right_side", "confirmed", 1, {
+        "trigger_level": "100.00", "reason": "retest_within_band_and_held"})
+    _add_fact(conn, "CALM.SH", "2026-08-06", "right_side", "stopped_out", 1, {
+        "close_raw": "99.00", "stop_level": "99.00",
+        "confirmed_on": "2026-08-05", "reason": "close_below_stop_level"})
+    conn.commit()
+    sqls: list[str] = []
+    conn.set_trace_callback(lambda s: sqls.append(s))
+    try:
+        out = report_mod._right_side_followups(conn, "CALM.SH", RUN_DATE)
+    finally:
+        conn.set_trace_callback(None)
+    assert any("右侧确认待执行" in x and "2026-08-05" in x for x in out)
+    assert any("右侧止损待执行" in x and "2026-08-06" in x for x in out)
+    exec_q = [s for s in sqls if "executions" in s and "FROM" in s]
+    assert len(exec_q) == 1  # 两个事件只触发一次 LEFT JOIN 聚合（1.8，原实现逐事件 COUNT）
+
+
+def test_right_side_holding_observation(conn, tmp_path):
+    """holding 状态：观察点显示止损位与距离（非突破线距离），且当日跟踪行进决策点。"""
+    _add_fact(conn, "CALM.SH", RUN_DATE, "right_side", "holding", 0, {
+        "close_raw": "104.00", "stop_level": "100.00",
+        "confirmed_on": "2026-08-05", "days_since_confirm": 2,
+        "distance_to_stop_pct": 0.04, "trigger_level": "100.00",
+        "reason": "tracking"})
+    conn.commit()
+    rep, md = _read_report(_run(conn, tmp_path), tmp_path, "CALM.SH")
+    assert "持仓跟踪中" in md and "止损位 100.00" in md
+    assert rep.priority == 5  # holding 是状态行，不升级优先级
+    # 1.2：holding 跟踪行出现在决策点（多日持仓期不静默）
+    assert any("[右侧持仓跟踪]" in d and "止损位 100.00" in d and "4.0%" in d
+               and "已跟踪 2 日" in d for d in rep.decision_points)

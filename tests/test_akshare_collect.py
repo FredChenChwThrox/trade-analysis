@@ -113,6 +113,24 @@ class FakeAk:
             "变动原因": ["回购", "回购"],
         })
 
+    def stock_zh_a_gdhs_detail_em(self, symbol):
+        return pd.DataFrame({
+            "股东户数统计截止日": ["2026-06-30", "2026-03-31"],
+            "区间涨跌幅": [1.2, -3.4],
+            "股东户数-本次": [52000, 55000],
+            "股东户数-上次": [55000, 53000],
+            "股东户数-增减": [-3000, 2000],
+            "股东户数-增减比例": [-5.45, 3.77],   # 百分点，采集侧归一小数
+            "户均持股市值": [91793.06, 88000.0],
+            "户均持股数量": [4155.41, 4000.0],
+            "总市值": [4.778e9, 4.84e9],
+            "总股本": [395976100, 395976100],
+            "股本变动": [0, 0],
+            "股东户数公告日期": ["2026-08-20", "2026-04-25"],
+            "代码": [symbol, symbol],
+            "名称": ["珀莱雅", "珀莱雅"],
+        })
+
     def stock_zh_a_disclosure_report_cninfo(self, symbol, market, start_date, end_date):
         # 记录入参供测试断言紧凑日期格式（接口对带 - 格式静默返回空，实测）
         self.last_cninfo_kwargs = {"symbol": symbol, "market": market,
@@ -149,7 +167,8 @@ def test_collect_price_a_share_aligned(fake_ak, out_dir):
     assert path.name == "603605.SH.csv"
     rows = list(csv_rows(path))
     assert list(rows[0].keys()) == ["thscode", "time", "open", "high", "low",
-                                    "close", "volume", "amount", "currency"]
+                                    "close", "volume", "amount", "currency",
+                                    "turnover"]
     assert rows[0]["thscode"] == "603605.SH"
     assert rows[0]["time"] == "20260803"
     # 关键对齐：东财成交量单位"手" → 项目 volume_raw 口径"股"（×100）
@@ -157,12 +176,23 @@ def test_collect_price_a_share_aligned(fake_ak, out_dir):
     assert rows[1]["volume"] == "1200000"
     assert rows[0]["amount"] == "10000000.0"
     assert rows[0]["currency"] == "CNY"
+    # 东财换手率为百分点 → 归一小数（0.5 → 0.005）
+    assert rows[0]["turnover"] == "0.005"
+    assert rows[1]["turnover"] == "0.006"
     ac.write_meta(out_dir, "price", "2026-08-25", "run_ak",
                   [{"api": "stock_zh_a_hist", "params": {"symbol": "603605.SH"},
                     "file": "603605.SH.csv", "status": "ok"}], "test")
     m = _meta(out_dir, "price")
     assert m["run_id"] == "run_ak"
     assert m["requests"][0]["status"] == "ok"
+
+
+def test_collect_price_sina_turnover_fraction(fake_ak, out_dir):
+    """sina 源 turnover 原生小数，透传不换算。"""
+    path = ac.collect_price(fake_ak, "603605.SH", "20230901", "20231010",
+                            out_dir, "2026-09-04", "run_sina", api="sina")
+    rows = list(csv_rows(path))
+    assert rows[0]["turnover"] == "0.007774"
 
 
 def test_collect_price_hk_aligned(fake_ak, out_dir):
@@ -172,6 +202,7 @@ def test_collect_price_hk_aligned(fake_ak, out_dir):
     assert rows[0]["thscode"] == "00700.HK"
     assert rows[0]["volume"] == "800000"  # 手 → 股
     assert rows[0]["currency"] == "HKD"
+    assert rows[0]["turnover"] == ""  # 港股不采集换手率（流通股口径差异）
 
 
 def test_collect_price_forward_qfq(fake_ak, out_dir):
@@ -181,8 +212,26 @@ def test_collect_price_forward_qfq(fake_ak, out_dir):
     assert path.name == "600563.SH_forward.csv"
     rows = list(csv_rows(path))
     assert list(rows[0].keys()) == ["thscode", "time", "open", "high", "low",
-                                    "close", "volume", "amount", "currency"]
+                                    "close", "volume", "amount", "currency",
+                                    "turnover"]
     assert rows[0]["thscode"] == "600563.SH"
+    assert rows[0]["turnover"] == ""  # forward 文件不采集换手率（ingest 跳过）
+
+
+def test_collect_holder_stats_aligned(fake_ak, out_dir):
+    path = ac.collect_holder_stats(fake_ak, "603605.SH", out_dir,
+                                   "2026-09-04", "run_gd")
+    assert path.name == "603605.SH_gdhs.csv"
+    rows = list(csv_rows(path))
+    assert list(rows[0].keys()) == [
+        "code", "setcode", "stat_date", "holder_count", "holder_count_prev",
+        "holder_count_delta", "holder_count_delta_pct", "avg_hold_value",
+        "avg_hold_shares", "total_share", "share_change", "announced_at"]
+    assert rows[0]["stat_date"] == "2026-06-30"
+    assert rows[0]["holder_count"] == "52000"
+    # 增减比例百分点 → 归一小数（-5.45 → -0.0545）
+    assert rows[0]["holder_count_delta_pct"] == "-0.0545"
+    assert rows[0]["announced_at"] == "2026-08-20"
 
 
 def test_collect_price_sina_volume_not_converted(fake_ak, out_dir):

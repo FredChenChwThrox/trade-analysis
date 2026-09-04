@@ -1271,3 +1271,467 @@
 - **整改**：DB 枚举为存储契约不动；新增统一展示映射 `scripts/llm/labels.py`（DIRECTION/MATERIALITY/TARGET/HALF_LIFE/ACTION_HINT/STATUS → 中文），报告"### 消息面"与人审页共用，杜绝散落翻译。
 - **渲染示例**：`方向 利空 ｜ 重要性 一般 ｜ 把握 55% ｜ 作用 盈利（EPS 底稿） ｜ 半衰期 季度级 ｜ 流程 触发排期卡复核`；人审表单选项同步中文化（提交值不变）。
 - **测试**：473 全绿（断言同步中文化）。
+
+## 2026-08-29（续②：人审页 UI 重设计 spec 评审后修订）
+
+- **对象**：`docs/superpowers/specs/2026-08-29-message-review-ui-redesign.md`（卡片式布局重设计，未进入实现）。
+- **修订内容**（对照现状代码核实后补口径，避免实现者自创）：
+  1. §4.1 写死实现口径——`direction_cn` 等新增只读字段取值来自 `eff`（effective，与 `tags_cn` 同源）；映射一律走 `labels.cn()` 不用 `dict.get`；字段为 None 不渲染该枚徽章（`confidence` 除外，None 时"把握 —"，对齐 `tags_line`）。
+  2. §5 补 `hidden` 优先级：已否决卡片 `data-status="hidden"` 与 `status` 无关。
+  3. §2 措辞改为"不改后端契约与既有行为"，消除与 §4.1 例外条款的表面矛盾。
+  4. §4.2 补 materiality=low 完整类名；§3 补 `line-clamp-2` 失效时退化不截断（不属验收项）。
+  5. §9 明示不修现状超范围问题（`note` action 无输入框）；§8 验收新增 None 徽章与 data-status 断言项（编号顺延至 7 条）。
+- **核实结论**：现有测试（test_ui_app.py:84-110）只断言页面含标题与"待人审/已过审"字样，不断言 HTML 结构，重排不碎测试；"已否决/待人审"为模板既有字面量，不违反 labels.py 唯一来源约束。
+- **测试**：纯文档改动，未跑 pytest。
+
+## 2026-08-29（续③：message-tag-skill review 整改——skill 与实现对齐）
+
+- **缘起**：review `skills/message-tag-skill/SKILL.md` 发现与实现多处脱节（gate 规则只写一半、confidence 阈值误导、export 两种模式未写、canonical_url 无法查、narrative 校验空转）。
+- **代码**（`scripts/llm/inputs.py`）：①export 底稿新增 `canonical_url`（events 表既有列，供查原文；无则 null）；②`import_tags` 的 narratives 补接 `validate_narrative`（schema 早已定义但未调用）——非法叙事（如超 150 字）单条丢弃记 notes，事件标签照常入库，不冒充。
+- **SKILL.md 重写**：补全 gate 四条规则（materiality high/critical、confidence<0.4、禁用词、company+tier≤2 按 scope 判定）；铁律 5 改为"confidence 如实给低分"（消除原 ≤0.3 与阈值 0.4 的错位误导）；新增"三种打标场景"（默认/--symbol/--start）与 tags 文件命名约定；四道筛子写自包含判定口径（tier 1-5 含义、target/half_life 各档基准，口径引 r2 §2.1/§2.2）；补导入幂等说明（被拒行改完可直接重导）与好/坏对照示例；narratives 约束 symbol 必须在 linked_symbols 内。
+- **测试**：`tests/test_llm_inputs.py` 新增叙事丢弃用例 + canonical_url 断言；**474 全绿**（473+1）。
+
+## 2026-08-29（续④：人审页卡片式 UI 落地——按当日 spec 实现）
+
+- **依据**：`docs/superpowers/specs/2026-08-29-message-review-ui-redesign.md`（评审修订版）。
+- **改动**：①`scripts/ui/queries.py` `list_message_review` row dict 新增只读展示字段 `direction_cn / materiality_cn / target_cn / half_life_cn / action_hint_cn / confidence_pct`——取值同 `eff`，映射走 `labels.cn()`，None → 空串（confidence 例外，None 时"把握 —"）；既有字段不动。②`scripts/ui/templates/message_review.html` 整体重写为卡片流：状态点 + 标题 + scope/tier/关联股/event_id + 摘要（line-clamp-2，失效则退化为不截断）+ 徽章行（枚举驱动配色，None/`action_hint=none` 不渲染）+ 理由/预期差/证伪，右侧 260px 操作栏（表单字段名、action 值、POST 路径、hidden symbol 全部原样）；顶部筛选 pills 纯前端过滤（`data-status`，hidden 优先于 status），内联 `<script>` 于 scripts block；已否决整卡 `opacity-50 grayscale`；空态文案保留。
+- **验证**：`uv run pytest -q` **474 全绿**；真实库冒烟 `/message-review` 200，180 张卡片渲染、徽章与 spec 示例一致（中性/一般/把握 55%/盈利（EPS 底稿）/季度级/触发排期卡复核）；空库空态文案保留。`labels.py` 未动、无新依赖、无 schema 变更。
+
+## 2026-08-29（续④：message-tag-skill 补"先查证再打标"工序）
+
+- **问题**（用户）：部分消息一眼看不出影响，打标者硬猜出的标签人审同样看不懂。
+- **SKILL.md**：铁律新增第 6 条"看不懂先查再打"——陌生公司/冷门政策/专业术语先搜索弄清背景（主业/行业位置/政策指向）再判，查完仍不明 → confidence<0.4 + expectation_gap 写缺口；流程节补 rationale "自解释"要求（背景浓缩进影响路径，人审不查原文也能看懂；查不到写"待人工核"）；事实边界划线：搜索只用于理解背景，事件细节（金额/日期/主体）仍以底稿为准，搜到的数字不当作事件事实入库。
+- **测试**：纯文档改动，未跑 pytest。
+
+## 2026-08-29（续⑤：人审页两项增强——关联股带名称 + 一键确认）
+
+- **需求**（用户）：①关联股不只显示代码，要带名称；②页面顶层支持一键确认。
+- **改动**：①`queries.py` `list_message_review` 新增 `symbols_label`（"代码 名称"，名称查 watchlist，缺名回退纯代码不猜）；模板关联股行改用它。②`app.py` 新增 `POST /message-review/confirm-all`——复用 `list_message_review` 的 effective 口径，仅对 `needs_review 且未否决` 的事件逐条落 `event_human_review` confirm（actor 空 → "manual"，与单条一致）；模板顶栏右侧加表单（复核人输入 + 按钮带待人审计数 + JS confirm 防误点），空态不渲染。
+- **范围说明**：一键确认属用户明确点名的批量操作，突破了当日 spec §9 的"不做批量"边界（spec 为 review 时点的保守范围，以用户后续指令为准）；单条动作的字段/路径契约未动。
+- **测试**：`test_ui_app.py` 新增 confirm-all 用例（2 条 needs_review 落 confirm、ok 条不动、按钮计数归零）+ 关联股名称断言；**475 全绿**（474+1）。真实库冒烟：顶栏"一键确认待人审（93）"，关联股渲染"002299.SZ 圣农发展"。
+
+## 2026-08-29（续⑥：人审页公司过滤）
+
+- **需求**（用户）：人审页支持按公司过滤。
+- **实现**：纯前端，与状态 pills 组合过滤——卡片加 `data-symbols`（关联股代码逗号串）；顶栏加公司下拉 `#mr-company`，选项为当前列表内出现过的关联股（`app.py` 从 rows 的 symbols/symbols_label 去重排序，不另查库）；JS 改为统一 `apply()`（状态 × 公司双条件），空关联股卡片只在"全部公司"下可见。无后端筛选参数、无新请求。
+- **测试**：`test_ui_app.py` 补 `data-symbols` 属性与公司下拉 option 断言；**475 全绿**。真实库冒烟：180 卡均带 `data-symbols`，下拉渲染"000001.SZ 平安银行"等选项。
+
+## 2026-08-29（续⑦：一键确认跟随公司筛选）
+
+- **需求**（用户）：一键确认只作用于当前筛选的公司，而非全局。
+- **改动**：①`app.py` `confirm-all` 接受表单 `company` 字段，非空时只确认 `symbols` 含该股的事件（口径复用 `list_message_review` effective）；②模板确认表单加隐藏 `company` 字段，JS 在公司切换时同步该字段与按钮计数（按 DOM 中 `needs_review` 且匹配公司的卡片数实时统计）；确认弹窗文案带公司范围（如"一键确认 002299.SZ 圣农发展 的全部待人审事件？"）。不带 company 时行为同前（全部）。
+- **测试**：confirm-all 用例重写——带 company 只落关联该股 1 条、不带 company 落剩余全部、ok 条不受影响；**475 全绿**。
+- **事故记录**：冒烟验证时误对真实库 POST 了 `company=002299.SZ` 的 confirm-all，插入 5 条 `actor='test'` 的 confirm 记录；已按 actor 精确 DELETE 清理并复核待人审数恢复 93（与操作前一致）。教训：写操作冒烟只许用临时库。
+
+## 2026-08-29（续⑧：symbol_names 名称目录——池外关联股名称兜底）
+
+- **问题**（用户）：人审页公司筛选下拉中 3 只池外关联股（000776.SZ/300672.SZ/600186.SH）无中文名称。根因：它们是电报事件涉事公司（广发证券/国科微/莲花控股），由打标通道写入 event_symbols，watchlist 无记录，库内无名称表可 fallback。
+- **方案**（用户拍板）：建名称目录表。**migration 0006** `symbol_names(symbol PK, name, source, ingested_at)`；采集器 `scripts/collect/symbol_names_collect.py`——东财 push2delay clist 取 f12/f14（与 industry_collect 同源同域，该接口本就返回名称、此前被丢弃），全市场 A 股落盘 CSV + upsert，独立手触发不进 daily。`queries.py` 名称口径改 watchlist ∪ symbol_names（watchlist 优先），缺名仍回退纯代码（不猜）。
+- **首采**：5905 只（含北交所），3 只缺名股齐：广发证券/国科微/莲花控股。
+- **测试**：`test_db.py` migration 清单同步 0006；`test_ui_app.py` 补 symbol_names 兜底断言；**475 全绿**。`docs/database_schema.md` 补表条目。
+
+## 2026-08-29（续⑨：行业基本面因子接入排期卡框架——skill 规则 + 底稿 factor_snapshot）
+
+- **背景**（用户）：公司主业对行业因子的暴露（油价之于航空、铜价之于矿业）在系统中无表达——macro_factors 池级平铺只喂 LLM 打标底稿，排期卡 EPS 情景无显式因子假设。定位：基本面链条缺口，落点在底稿/skill，不进 signal_facts 确定性信号，LLM 参与边界不扩（skill 仍手触发）。
+- **P0（skill 规则，纯文档）**：fred-valuation-card-skill SKILL.md——第 2 步读底稿 factor_snapshot 段；第 4 步周期/成本敏感型公司 EPS 情景必须显式挂因子假设（`earnings_scenarios_json.factor_assumptions`，`{code,name,unit,level,as_of_date,note}`）；第 8 步锚维护加"因子偏离建卡假设 ±alert_threshold_pct → 锚复核提醒"触发器（仅提醒，改卡仍 draft+人工激活）；card-template.md 加"因子假设"小节；cards.py docstring 补字段约定（可选、原样存档、不参与 parse_card 校验与 §5.4b 换算）。
+- **P1（底稿第 10 段）**：新增 `config/industry_factors.yaml`（行业 BK 码/个股 → 因子 code，人工维护，symbol 覆盖替换行业，code 交叉校验 macro_factors 清单；首批：BK1479 航空 OIL+USDCNY、BK1615 铜矿 CU0、BK1569/BK1426 炼化化工 OIL、BK1512 生猪 LH0、紫金 CU0+AU0、豫光 AU0）；新增 `scripts/signals/factor_watch.py` 公共查询层（P3 日报提醒复用）；card_inputs.py 底稿九段→十段（schema 升 card_inputs_v2），config_params 增 industry_factors_hash 回声。
+- **对齐口径**（factor_watch，§2.1/§3.7）：外盘（GLOBAL）因子对 A 股 as_of 取 `trade_date < as_of`（T-1——外盘当日收盘在 A 股收盘时不存在）；内盘同日；最新读数超 5 个 CN 交易日无更新标 stale；change_20d/60d 按因子自身读数序列、样本不足为 None（§2.5）；比较在来源原生单位上做；连续合约换月跳变 v1 不拼接（吃进变动值，skill 判读注意）。
+- **P2（因子清单）**：macro_factors.yaml 每因子加 alert_threshold_pct（⚠️ 人工初值核对期纪律；采集器 `_MACRO_SCHEMA` 同步放行）。可得性探测：生猪 LH0 数据鲜活已入清单并挂 BK1512；动力煤 ZC0 自 2022-12 停摆无流动性——煤炭因子（神华/陕煤）记缺口；航油现货价无接口记缺口。
+- **P3（设计冻结，未实现）**：日报"因子偏离"提醒。上线门槛（均满足才动工）：macro_factors 积累 ≥20 个交易日（当前仅 2026-08-28 一天）且至少一张 active 卡带 factor_assumptions。设计：读 active 卡假设 × factor_watch.latest_factor_close 算偏离，超阈值列"锚复核提醒"观察点；不进 signal_facts、不自动生成 draft。
+- **测试**：新增 tests/test_factor_watch.py 10 项（T-1/同日边界、missing、stale、change 窗口样本不足、symbol 覆盖优先级、配置交叉校验）；test_card_inputs.py 十段结构与 v2 断言同步；**485 全绿**（475+10）。手跑 `card_inputs 600029.SH`：factor_snapshot 正确——USDCNY 678.11 同日可用；OIL 唯一读数即当日被 T-1 规则排除 → status=missing（§2.5 不猜，符合设计）。
+- **文档**：system_design.md §3.6 补因子暴露映射与对齐口径、宏观因子行补消费方，§5.6 补 factor_assumptions 字段约定。
+
+## 2026-08-29（续⑩：排期卡展示层重做——中文化 + 对齐现行卡语义）
+
+- **审计结论**（用户提问触发）：卡片页三处漂移——①波段箱体已事实废弃（新卡 swing_box 全空）但 UI 残留箱体行；②胜率-赔率-Kelly 框架（input_snapshot.win_rate_estimate，含 tier_ranges/kelly_caps/recovery_target/合成说明）是现行决策核心但 UI 完全不显示；③eps_scenario_detail/earnings_basis/review_triggers/right_side_notes/regime 等中文研判埋在"查看完整 JSON"裸 dump 里。另有英文残留：/cards 表头 card_version_id、状态复选框与徽章英文、stock.js 面板 status 直出。
+- **改动**（用户拍板三处一起改）：
+  - `queries.py`：新增 `CARD_STATUS_CN`（active 生效中/draft 草稿/superseded 已替代/rejected 已否决/suspended 已暂停；DB 枚举不动）；`list_cards` 每项与 `get_card_detail` 补 `status_cn`，detail 另补 `name`（LEFT JOIN watchlist）。
+  - 新增 `static/js/card_detail.js` **共享渲染器**（/cards 详情弹窗与单股页排期卡面板同口径）：分区流式——三档价区表（+胜率区间/Kelly 上限两列 + matrix_source 注）、交易框架（证伪线整行段落；swing_box 空→只显示"波段箱体：波段仓不适用…"一句；右侧预案+right_side_notes）、胜率与赔率（合成说明+修复目标价）、情景假设（锚回退逻辑保留 + eps_scenario_detail 逐情景假设 + 恐慌底刻度逐条带 note + 样本窗口 + regime 整段）、盈利底稿、复核触发；原始 JSON 收进末尾 `<details>` 折叠区。
+  - `common.js` `renderStatusBadge(status, text)` 加可选中文显示文本（配色仍由枚举驱动，其它页面行为不变）。
+  - /cards 列表：表头中文化、删"替代"列（版本链移至详情）、股票列带名称、状态筛选复选框中文、colspan 9→8；详情弹窗接共享渲染器（showChain）。
+  - 单股页：排期卡面板整体接共享渲染器（删本地 kv/tierImplied/JSON 弹窗按钮，showModal 仍服务信号详情）；头部"无 active 卡片"→"无生效中的排期卡"；"箱体"数字卡在 swing_box 为空时显示"不适用"。
+- **验证**：`uv run pytest -q` **485 全绿**；node --check 四个 JS 全过；node 桩渲染真实卡验证——新卡（300760）关键区块全在位、无英文/空箱体残留，老卡（603605 两版，无 win_rate/anchor 结构化字段）回退分支正常；页面冒烟 /cards、/stock/300760.SZ 200。
+
+## 2026-08-29（续⑪：单股页两个 UX 修补——一致预期出框 + 信号状态中文）
+
+- **券商一致预期出框**：`.num-card .value` 是 `white-space:nowrap`，fd-fc 文本 "FY1 87.9 / FY2 99.67 / FY3 112.26 亿" 溢出卡片。修：app.css 加 `.num-card .value.long`（允许换行；Tailwind 工具类优先级压不过既有 CSS，故走修饰类）；fd-fc 文案缩短为 `87.9 / 99.7 / 112.3 亿`，FY 说明移入 sub 行。
+- **信号中文化**：状态枚举的中文映射早已在 `queries.py`（STATE_TEXT/BOX_STATE_TEXT/ACCUMULATION_STATE_TEXT，`_state_text()`），前端一直没消费。修：stock.js 信号现状徽章用 `state_text`；`list_signals`/`get_signal_details` 补 `signal_name`/`state_text` 只读字段；/signals 页列表徽章、类型/状态筛选复选框（value 仍为英文枚举，label 中文）、详情弹窗标题全部中文化；stock.js 信号详情弹窗标题同步。
+- **测试**：485 全绿；node --check stock.js/signals.js 过；API 冒烟 accumulation→吸筹形态 / idle→无形态 正确。
+
+## 2026-08-29（续⑫：卡片关联因子现状上页面 + 豆粕补因子缺口）
+
+- **需求**（用户）：卡片应展示当前股票关联的因子状态（油价/大豆价等）与宏观指数（CPI 等）。
+- **UI 落地**：`get_stock_overview` 新增 `factor_snapshot`（复用 `factor_watch.snapshot_for_symbol`，as_of=该股最新交易日，industry_code 取 watchlist；配置错误捕获后如实标注不 500）；stock.js 排期卡面板底部新增"关联因子现状"区块——因子名/代码/上行利好利空（红/绿）/最新读数+单位+日期（stale 标"陈旧"、missing 标"缺数据"）/近 20、60 读数变动（样本不足显示 —）/映射 note；无卡股票同样显示该区块。
+- **豆粕补缺口**：`macro_factors.yaml` 新增 M0 豆粕（domestic 连续合约，alert_threshold_pct 0.12 为人工初值⚠️核对期）；`industry_factors.yaml` 填上原"禽料成本"缺口——BK1511 圣农 → M0 negative 饲料成本（玉米 C0 未纳入，注释说明）。手采+ingest 13 因子（M0 3340.0、LH0 12055.0 首入）。
+- **现实约束（如实告知用户）**：①macro_factors 数据 2026-08-28 才起采，仅 1 个交易日——20/60 读数变动全部样本不足显示 —，外盘因子按 T-1 口径首日必 missing（如南航 OIL），随积累自愈；②**CPI 等月度宏观指数当前无数据源**（现管线为日频商品/外汇），接入需新采集域（akshare 宏观库/统计局），待用户拍板后单独立项。
+- **测试**：`test_ui_queries.py` 新增 overview factor_snapshot 断言（无映射如实标注）；**486 全绿**。真实库冒烟：圣农 M0 豆粕 3340.0 元/吨 ok；南航 USDCNY ok、OIL missing（T-1 口径符合设计）。
+
+## 2026-08-29（续⑬：关联因子区块移至单股页顶部）
+
+- **需求**（用户）：关联因子现状从"当前排期卡"面板底部移到页面顶部。
+- **改动**（纯展示层）：stock.html 在头部数字卡之后、基本面之前新增独立 section（标题"关联因子" + `factor-asof` 截至日期 + `factor-body` 容器）；stock.js `renderFactors` 改为直接写该容器（as_of 移到标题旁），不再由 `renderCardPanel` 追加；`loadAll` 中独立调用。渲染内容与口径不变（缺数据/陈旧如实标注）。
+- **验证**：486 全绿；服务重启后 /stock/002299.SZ 含新区块、overview 的 factor_snapshot 正常（M0 ok，as_of 2026-08-28）。
+
+## 2026-08-29（续⑭：入池油气三巨头+电信双龙头，watchlist 30 只，五卡 draft 待激活）
+
+- **流程**（复用六源先例）：watchlist.yaml 加 5 行（601857.SH 中国石油/600028.SH 中国石化 BK1569 炼油化工、600938.SH 中国海油 BK1574 油气开采Ⅲ、600941.SH 中国移动/601728.SH 中国电信 BK1587 电信运营商，行业码经 symbol_industry 表反查）→ `db seed` upsert（active=30）→ akshare 六源采集（`--start 2023-08-09 --end 2026-08-28 --price-api sina --run-id run_ot_0829`，price/forward/financials/announcement/forecast/stock_info 全 ok）→ stock_info 先移出 → daily 首跑 `--date 2026-08-28 --raw-dir data/raw/akshare` **ok=30** → stock_info 回补 ingest（5 行 inserted）→ indicators 重算（各 pe_ttm 741/741 非空）。
+- **数据覆盖**：5 只各 741 bars（2023-08-09..2026-08-28）/ 周线 157 / 信号 1528 行；财报全历史 84/104/25/36/76 期且 published_at 全非空；公告 260/557/219/268/297 条；股本快照 group_total 各 1 行。pe_ttm 最新：中石油 12.99 / 中石化 18.36 / 海油 11.74 / 移动 16.10 / 电信 19.37。
+- **缺口**：①forecast 海油/移动 EMPTY（同花顺接口，同美的先例）；②OIL 因子读数 missing（macro_factors 08-28 起数，对齐窗口不足——随积累自愈）；③BK1574/BK1587 无 industry_factors 映射（海油对油价正敏感，人工补配候选）；④4 只衰竭锚滞后（中石油/中石化/海油锚 as_of 2026-01-30，电信 as_of 2025-02-14 滞后 18 个月）——2026-06-29~07-02 市场普跌新低（8.59/4.43/26.40/85.38/5.15）均未入锚，等系统以新下跌段重算，卡内 front_low_raw 以人工记录为准；⑤中石化/移动/电信 PB-股息率锚核对=激活前人工项（系统无分红/净资产序列，同陕煤/神华/长电缺口）。
+- **五张排期卡 draft 入库（draft-only，待人工激活）**：**601857SH_6ec22096** / **600028SH_60fd1681** / **600938SH_f51971c7** / **600941SH_0f926a39** / **601728SH_2cf61fc0**，均 next_review 2026-10-31；draft md 存 `cards/{symbol}/{股票名}估值排期卡_draft_2026-08-29.md`。共同背景：五只均于 2026-06-29~07-02 见底后反弹 15–31% 至 3 个月高位，现价普遍未定价坏消息，左侧排期整体在深下方。
+- **要点**：中石油（11.23）锚 pe_scale 体系上移后回落（刻度 8.00→9.87→12.02→9.94），悲观 PE 10 取 2026-07 最近刻度，三档 9.60–10.00/8.50–9.00/7.00–7.60，证伪 7.00，裂口 -15.4pp（FY1 +17.3% vs Q1 +1.9%），胜率 45-55/55-65/60-70，Kelly 0/7.2%/14.4%。中石化（5.46）PE 被动抬高失真（TTM 刻度 10.2→21.4），PE 情景改 FY2026E 口径 17/15/13，H1 +19.3% 修复确认但 FY1 裂口 -21.4pp，现价超矩阵顶端（5.27）非左侧买点，三档 4.50–4.70/4.00–4.20/3.20–3.50，证伪 3.20，胜率 25-45/35-55/40-60，Kelly 0/0/9.0%。海油（34.19）锚 pe_scale（主带 8–9.2，2026-07 刻度 10.08），H1 +23.4% 改善确认，三档 33.10–34.50/29.50–31.10/24.00–25.90，证伪 24.00，现价落 T1 内但 Kelly=0 仅赔率注，胜率 55-65/65-75/70-75 为五只最高，Kelly 0/10.9%/17.0%。移动（97.86）类债温和降档（15–16.8→14），H1 -6.3% 转弱，锚 as_of 2026-06-26 为五只唯一新锚，三档 89.30–93.00/79.50–83.70/67.20–72.60，证伪 67.20，胜率 35-50/45-60/50-65，Kelly 0/1.5%/11.5%。电信（6.30）H1 -14.9% 连续两季双位数下滑（恶化中），现价超矩阵顶端 13%（PE p75+盈利下滑最差组合），三档 4.80–5.00/4.30–4.50/3.60–3.90，证伪 3.60，胜率 20-35/30-45/35-50，Kelly 0/0/7.4%。
+- **踩坑**：卡片 JSON schema 根字段无 `earnings_scenarios`（additionalProperties:false）——`factor_assumptions` 须放 `earnings` 对象内（入库映射 earnings_scenarios_json）；SKILL.md 第 9 节示例写法（根级 earnings_scenarios）与实现不一致，已就地修正 draft，skill 文档待改。
+- **测试**：`uv run pytest -q` **486 全绿**（先清 __pycache__）。
+
+## 2026-08-29（续⑮：五卡激活，全池 active 30 张）
+
+- 用户指令「激活这些卡片」即人工确认：601857SH_6ec22096 / 600028SH_60fd1681 / 600938SH_f51971c7 / 600941SH_0f926a39 / 601728SH_2cf61fc0 全部 **activate --effective-from 2026-08-31（周一）**，next_review 2026-10-31；激活归档 `cards/{symbol}/2026-08-31_*.md` + current.md 刷新（CLI 自动生成）。全池 active 25→30。08-31 盘后 daily 起五只卡片相关信号（tier_proximity/tier_triggered/证伪线监测）开始产出。激活前人工项（股息率/PB 锚核对：中石化/移动/电信）未做，保留为持卡观察项（同神华/长电先例在复核日历中跟踪）。
+
+## 2026-08-30（估值排期卡 skill 吸收 stock-entry-decision 两点：卡复用检查 + 行动纲领）
+
+- **来源**：用户微信收到的 `stock-entry-decision` SKILL.md（估值排期 + 消息研判编排层 skill）。评估结论：两个子流程本系统已有对应物（fred-valuation-card-skill / message-tag-skill + r2 设计 §7），缺的是编排层；按用户拍板走轻量路线，只吸收两点，不新建编排 skill（等消息面 r2 人审流程跑顺后再议）。
+- **改动**（`skills/fred-valuation-card-skill/SKILL.md`，纯文档）：
+  1. 新增 **### 0. 排期卡复用检查**：已有卡且锚未过期（未跨新财报/证伪线未触发/未到 next_review）→ 复用并刷新四项（现价落位、信号状态重核、箱体与右侧关键位有效性、锚维护日历到期事项先调档线）；锚过期禁止复用、禁止用过期锚出结论。
+  2. 第 9 步新增 **「行动纲领」对话开头格式**：钱 × 价位 × 动作大白话、禁术语、必说中间地带，按落位给五种句式骨架（未到位/左侧+波段/第 N 档执行/右侧待命/证伪触发）；"语气与边界"规则语言条款同步加例外。
+- **验证**：纯 skill 文档改动，无代码；未跑测试（无测试覆盖该文件）。
+
+## 2026-08-30（续：右侧状态机持仓跟踪段 + as_of 卡片解析口径统一——恒力止损复盘落地）
+
+- **背景**：恒力 600346 止损复盘（前节）发现两个系统级问题：①right_side confirmed 后直接回 idle，持仓期（8-21~8-27）零落行，8-25/26 连续两日收破 hold 线无任何事实行与日报决策点，人工止损时系统沉默；②8-28 新旧卡交替空档（旧卡 superseded 窗口仍覆盖、新卡 effective 08-31）下 right_side 报 no_active_card、daily_watch 报 card_not_effective_at_as_of，而 falsification_breach 等仍按旧卡正常计算——同日同股两种答案。
+- **right_side 加持仓跟踪段（signals_v2）**：`evaluate_segment` 增 stop 参数（卡 right_side_trigger.stop_level），confirmed 后→**holding** 逐日落行（triggered=0，details 含 stop_level/距止损 distance_to_stop_pct/confirmed_on/days_since_confirm）；收盘 ≤ stop_level（≤ 锁定、不再加容差、单日即触发）→ **stopped_out**（triggered=1）回 idle。卡无 stop_level → confirmed 后直接回 idle + details 记 tracking=no_stop_level + result notes 提示（§2.5 无线不猜）。STATES 增 holding/stopped_out。
+- **as_of 卡片解析统一为窗口语义（§5.1）**：daily_watch/right_side/report 三处的 as_of 生效卡判定从 `load_active_card`（status+窗口双过滤）改为 `card_for_day`（纯窗口，含 superseded 仍覆盖的版本）；cards.py 文档锁定分工——load_active_card 只留 execution 关联快照/card_inputs 底稿等"当下活跃卡"语境。报告"当前卡片"行对非 active 状态如实标注（"status=superseded，生效区间仍覆盖当日"）。
+- **报告层**：stopped_out 当日进决策点并升 **P2**（证伪族，文案含收盘/止损位/确认日）；holding 时观察点段显示止损位与距离（替代突破线距离）；新增**执行闭环提醒** `_right_side_followups`——右侧 confirmed/stopped_out 后 10 个日历日内无 executions 记录 → 决策点段列"[右侧确认/止损待执行]"并升 P4，人工录入后消失（档位/箱体是持续状态不提醒，避免长驻噪音）。
+- **UI**：queries.py STATE_TEXT 与右侧汇总映射补 holding=持仓跟踪中/stopped_out=止损触发。RULE_VERSION 升 signals_v2。
+- **真实库验证**：重跑 600346.SH/603605.SH right_side——恒力 8-21~8-28 补齐 6 行 holding（距止损 10.2%~18.4%，8-25/26 破 hold 线但远未触 16.60 止损的事实清晰可见）、8-28 空档误报消除；珀莱雅 confirmed 8-27 → 8-28 holding（止损 59.50，距 3.1%）。重跑 daily_watch 600346.SH 恢复 status=ok。8-28 报告 revision=7 重跑：珀莱雅日报 P4 出现「右侧确认待执行 2026-08-27 触发至今无执行记录」——正是复盘中发现的漏执行；恒力 8-20 confirmed 因 8-21 有执行记录（#8）不出提醒，口径正确。
+- **测试**：test_signals_daily.py 右侧面全部改三元组返回 + 新增 4 项（holding 跟踪与 ≤ 边界/stopped_out 集成/空档窗口语义/daily_watch 空档）；test_report.py 新增 3 项（stopped_out P2 决策点/待执行提醒出现与消失/holding 观察点）；rule_version 断言改引 RULE_VERSION。**493 全绿**（486+7）。
+- **文档同步**：system_design §5.1（窗口语义条款）/§5.4（状态机图+落行语义+P2/提醒）/§6.2/§6.3；database_schema signal_facts 表 right_side 行；handoff 常见任务增"录入执行前先跑当日 daily"（快照不得早于 T-1）；估值 skill 第 7 步锁定"右侧仓止损=stop_level 单一来源，禁止第二止损线"。
+- **遗留（人工项，agent 不代做）**：恒力复核初稿 600346SH_0f65e846 仍 draft，待人工 reject；珀莱雅右侧确认仓是否执行由用户决策。
+
+## 2026-08-30（续②：入池创新药双龙头+CXO 龙头，watchlist 33 只）
+
+- **需求**（用户）：百济神州 688235.SH / 恒瑞医药 600276.SH / 药明康德 603259.SH 加入 watchlist 并采集数据。
+- **流程**（复用六源先例）：watchlist.yaml 加 3 行（行业码经 symbol_industry 表反查：百济/恒瑞 BK1594 化学制剂、药明 BK1600 医疗研发外包）→ `db seed` upsert（33 只）→ akshare 五源采集（`--end 2026-08-30 --run-id run_pharma`）：price/forward 东财 push2his 代理断连 3/3 失败（已知坑第三次复现），改 `--price-api sina --run-id run_pharma_sina` 重采全 ok；financials 28/105/41 期（三股 20260630 中报均在）；announcement 471/798/573 条；forecast 恒瑞 ok、**百济/药明 EMPTY**（同花顺接口，同美的/海油/移动先例，留缺口）。→ daily 首跑 `--date 2026-08-28 --raw-dir data/raw/akshare` **ok=33**（无卡期 daily_watch/right_side incomplete=no_active_card 属预期）→ stock_info 回补采集+ingest（3 行 inserted）→ indicators 逐股重算（各 pe_ttm 740/740 非空）。
+- **数据覆盖**：3 只各 740 bars（2023-08-10..2026-08-28，sina 源）/ 周线 157 / 公告簿 471/798/573 条 / 股本快照 group_total 各 1 行。pe_ttm 最新（08-28，snapshot_share_basis）：**百济 97.87**（中报入库后 TTM 盈利上修，前一日口径 136.41）/ 恒瑞 40.65 / 药明 21.77。
+- **缺口**：①forecast 百济/药明 EMPTY；②三股均无排期卡，日报 degraded(no_active_card) 属预期。
+- **测试**：`uv run pytest -q` **493 全绿**。
+
+## 2026-08-30（续③：药明康德 603259.SH 估值排期卡 draft 603259SH_9681230e）
+
+- **流程**（fred-valuation-card-skill 第 0–9 步）：复用检查 list=0 张 → 底稿 `card_inputs`（→ cards/603259.SH/inputs_2026-08-28.json；行情 08-28/财报 06-30/forecast EMPTY）→ 盈利底稿（TTM 归母 216.70 亿/EPS 7.2296，2026H1 +29.4%）→ 刻度判断：3 年样本 2023-08-10~2026-08-28 共 11 恐慌低点，逐轮下移 24.9→14.9（2023→2024 体系降档），最近两轮 15.2/14.9 收敛→锚设新体系（悲观 PE 12.5=14.9×0.85/中性 15/乐观 18）→ 矩阵 `build_schedule.py --eps 7.6,6.85,6.1 --pe 18,15,12.5 --price 157.4 --winrate 50,70,75` → T1 109.44–114.00 / T2 97.61–102.75 / T3 76.25–82.35，证伪线 76.25 → 胜率 T1 50–60/T2 70–75/T3 75–80，Kelly 上限 0.0%/12.6%/18.4% → 现价 157.40 高于 T1 上沿 38.1%（≈中性EPS×PE 20.7，超出乐观情景 136.8，三档均未到位）。
+- **波段/右侧**：波段不适用（06 低 88.32→08-20 高 173.60 单边趋势段）；右侧触发 175.34（=173.60×1.01）/止损 171.85（=173.60×0.99 唯一止损口径）。
+- **产物**：Markdown `cards/603259.SH/药明康德估值排期卡_draft_2026-08-30.md` + JSON `cards/603259.SH/draft_2026-08-30.json` → `card create-draft` 入库 **draft 603259SH_9681230e**（next_review 2026-10-31；draft-only，激活待人工）。
+- **缺口**：forecast EMPTY（裂口检查缺数据，卡中标注不编造）；无行业因子映射（省略 factor_assumptions）；衰竭量能阈值锚定 2024 年下跌段（as_of 2024-09-27），相对现价结构偏旧，新下跌段起系统重算。
+- **测试**：无代码改动，未跑 pytest；create-draft schema+语义校验通过（含 valuation.anchor/sample_window、价格定点十进制）。
+
+## 2026-08-30（续④：恒瑞医药 600276.SH 估值排期卡 draft 600276SH_438f17da）
+
+- **流程**（fred-valuation-card-skill 第 0–9 步）：复用检查 list=0 张 → 底稿 `card_inputs`（→ cards/600276.SH/inputs_2026-08-28.json；行情 08-28/财报 06-30/forecast akshare 快照 08-30 已入库）→ 盈利底稿（TTM 归母 77.26 亿/EPS 1.1641；2026H1 营收 154.56 亿 −1.9%、归母 44.65 亿 +0.3%，Q1 +21.8%→H1 持平，Q2 单季走弱；BD 首付款高基数为用户提示非库内事实）→ 刻度判断：3 年样本 2023-08-10~2026-08-28 共 10 恐慌低点（8 个 is_fallback），逐轮下移 66.6→52.0/50.5→43.3，现价 PE(TTM) 40.65 已破 p5(42.80) 与最近底部刻度 → 体系切换中，锚设新体系（悲观 PE 38=43.3×0.88/中性 47=最近两轮均值/乐观 52=2025 低点簇上沿）→ 矩阵 `build_schedule.py --eps 1.16,1.04,0.93 --pe 52,47,38 --price 47.32 --winrate 35,45,50` → T1 52.34–54.52 / T2 46.44–48.88 / T3 35.34–38.17，证伪线 35.34 → 胜率 T1 35–45/T2 45–55/T3 50–60（裂口未收敛 −5~−10：券商 FY1 93.42 亿隐含 +21.2% vs 实际 +0.3%；体系切换 −10；信号仅 1 项 duration），Kelly 上限 0.0%/0.0%/11.8% → 现价 47.32 落 T2 价区但信号不足（1<2）+Kelly 下沿为 0 → 不动。
+- **波段/右侧**：波段不适用（08-20 放量 2.39 亿股跌破 52–55 平台，08-25 阶段新低 46.22，下跌段非震荡结构）；右侧触发 52.00（收复破位平台下沿）/止损 50.90（回踩确认区下沿失守，唯一止损口径）。
+- **产物**：Markdown `cards/600276.SH/恒瑞医药估值排期卡_draft_2026-08-30.md` + JSON `cards/600276.SH/draft_2026-08-30.json` → `card create-draft` 入库 **draft 600276SH_438f17da**（next_review 2026-10-31；draft-only，激活待人工）。
+- **缺口**：无行业因子映射（省略 factor_assumptions）；forecast yoy_pct.fy1 与 FY1–FY3 营收字段为空（仅净利序列，FY1 隐含增速为库内数字直算）；底稿无现金流量表（生意质地源按 0）；前低 48.43 已被现价跌破（no_new_low=new_low），衰竭锚待系统随新下跌段重建。
+- **测试**：无代码改动，未跑 pytest；create-draft schema+语义校验通过（含 valuation.anchor/sample_window、价格定点十进制）。
+
+## 2026-08-30（续⑤：百济神州 688235.SH 估值排期卡 draft 688235SH_f820a833）
+
+- **流程**（fred-valuation-card-skill 第 0–9 步）：复用检查 list=0 张 → 底稿 `card_inputs`（→ cards/688235.SH/inputs_2026-08-28.json；行情 08-28/财报 06-30/forecast EMPTY）→ 盈利底稿（TTM 归母 42.82 亿/EPS 2.7761；2026H1 营收 222.20 亿 +26.8%、归母 32.71 亿 +627.1%，Q2 单季 16.63 亿 +205%；2025A 扭亏 14.61 亿）→ 刻度判断：PE(TTM) 刻度样本仅 93 天（2026-04-16 TTM 扭亏起，§3.2 强制标注），带 PE 恐慌底仅 1 轮（2026-06-29 @124.78），盈利爆发期刻度被动下移；亏损期底部为价格底带逐轮上移 98.5→227.75 → 锚定 mixed（情景 EPS×远期 PE 折回 + 价格底带辅助），PE 按前瞻口径体系带给（悲观 60=恐慌底 227.75 对中性前瞻 EPS 折算 58.6 取整/中性 75/乐观 95），禁止 TTM 刻度乘前瞻 EPS（双重计价）→ 矩阵 `build_schedule.py --eps 3.89,3.50,3.11 --pe 95,75,60 --price 271.7 --winrate 50,60,65` → T1 280.08–291.75 / T2 249.38–262.50 / T3 186.60–201.53，证伪线 186.60 → 胜率 T1 50–65/T2 60–75/T3 65–80（盈利轨迹 +5~+10、裂口缺数据 +0、体系样本不足 −10~−5、信号 T1+0/后两档 +10），Kelly 上限 0.0%/8.9%/15.9% → 现价 271.70 低于 T1 下沿 3.0%、高于 T2 上沿 3.5%（已掠过 T1，但 T1 Kelly=0 非正期望注，预算并入 T2 等价位+信号）。
+- **波段/右侧**：波段不适用（2026-01-09 312.99 下跌段→06-29 227.75 恐慌底后修复段，底稿无可确认箱体）；右侧触发 281.70（=2025-09-11 前低 278.90×1.01）/止损 278.90（突破失败位，唯一止损口径）。
+- **产物**：Markdown `cards/688235.SH/百济神州估值排期卡_draft_2026-08-30.md` + JSON `cards/688235.SH/draft_2026-08-30.json` → `card create-draft` 入库 **draft 688235SH_f820a833**（next_review 2026-10-31；draft-only，激活待人工）。
+- **缺口**：forecast EMPTY（裂口检查缺数据，卡中标注不编造）；无行业因子映射（创新药，省略 factor_assumptions）；PE 刻度样本仅 93 天（锚置信度低，体系稳定性扣分来源）；现金流/毛利率未入底稿（生意质地按 0）；衰竭活跃 2 项均为持续型且现价已高于前低 19.3%，信号时效性激活前需人工核对。
+- **测试**：无代码改动，未跑 pytest；create-draft schema+语义校验通过（含 valuation.anchor=mixed/sample_window、价格定点十进制）。
+
+## 2026-08-31（代码/skill 审查修复：`docs/superpowers/specs/2026-08-31-code-skill-review-handoff.md` 10 项代码 + 3 项 skill 文档）
+
+> 背景：承接 code/skill 审查交接文档，修复 10 项已确认代码缺陷并同步 3 处 skill 文档滞后。测试 500 全绿（+7：1.1/1.5/1.6/1.7/1.8 新增 6 项 + 1.2 更新断言 1 处）。
+
+### A. 右侧状态机（1.1 + 1.2）
+- **1.1** `scripts/signals/right_side.py:181`：holding 分支由裸 `else` 改 `elif state == "holding"`，末尾补 `else: raise ValueError`——非法状态不再被静默当 holding 吞掉（当前合法路径不可达，属结构性护栏）。新增 `test_right_side_states_always_reset_not_silently_held`：stopped_out 后必须回 idle 才能开新一轮 episode。
+- **1.2** `scripts/pipeline/report.py:316`：right_side 决策点分支增 `holding`（observed_on==trade_date）→ 输出 `[右侧持仓跟踪] 止损位…，现价距止损…%，已跟踪…日`。holding 是 triggered=0 逐日行，原实现多日持仓期日报 P2/P3/P4 静默；优先级仍落 P5（状态行不升级）。`test_right_side_holding_observation` 增决策点断言。
+
+### B. 因子层（1.4 + 1.5 + 1.6）
+- **1.4** `scripts/signals/factor_watch.py:latest_factor_close`：f-string 嵌 `op`（`<`/`<=`）拆成 GLOBAL/CN 两个参数化查询分支（SQLite 不支持操作符参数化）。
+- **1.5** 原逐因子 `_factor_market` N+1 查询 → 新增 `_factor_markets` 单次 `IN + GROUP BY` 批量取 market；`snapshot_for_symbol` 复用，factor 条目新增 `market` 字段。测试 `test_snapshot_market_lookup_is_batched`：4 因子仅 1 次批量 market 查询。
+- **1.6** `load_industry_factors` 模块级 `_INDUSTRY_CACHE`（按 path+双文件 mtime 命中），单股页请求不再重复解析 YAML。测试 `test_load_industry_factors_caches_by_mtime`：同 mtime 返回同一对象、改动后重载。
+
+### C. 人审页（1.3 + 1.7 + 1.9）
+- **1.3** `scripts/ui/queries.py:list_message_review`：`symbol_names` 表查询前用新增 `_table_exists` 守卫——0006 未迁移时降级为只显示代码，不 500。测试 `test_list_message_review_without_symbol_names_table`（同时锁定 watchlist 覆盖优先生效）。
+- **1.7** `confirm-all`：新增 `queries.list_message_review_for_confirm(conn, company)`，SQL 侧过滤（status=needs_review 且事件级无 confirm/dismiss 记录 + company 关联 EXISTS），替代全量 `list_message_review` + Python 过滤；`app.py` 直接消费。测试 `test_message_review_confirm_all_skips_dismissed`：已否决事件不被一键确认。副作用修正：原实现受 `list_message_review` LIMIT 200 限制，现处理全部目标行。
+- **1.9** `message_review.html`：`data-symbols` 分隔符逗号改 `|`（防公司名/字段含逗号误切），JS `split('|')`。`test_message_review_page_and_action` 断言同步。
+
+### D. 报告 followup（1.8）
+- **1.8** `scripts/pipeline/report.py:_right_side_followups`：逐事件 `SELECT COUNT(*) FROM executions` N+1 → 单条 `LEFT JOIN executions ... GROUP BY observed_on, state` 聚合。测试 `test_right_side_followup_single_join_query`：两事件仅 1 次 executions 查询。
+
+### E. 前端（1.10）
+- **1.10** `card_detail.js`：`anchorIsPe` 由二值误判改三态分支——true=纯 PE 锚 / false=非锚仅分位参考 / null（旧卡无结构化 anchor）=「旧卡未结构化锚，仅分位参考」，不再把 null 静默渲染成"PE 三情景"。`node --check` 通过；浏览器侧需人工验收（旧卡 `/stock/{symbol}` 标签文案）。
+
+### F. Skill 文档同步（2.1–2.4）
+- **2.1** `skills/fred-valuation-card-skill/SKILL.md` §9：JSON 键名规范改为字段一览表（draft 根字段→入库列），`sample_window` 明确在 `valuation` 段（非 `earnings`），`factor_assumptions` 与 `eps` 同级放 `earnings` 内、根级 additionalProperties=false 措辞修正。
+- **2.2** §7 末尾补 holding/stopped_out 状态机段（确认后逐日跟踪、收盘 ≤ stop_level 触发 stopped_out 回 idle、无 stop_level confirmed 直接回 idle、holding 期日报不静默）。
+- **2.3** §4 因子假设锚点明确：以 `card_inputs_v2` 底稿 `factor_snapshot` 当期读数（close+trade_date）为锚，不自行外采，stale/missing 如实标注不编造。
+- **2.4** `skills/message-tag-skill/SKILL.md` §6 补 rationale 自解释模板示例（人审不查原文也能看懂影响路径）。
+
+### 验收
+- `uv run pytest -q` **500 全绿**（474 → 500）；`node --check` 通过；模块导入正常。
+- 待人工验收（浏览器/CLI）：/message-review 公司筛选；旧卡 anchor 标签文案；holding 股报告决策点输出。
+
+## 2026-08-31（盘后 daily：ok=33 + 修复 origin 窗口回滚；12 张到期卡批量审核）
+
+### 采集（本轮网络持续抖动，sina/cninfo/emweb 反复 SSL EOF/502，多轮定点重试）
+
+- **price/forward 33/33 齐**：sina 源，显式 `--end 2026-08-31`，run-id `run_daily_20260831`（price/forward 同目录落盘）。sina SSL EOF 约 40–60% 失败率，靠幂等重试多轮补齐（price 缺 7 只→3 只→0；forward 缺 14→9→4→0）。em 源本轮全程不可用（push2his/emweb SSL/Proxy EOF）。
+- **⚠️ 新坑（origin 窗口）**：`akshare_collect --start` 默认硬编码 `2023-08-10`。池内 8/10 前建仓的老批次 6 只（600028/600531/601318/601728/601857/603697）库内因子 origin=2023-08-09，今日 sina forward 序列从 08-10 起 → 因子平台切换检测触发重建 → origin 日不在新序列 → `ValueError: origin 日 2023-08-09 不在因子序列内（该股当日全部阶段回滚）`，daily 首跑 **failed=6, ok=27**。修复：6 只 forward 显式 `--start 2023-08-01 --run-id run_daily_20260831_d` 重采（含 2023-08-09）→ 二跑 **ok=33**。**教训：每日 forward 采集建议显式 `--start 2023-08-01`，防 origin 早于默认窗口**。
+- **index/telegraph/flow ok**；**macro 11/13**：AU0/CU0/I0/RB0/SR0/LH0/M0/SC0/OIL/CL/HKDCNY 齐（跨 run_daily_20260831_b/c 并集），USDCNY/EURCNY（中行牌价接口）今日缺，留缺口。
+- **announcement/financials 大面积抽风**：cninfo JSONDecodeError（已知 502 自愈型，本轮持续数小时仅零星自愈窗口）、emweb 33/33 挂。自愈窗口抢到：**600900 长电 + 601857 中石油今日披露的 2026 半年报公告与财报数字已采集入库**（run_daily_20260831_f/g），其余 31 只 08-29~08-31 三日公告增量缺失。**财报面无缺口**：池内 33 只 2026-06-30 中报全部在库（核实过）。公告缺口明日例行幂等回补（采集窗口全历史覆盖）。
+- **ingest**：`data/raw/akshare` 全目录，inserted=15（长电/中石油公告+财报、今日 macro/index/flow/telegraph），symbol_names 路由 error=1（历史已知非管线文件，不属本批）。
+
+### daily（revision=4，ok=33）
+
+- 首跑 failed=6（origin 坑，见上）→ 二跑 ok=33（revision=2）→ ingest 长电/中石油 → 三跑 **ok=33（revision=4）**，折入今日公告与两家半年报。珀莱雅报告 P3、南航 P3（T1 区内）、天赐/有友卡片信号已触发（详见下节审核）。`uv run pytest` 未跑（无代码改动）。
+
+### 12 张到期排期卡批量审核（next_review=2026-08-31，8/10–8/14 建卡批次）
+
+- **流程**：12 只逐只 `card_inputs` 新底稿（inputs_2026-08-31.json）→ 对照卡内 EPS 情景/档价/证伪线/信号事实/右侧状态。中报预期差用 2026H1−Q1=Q2 单季 + 2025H1 同比。
+- **结论：11 张锚过期（卡生效后新披露 2026 中报），按 §纪律 禁止复用、禁止用过期锚出结论，需走完整重建（新 draft + 人工激活）；1 张复核通过**：
+
+| 优先 | 股 | 中报(披露) | H1 同比 | 关键变化 | 现价 vs 档价 | 审核判定 |
+|---|---|---|---|---|---|---|
+| 1 | 603605 珀莱雅 | 08-24 | **+46.3%** | TTM EPS 4.72 vs 卡 base 3.56 超预期；**右侧 holding 第 3 日，收盘 60.33 已破 hold 线 60.39，距止损 59.50 仅 1.4%** | 距 T1 下沿 61.50 −1.9%（proximity 触发） | 锚过期→重建；**右侧止损决策点，人工优先处理** |
+| 2 | 600029 南航 | 08-28 | 减亏但仍亏 | Q2 单季 −51.8 亿；base EPS 0.05 失效 | **T1 区内 5.01，dry_up+duration 2 信号已触发** | 锚过期→**触发基于过期锚，先重建复核再执行** |
+| 3 | 002709 天赐 | 08-20 | **+967.9%** | H1 28.6 亿 vs 25H1 2.7 亿；档价大概率整体上移 | **T1 区内 36.44（0 信号）** | 锚过期→重建；同上先复核再执行 |
+| 4 | 002714 牧原 | 08-20 | **−157.7% 盈转亏** | TTM EPS −0.19 vs 卡 base 3.66 完全失效；PE 锚体系不适用 | 高 T1 上沿 +14% | 锚过期→重建（**需换体系：PB/价格底带**） |
+| 5 | 002299 圣农 | 08-20 | **−44.8%** | TTM 0.78 vs base 1.20 大幅低 | 高 T1 上沿 +16.8% | 锚过期→重建（档线下移风险） |
+| 6–11 | 002557 洽洽(+177.4%)/002747 埃斯顿(减亏)/600531 豫光(+12.5% 吻合)/601318 平安(+36.1%)/601899 紫金(+68.2%)/603288 海天(+7.1%) | 08-21~08-26 | — | 各自 TTM vs base 偏离见底稿 | 均未到档、证伪线未触 | 锚过期→常规重建排队 |
+| ✅ | 603697 有友 | 中报 08-15 00:00（北京）早于建卡 08-16 | +14.4% | 卡内已含中报 | **T1 区内 9.40，divergence+dry_up+duration 3 信号触发** | **锚新鲜，复核通过复用**；T1 触发有效，是否执行由用户决策 |
+
+- **全部 12 张证伪线今日无触发**（falsification_breach=0）。紫金 08-21 中期分红除权已入因子，不复权档价不受影响。
+- **待人工决策**：①珀莱雅右侧持仓（收盘破 hold 线但未触止损 59.50，纪律=收盘≤止损才 stopped_out）；②有友 T1+3 信号执行；③11 张重建排期（建议按上表优先级，每张一个会话走 fred-valuation-card-skill 完整流程）；④有友卡 next_review 已到期但复核通过——系统无自动续期，如需清提醒可出同值 refresh draft 换新 next_review（draft+人工激活）。
+- **缺口**：31 只 08-29~08-31 公告簿增量未采（cninfo 抽风，明日回补）；macro USDCNY/EURCNY 今日缺。
+
+## 2026-08-31（续：11 张锚过期卡批量重建——11 张 v2 draft 入库，draft-only 待人工激活）
+
+- **范围**：审核判定锚过期的 11 张（珀莱雅/南航/天赐/牧原/圣农/洽洽/埃斯顿/豫光/平安/紫金/海天），逐张走 fred-valuation-card-skill 第 0–9 步：底稿（inputs_2026-08-31.json，前节已导）→ 盈利底稿 → 刻度/体系判断 → 情景矩阵（build_schedule.py，含 --winrate quarter-Kelly）→ 胜率打分 → 波段/右侧 → draft JSON + md + create-draft。**全部 draft-only，激活须人工**。
+- **11 张 v2 draft 清单**（取代各自旧 active 卡，激活后旧卡自动 superseded）：
+
+| 股 | draft | 锚/情景要点 vs v1 | 三档 T1/T2/T3 | 证伪线 | 现价落位 |
+|---|---|---|---|---|---|
+| 珀莱雅 | 603605SH_9d997d38 | EPS base 3.56→**4.60**（中报超预期）；PE 18/15→20/15；右侧沿用 61.00/59.50（在管 episode 连续性） | 88.3–92 / 78.8–83 / 54.0–58.3 | 54.0 | T3 上方 3.4%，proximity |
+| 南航 | 600029SH_a2fc672e | base 0.05→**−0.11**（转亏）；T3 下移 3.95→**3.55–3.85**（BPS 侵蚀）；胜率大修 T1 Kelly=0 | 4.95–5.2 / 4.45–4.75 / 3.55–3.85 | 3.55 | **T1 区内，信号 2 项——但 v2 口径不再自动可买** |
+| 天赐 | 002709SZ_a2e04513 | 中报=预告中值兑现，**情景全部维持**，矩阵重跑 | 40.3–42 / 34.6–36.4 / 22.0–23.8 | 22.0 | 贴 T2 上沿，信号 0 项不释放 |
+| 牧原 | 002714SZ_c0e31adf | 2027E base 3.66→3.55；T3 用 **PB 底带 1.8–1.9×BPS 14.75**=26.5–28.0 覆盖矩阵值 | 37.5–39 / 32.9–34.6 / 26.5–28.0 | 26.5 | T1 上方 8%；右侧触发 42.70 贴现价 |
+| 圣农 | 002299SZ_387e8e84 | base 1.20→**0.78**（Q2 −68% 崩塌）；全部档位深移 −39%+ | 9.7–10.1 / 8.3–8.7 / 5.8–6.2 | 5.8 | T1 上方 63%，远离档位 |
+| 洽洽 | 002557SZ_a6dd769e | base 1.25→1.20（H2 兑现压力）；极悲 0.95→0.85 | 17.3–18 / 15.0–15.8 / 10.6–11.5 | 10.6 | T1 上方 4% |
+| 埃斯顿 | 002747SZ_6fd732f1 | 价格平台锚维持（结构未破坏）；EPS 微调 | 26.0–27.5 / 21.0–23.0 / 14.5–16.5 | 14.5 | T1 上方 15% |
+| 豫光 | 600531SH_6e36e4af | **锚上移 PE 9.5→13**（v1 遗留"中枢上移未验证"经完整回调+三轮恐慌底 PE 11.3–13.7 闭合）；挂 AU0 因子假设 | 9.4–9.8 / 7.7–8.1 / 5.5–5.9 | 5.5 | T1 上方 40% |
+| 平安 | 601318SH_153b6efc | **修正 v1 基数错位**（EPS 前瞻 11.60×旧基数 PE 3.0–3.5 不可乘）：统一为 base 8.60×恐慌底刻度带 6.6–8.8；三档整体上移 | 63.6–66.2 / 57.8–60.8 / 42.0–45.4 | 42.0 | T2 下方 3.4%（现价<p5 已定价偏深） |
+| 紫金 | 601899SH_616cc92c | **深熊假设折算刻度（4.5–8）回归标准恐慌底刻度**（13.9–15.8 三轮稳定）；base 3.96（FY2027 属性）→3.07（FY2026 实际）；挂 CU0/AU0 因子假设 | 42.7–44.5 / 37.9–39.9 / 28.8–31.1 | 28.8 | T2 下方 11%（已定价盈利回落） |
+| 海天 | 603288SH_fb3699b8 | base 1.43（+19% 假设）→**1.28**（+6% 实际外推）；T1 下移 36.4→31.9–33.3；波段箱体 33.5–36.4 启用（首笔减半） | 31.9–33.3 / 29.6–31.2 / 24.8–26.7 | 24.8 | **贴 T1 上沿 +1%** |
+
+- **方法论记录**：①刻度统一原则——同卡内 EPS 情景与 PE 刻度必须同盈利基数可比（平安/紫金两卡的 v1 均存在新旧基数错乘，v2 修正后档位大幅变化，激活前需人工确认理解）；②负盈利/微利公司的锚替代——南航（PB+价格带）、牧原（前瞻 EPS×PE+PB 校验）、埃斯顿（价格平台）三条路径延续 v1 口径；③右侧在管 episode 连续性——珀莱雅 v2 沿用旧触发/止损（61.00/59.50），避免换卡即时改变在管持仓的止损口径；④无 BPS/EV/股息率数据缺口已在卡内标注（南航/牧原 BPS、平安 EV）。
+- **人工决策项（激活前必读）**：①11 张激活顺序建议：珀莱雅（右侧决策联动）→ 南航/天赐（T1/T2 贴价，旧锚触发执行纪律）→ 牧原/海天 → 其余；②南航 v1 口径下 T1+2 信号曾达执行态，v2 胜率下修（T1 Kelly=0）——按旧卡执行还是等新卡激活由用户决策；③平安/紫金/豫光三张档位结构变化大，激活前逐张核对卡内"regime"段。
+- **数据纪律**：全程只消费 card_inputs 底稿与库内事实，未人工编造数字；BPS/EV 缺口如实标注；测试未跑（无代码改动）。
+
+## 2026-08-31（续②：11 张 v2 卡人工确认激活）
+
+- **用户指令「全部激活」即人工确认**（同 08-28/08-29 先例）：11 张 v2 draft 全部 `activate --effective-from 2026-09-01`——今日（08-31）daily 与报告（revision=4）已按旧卡口径算完，新卡自 09-01（周二）起生效，旧卡 superseded effective_to=2026-09-01（排他端点），无口径空档。
+- **激活后全池状态**：active 30 张不变（有友卡复核通过未动），11 张旧卡（8/10–8/14 建卡批次）全部 superseded，next_review 分两批：2026-10-31 一批 29 张 + 有友 1 张（next_review 已过期待处理）；剩余 draft 3 张均为历史遗留（含恒力 600346SH_0f65e846），待人工 reject。
+- **09-01 盘后 daily 注意事项**：①南航收盘若仍在 T1 区（4.95–5.20）将按 v2 卡触发 tier_triggered（v2 口径 T1 Kelly=0，机器照常落行、执行决策在人）；②海天贴 T1 上沿（33.63 vs 33.30），跌破 33.3 即触发 T1；③珀莱雅右侧在管 episode 的 stop_level 59.50 新旧卡一致，跟踪无缝衔接；④Tier 档位全面切换后首轮 proximity/tier 信号建议人工抽查与卡面核对。
+
+## 2026-08-31（续③：有友卡续期 + 药明/恒瑞/百济激活——全池 33 只 active 卡全覆盖）
+
+- **有友食品 next_review 续期**（复核通过复用的收尾动作）：从库内现卡 603697SH_f938200e 导出同值 refresh draft 603697SH_e86a63ae（档位/矩阵/右侧零改动，仅 next_review 2026-08-31→**2026-10-31**，input_snapshot 标注 refresh 性质）→ create-draft → **activate --effective-from 2026-09-01**（用户确认续期即人工确认）。到期提醒清除。
+- **药明/恒瑞/百济三张 08-30 draft 激活**（用户在事实核实后选择激活；此前本日志"3 张历史遗留 draft 待 reject"表述有误——三张实为 08-30 新建的有效 draft，非废弃稿，恒力初稿 600346SH_0f65e846 早已清理）：603259SH_9681230e / 600276SH_438f17da / 688235SH_f820a833 全部 **activate --effective-from 2026-09-01**（数据截止 08-28、中报已含，新鲜度足够）。
+- **激活后全池状态**：**active 33 = watchlist 33 只全覆盖**（次日盘后 daily 报告 degraded(no_active_card) 归零）；draft 清零；rejected 5 / superseded 13。next_review 两批：2026-10-31（32 张）+ 有友 2026-10-31（并入同批）。
+- **方法记录**：无导出命令的卡续期走"DB 行 → 同值 refresh draft JSON → create-draft → activate"路径（本轮脚本式操作，可复用）。
+
+## 2026-09-01（盘后 daily：ok=33 一次通过；新卡首轮信号落地；换卡 episode 边界行为记录）
+
+- **采集（网络正常日，全程零重试）**：price/forward 33/33（sina，**显式 `--start 2023-08-01` 修复生效**——forward 覆盖全部 origin 日）；financials 33/33（首批 31 只后超时中断，补采恒瑞/药明完成）；index 2 / telegraph 1 / announcement 33/33 / macro / flow 全净。**公告缺口回补完成**：08-30（周日）13 条 + 08-31 18 条入库（08-29 周六无披露属正常），前日 cninfo 抽风缺口闭合。
+- **daily**：`--date 2026-09-01 --raw-dir data/raw/akshare` **ok=33 一次通过**，报告 revision=1，无证伪触发。
+- **14 张新卡（09-01 生效）首轮信号**：
+  - **T1 触发 3 只**：南航 600029（T1 区内，dry_up+duration——v2 口径 Kelly=0，执行决策在人）、有友 603697（T1 区内，信号延续）、**迈瑞 300760（新进 T1 区 + duration 1 项）**；
+  - **proximity 3 只**：海天 603288（贴 T1 上沿 33.30）、恒瑞 600276、百济 688235；
+  - 其余新卡远离档位，无异常。
+- **珀莱雅右侧"缺行"排查（非 bug，设计语义留档）**：right_side 按 §5.1 逐卡版本生效区间独立重放——v1 episode（08-27 confirmed）止于 08-31（holding），v2 卡 09-01 起**新 episode 从 idle 起算**；09-01 收 62.62（+3.8%）未满足放量突破条件 → 无行可写，日报右侧段回退引用 08-31 行（"来源 @ 2026-08-31"如实标注）。**影响**：①换卡后 episode 账本重置，若需跨卡连续跟踪需在卡复核时人工衔接（本轮 v2 与 v1 触发/止损同值 61.00/59.50，经济含义无变化）；②09-01 收盘远离止损，前日"距止损 1.4%"压力解除；③"右侧确认待执行"提醒（08-27 触发无 executions 记录）仍挂——**珀莱雅执行录入仍是唯一遗留人工项**。
+- **杂项**：000333/000651 right_side 阶段标 degraded（error=None，无触发位卡的 idle 标记路径），不阻断；event_calendar 提醒：09-05 前后关注 2026 三季预约披露源补采（9 月底 `--calendar-period 2026三季`）。
+
+## 2026-09-01（续：消息面研判——全部 tier4 电报无公司公告；油价冲击南航）
+
+- **今日事件簿**：8 条全部电报（tier4，不进决策链），中报季后公告真空；关键两条：WTI/SC 原油 +3%（WTI 7-24 以来新高）、纳斯达克 100 期货 −1.4%；其余为半导体链（英伟达/阿斯麦/三星/兆易，池内无标的）与蔚来成本言论。
+- **宏观因子实读 vs 卡内假设**：**OIL（布伦特）92.61**，两日 +4.9%（88.27→90.9→92.61），破南航卡中性平台（85–90）上沿——未到 ±15% 提醒线（103.5），方向连续两日利空；CU0 109220 / AU0 959.94 平稳（紫金/豫光因子假设维持）；LH0 11685（11.7 元/kg，牧原成本线下磨底）；USDCNY 678.09 平稳。
+- **影响评估（结合卡位，解读层不产生规范化数字）**：①南航——T1 触发第二日 + 油价冲击，Q3 旺季转盈分水岭难度上移，bear_mid（H2 8 亿）概率上移；T1 本就 Kelly=0，油价强化"先不动"；若布伦特续涨逼近 103.5 触发锚复核提醒。②埃斯顿——纳指期货跌+AI 情绪链，题材第二波预期承压（深左无操作影响）。③牧原——猪价成本线下磨底符合卡内中性偏悲观情景。④紫金/豫光——铜金平稳无冲击。⑤其余消费/金融今日无直接消息，卡面信号主导。
+- **观察**：明日油价若续涨→南航因子偏离提醒方向；纳指情绪若传染 A 股→题材/成长档位可能加速接近买区，按卡执行不抢跑。
+
+## 2026-09-02（入池：东方航空 600115.SH，watchlist 34 只）
+
+- **流程**：watchlist.yaml 加行（BK1479 航空，与南航同业；aliases 含"中国东航/东航/C919"）→ `db seed`（34 只）→ akshare 采集（`--start 2023-08-01 --end 2026-09-01`，run_add_600115）：price/forward 750 行零错误（forward 显式 --start 防 origin 坑）+ financials 110 期 + announcement + forecast 有行 → **daily 首跑 ok=34**（09-01 幂等重跑，600115 ok，报告 degraded P5=no_active_card 属预期）→ stock_info 回补（股本快照 inserted=1）→ indicators 重算。
+- **基本面快照**：FY2025 −16.33 亿；26Q1 +16.33 亿；**26H1 −21.79 亿（Q2 单季 −38.12 亿）**——TTM 转负，pe_status=ttm_non_positive（历史仅 2026-05~08 窗口 TTM 为正），PE 失真。**将来建卡须走南航 v2 同款路径（PB+价格带锚，周期底部看资产不看利润）**。
+- **行业码**：symbol_industry 已有 BK1479 航空运输（08-28 push2delay 批次已覆盖，seed 未重复写入）。
+- **覆盖**：bars 749（2023-08-01~09-01）/ 周线 158 / 指标 749（pe_ttm 83 非空，其余窗口 ttm_non_positive 如实降级）。
+- **背景**：用户问题"东航波动为何大于南航"引发入池决策——东航资产缓冲垫薄（PB ~5.9）、C919 主题属性、国际线占比高，波动结构异于南航，值得独立跟踪建卡。
+- **注意事项**：①600115 暂无排期卡，日报 degraded 属预期；②若建卡，PE 锚不可用（TTM 亏损），参照南航 v2 手工锚定模板；③09-02 盘后例行 daily 将自然纳入该股（--raw-dir 不变）。
+
+## 2026-09-02（续：东方航空 600115.SH 估值排期卡首建——draft 600115SH_67ba0e63）
+
+- **流程**：card_inputs 底稿 → 价格结构手工锚定（负 EPS+PB 双失真，南航 v2 模板）→ 胜率打分 → draft JSON+md → create-draft **600115SH_67ba0e63**（draft-only 待人工激活）。
+- **锚定要点**：①PE 失真（TTM 转负）；②**PB 锚亦不可用**——东航 BPS≈0.60（净资产被历史亏损侵蚀），PB 5.6–9.0 全区间失真，比南航（BPS 1.85 可用 PB）更极端 → 退化为**纯价格底带锚**：3.38–3.77 六次探底验证（2023-10/2024-02/2024-04 大底/2024-09/2025-04/2026-06~09），体系稳定非降档；③**东航与南航最大差异=无 PB 资产底交叉校验**，T3/证伪线（2.50）为样本外深位、低置信，纯"生存定价+技术延伸"逻辑，卡内已如实标注。
+- **三档**：T1 3.40–3.70（**现价 3.49–3.56 已在区内**，Kelly=0）/ T2 2.95–3.15 / T3 2.50–2.70；证伪线 2.50。
+- **基本面**：单季极端季节性（25Q3 +35.34 / 26Q2 −38.12 亿），年度 EPS 无意义；26H1 −21.79 亿（营收 +11.1%，油价吞噬利润）；券商 FY1 +3.75 亿隐含 H2 +25.5 亿 vs 25H2 实际 −2.0 亿——极度乐观不采信；**因子假设已挂 OIL（中性 85–90，09-01 实读 92.61 超上沿）+ USDCNY（破 6.9 复核）**。
+- **波段/右侧**：波段箱体 3.43–3.82 可启动（现价贴买区，首笔减半、上限 15%）；右侧=放量收复 3.80（止损 3.40）；卡内标注东航波动两倍于南航（薄净资产+C919 主题+融资盘），只认收盘口径。
+- **胜率**：T1 40–50 / T2 45–55 / T3 55–65（基准 55–60：贴底带+最差中报已定价；盈利恶化 −10；券商裂口 −5~−10；无资产底 −5；生存质地 +5）。
+- **验证**：无代码改动未跑 pytest；create-draft schema+语义校验通过（含 earnings.factor_assumptions 挂载、负值 EPS/PE 定点字符串、价格带 tiers）。
+
+## 2026-09-02（续②：东航卡人工确认激活——全池 34 只 active 卡全覆盖）
+
+- **用户指令「激活」即人工确认**：draft **600115SH_67ba0e63** activate --effective-from **2026-09-03**，next_review 2026-10-31；激活归档 cards/600115.SH/2026-09-03_*.md + current.md 刷新。
+- **全池状态**：active 34 = watchlist 34 只全覆盖；draft 清零。09-03 盘后 daily 起东航卡片相关信号（tier_triggered/proximity/证伪线监测）同口径产出。
+- **提醒**：东航现价贴 T1 区（3.49–3.56 in 3.40–3.70）——激活后首日 T1 即触发 tier_triggered（无信号要求档）；同期波段买区（3.43–3.55）亦可能落决策点，两处提醒属卡面设计内状态，执行决策在人。
+
+## 2026-09-02（盘后 daily：ok=34 一次通过）
+
+- **采集（网络正常日，全程零重试）**：`akshare_collect --sources price,forward,financials,index,telegraph,announcement,macro,flow --start 2023-08-01 --end 2026-09-02 --price-api sina --run-id run_daily_20260902`，price/forward/financials/announcement 34/34 全齐，index 2、telegraph 1（10 条入库/10 行缺标题跳过）、flow（lhb EMPTY 属正常、dzjy ok）。**macro 12/13**：CL（WTI，sina GlobalFutures SSL EOF）今日缺，其余含 USDCNY/EURCNY 全齐（前日缺口自愈）。
+- **daily**：`--date 2026-09-02 --raw-dir data/raw/akshare` **ok=34 一次通过**，报告 revision=1，无证伪触发、无复核逾期。600115 东航 degraded(no_active_card) 属预期（卡 600115SH_67ba0e63 effective 2026-09-03，明日起出卡片信号）。
+- **今日决策点（P3）**：T1 触发 6 只——南航 4.98（v2 口径 Kelly=0，执行在人）、迈瑞 167.92、陕煤 26.10、海油 33.77、有友 9.59、西部矿业 39.59；海天 33.87 波段箱体 buy_zone（33.50–34.30）。P4 贴边 8 只，其中洛钼距 T2 下沿 18.49 仅 0.2%、天赐距 T2 下沿 34.60 仅 0.5%。珀莱雅"右侧确认待执行"提醒仍挂（08-27 触发无 executions，唯一遗留人工项）。
+- **宏观因子**：OIL 布伦特 94.22（88.27→90.9→92.61→94.22 四日连涨，超南航/东航卡中性平台 85–90 上沿，未到 ±15% 提醒线 103.5）；USDCNY 678.29、CU0 108040、AU0 938.22、LH0 11740 平稳。油价方向对航空双卡连续利空，逼近锚复核节奏需关注。
+- **测试**：无代码改动，未跑 pytest。
+
+## 2026-09-02（续③：东航卡提前生效 + 4 笔执行录入）
+
+- **用户指令「现在就救活」即人工确认**：旧卡 600115SH_67ba0e63（effective 2026-09-03，从未覆盖任何交易日）reject 人工废止（窗口闭合成 [09-03, 09-02) 空区间，如实记录）；同值 draft JSON 重建 **600115SH_fa3ae52b** 并 activate **--effective-from 2026-09-02**（内容零改动：三档 3.40–3.70 / 2.95–3.15 / 2.50–2.70，证伪线 2.50，next_review 2026-10-31）。注：activate 护栏禁止 effective_from 早于当前 active 卡生效日（§5.1 不回填历史），故须先废止旧卡。
+- **daily 重跑**（激活后同日幂等重跑，revision=3；多跑一次为操作冗余无害）：600115 转 complete，09-02 起卡片信号落地——tier_triggered T1（收盘 3.41 入 [3.40,3.70]）、box_position=below_box、证伪线 0/2 日、衰竭 0 项。全池 ok=34。
+- **执行录入 4 笔（#18–#21，append-only）**：#18 2025-07-30 buy 17700@3.89、#19 2026-01-07 sell 10800@6.15、#20 2026-02-05 sell 6000@6.31（三笔 --backfill，如实标记系统上线前手工单）；#21 2026-09-02 buy 15000@3.41 走正常 add（卡当日已生效），冻结 09-02 信号快照（T1 触发态）。持仓净额 15900 股。明早提醒 cron 已删（事已完成）。
+
+## 2026-09-03（基本面深度分析落地：财务三表补采 + fundamental-analysis-skill 首单）
+
+- **起因**：用户提出把一套"华尔街式 8 段股票分析"提示词改造后接入系统。评估结论：
+  框架完整但无数据锚定（幻觉风险）、角色扮演无约束力、#1 与 #2–#6 冗余；改造方向=
+  按系统"底稿→LLM draft→人工复核"模式重构。用户定边界：①补采财务数据（先看数据源
+  是否具备）；②先按需 skill，打磨成熟再考虑进日报。
+- **数据探测**（`docs/probe_20260903_financial_statements.md`）：akshare 三接口实测通过——
+  sina 资产负债表/现金流量表（2013 起全历史、单位元、与存量 financial_facts 逐分一致）、
+  THS 财务摘要（80 指标×45 期，含 ROE/资产负债率/毛利率）；仅 A 股，港股标缺口；
+  无披露日走 D1.3 降级。kimi bs/cf + financial_index 留作未来兜底（本期未建 adapter）。
+- **数据层（migration 0007 + 采集/adapter）**：新表 balance_sheet_facts / cash_flow_facts
+  （挂 financial_reports.report_id，同 financial_facts 模式）+ financial_indicator_snapshots
+  （THS 摘要 payload 快照，只作交叉核对不作规范化来源）。akshare_collect 新增手触发源
+  `balance_sheet/cash_flow/fin_abstract`（**不进 daily 默认 sources**）；adapters/akshare.py
+  三个 parse：表头复用（历史期新建降级表头，仅服务趋势分析不进信号链）、内容一致幂等
+  跳过、变化原地更新+data_revisions；摘要解析带 income 对账（0.5% 容差，超差记
+  incomplete 不覆盖）+ 历史期 income facts 回填（只补 NULL 列）。
+  **设计偏差记录**：计划原定 BS/CF 内容变化走"revision 升级"，实现改为原地更新+
+  data_revisions 日志（报表更正罕见，header revision 语义仍专属利润表）——理由：
+  BS/CF 挂在共享表头上，bump header revision 会惊动利润表通道。
+- **回填**：真实库先备份 `market.db.bak_20260903` → migrate 0007 → 34 只 A 股
+  （run_fin_backfill）：BS 2487 / CF 2463 / 快照 2538 行，0 冲突；603993 洛钼 2008 年报
+  对账超差 1 处（重述差异，记 incomplete 待人工核）；0700.HK 无源缺口。
+  **意外收获**：真实库 financial_reports 实际覆盖全历史（2013 起，非交接文档印象中的
+  "2023Q3 起 12 期"——那是 published_at 点时口径的覆盖范围），故 income 回填路径
+  基本未触发，"5 年财务分析"数据底子比预期完整。
+- **分析层**：新导出器 `scripts/pipeline/fundamental_inputs.py`（schema
+  fundamental_inputs_v1，纯读取，复用 card_inputs 的 meta/earnings/forecasts/
+  valuation_scale/factor_snapshot）→ `reports/{symbol}/fundamental_inputs_{date}.json`
+  八段；派生指标全部 Python 计算（净利率/ROE 期末归母权益口径/资产负债率/有息负债/
+  FCF/OCF 净利比；毛利率取 THS 快照标 _ths）；**隐含回报区间表替代 DCF**（一致预期
+  EPS × PE 历史分位 p25/p50/p75，样本区间强制标注）。新 skill
+  `skills/fundamental-analysis-skill/`（draft-only）：8 段提示词重构为三模块
+  （事实解读→定性研判→对抗呈现），铁律沿用 message-tag-skill 纪律（不产规范化数字/
+  事实推断观点三分/每条结论附证伪条件/禁用词/不做买卖建议——仓位归排期卡体系），
+  产出 `reports/{symbol}/fundamental_{date}_draft.md` 人工定稿。
+- **首单验证（603605.SH 珀莱雅）**：采集→入库→底稿→draft 全链路跑通
+  （`reports/603605.SH/fundamental_2026-09-02_draft.md`）。数字抽查：Python ROE
+  17.41% vs THS 17.61%（分母口径差，合理）；资产负债率 33.66% 与 THS 一致；FCF/同比
+  序列与公开财报走向吻合；2026H1"营收 +0.2% 净利 +46.3%"裂口 -37.7pp 如实呈现；
+  缺 BS 2 期（上市前）如实标 incomplete。draft 初稿两处自算数字（净现金差值、
+  "连续 18 个月"表述）被自查抓获并改写——skill 铁律有效性实证。
+- **测试**：新增 22 项（adapter 12 + 导出器 10），**522 全绿**（test_db migration
+  清单同步加 0007）。
+- **文档**：probe 记录 + system_design（§3.7 新小节/§7 表清单/§9.4 二期扩展落地标注/
+  §2.4 LLM 边界补第三 skill）+ database_schema（三表逐字段）+ 本日志 + handoff。
+- **后续（未做，按需再议）**：①skill 进日报/每日 sources（用户明确缓办，打磨后另立项）；
+  ②kimi bs/cf adapter（港股 0700.HK）；③§9.4 自算历史 PB 序列（BS 数据已就位）；
+  ④603993 2008 年报对账差异人工核对；⑤池外竞争对手数据采集（现仅池内横截面）。
+
+## 2026-09-03（盘后 daily：ok=34 一次通过）
+
+- **采集（分三个 run-id，financials 超时拆分补采）**：主跑 `run_daily_20260903`（price/forward/financials/index/telegraph/announcement/macro/flow）在 financials 中途撞 15 分钟命令超时（09-01 同款坑），已落盘 price/forward 34/34 + financials 22/34；拆 `run_daily_20260903_fin2` 补齐剩余 12 只 financials（12/12 零错误）；`run_daily_20260903_rest` 补 index/telegraph/announcement/macro/flow。**announcement 31/34**：601728 电信 / 601899 紫金 / 603288 海天三只 cninfo JSONDecodeError——手测确认非随机抽风而是分页中途上游故障（大窗口逐页抓取中途断，小窗口亦失败，多重试 + 间隔 15s 三轮仍失败），同 08-29/08-31 先例，**缺口明日回补**。
+- **daily**：`--date 2026-09-03 --raw-dir data/raw/akshare` **ok=34 一次通过**，报告 revision=1，无 P1/P2（无证伪触发、无复核逾期、无 degraded）。34 只当日 bar 齐全；000300.SH 至当日、^HSI 滞后一日（09-02）属常规；macro **13/13**（昨日缺的 CL WTI 自愈，92.14）。
+- **今日决策点（P3）7 只**：海天 603288 波段 buy_zone（34.12）；南航 600029 T1（4.99，v2 口径 Kelly=0 执行在人）；平安银行 000001 波段 sell_zone（11.88）；海油 600938 T1（33.43）；**东航 600115 T1 + buy_zone 双触发（3.43，卡 fa3ae52b 激活后首个交易日即双落，卡面设计内状态）**；陕煤 601225 T1（26.24）；有友 603697 T1（9.63）。P4 观察点 6 只：迈瑞距 T1 下沿 0.1%、西部矿业距 T1 上沿 0.3%、美的距 T1 下沿 0.9%、恒瑞距 T2 下沿 1.0%、百济距 T2 上沿 2.5%、珀莱雅"右侧确认待执行"仍挂（08-27 触发无 executions，唯一遗留人工项）。P5 内"档位触发待确认"3 只（平安 601318 / 洛钼 603993 / 天赐 002709 收盘进价区但同锚衰竭 0 项 < 2 不触发）。
+- **宏观因子**：OIL 布伦特 **96.68（88.27→90.9→92.61→94.22→96.68 五日连涨）**，逼近南航/东航卡 ±15% 提醒线 103.5（还差 ~7%），对航空双卡连续利空，若续涨一两个交易日即触发锚复核提醒；USDCNY 678.07、CU0 108410、AU0 958.38、LH0 11835 平稳。
+- **测试**：无代码改动，未跑 pytest。
+
+## 2026-09-03（续：盘后复盘）
+
+- **决策点复盘（P3，7 只）**：T1 触发 5 只——南航 4.99（活跃衰竭仍 2 项、贴区 0.05%，v2 Kelly=0 油价背景"先不动"强化）、**东航 3.43（卡激活首日即 T1+buy_zone 双触发，卡面设计内；回购进展公告）**、海油 33.43 / 陕煤 26.24 / 有友 9.63（常规进区、衰竭均 0 项）；箱体 2 只——**海天 34.12 buy_zone（同时距 T1 上沿 2.5%，箱体+档位双重接近，今日最值得人工复核的复合位置）**、平安银行 11.88 sell_zone（贴 box_high 11.90 差 0.2%）。
+- **P4 贴边群**：迈瑞距 T1 0.1%、西矿距 T1 上沿 0.3%、美的距 T1 0.9%、恒瑞距 T2 1.0%、百济距 T2 2.5%——五只同贴边，明日小幅波动即可能新增多个决策点；平安 601318/洛钼/天赐"进区衰竭不足待确认"延续。
+- **消息面**：电报 11 条全 tier4 不进决策链——美初请偏高、**沃勒鹰派（通胀偏热考虑支持加息）**+现货金 +2%（对 AU0 因子方向扰动，AU0 958.38 尚平稳）；池内公告常规：恒瑞 AL 获受理、联影/洛钼/平安分红实施、珀莱转债回售提示、东航回购进展、南航转债到期兑付提示。
+- **宏观**：OIL 96.68 五日连涨（累计约 +9.5%），距航空双卡 ±15% 提醒线 103.5 约 7%——再涨 1–2 日即触发锚复核提醒；USDCNY/CU0/LH0 平稳。日历：09-09 CPI/PPI、09-11 社融。
+- **明日清单**：①珀莱雅右侧执行录入（遗留人工项，现价 62.72 距止损 59.50 缓冲约 5%，压力较 08-31 缓和但不能继续拖）；②回补电信/紫金/海天公告簿；③盯 P4 贴边群转正（迈瑞/西矿优先）；④油价逼近提醒线预备航空双卡锚复核。
+
+## 2026-09-03（续②：珀莱雅"右侧确认待执行"人工决定闭环——不跟单，无需录入）
+
+- **用户澄清**：08-27 右侧确认（v1 卡 episode，confirmed→holding 至 08-31）后**没有买入**，非漏录入。上一笔执行仍是 #10（08-25 sell 1000@61.00）。
+- **处理**：零操作。该提醒是执行闭环窗口提醒（report.py `_right_side_followups`，FOLLOWUP_WINDOW_DAYS=10）：confirmed/stopped_out 后 10 日窗内无 executions 即提示，人工不跟单属设计内合法结局；**不补录伪执行**（append-only 纪律）。08-27 触发行 09-06（含）前报告仍显示，**09-07 起自然过期**。
+- **跟踪连续性**：v2 卡（09-01 生效）episode 已从 idle 重置，后续满足"放量突破→回踩确认"将重新走状态机，不回填历史确认。本条同时修正本日复盘清单中"录入不紧迫但不能继续拖"的表述——该项了结，唯一遗留人工项清零。
+
+## 2026-09-03（续③：平安 601318.SH 基本面深度分析 draft——fundamental-analysis-skill 第二单）
+
+- **流程**：fundamental_inputs 底稿（数据截止 09-03/财报 2026-06-30/一致预期快照 08-10）→ 三模块 draft → `reports/601318.SH/fundamental_2026-09-03_draft.md`（待人工定稿）。
+- **核心张力**：盈利超预期（H1 净利 +36.06% vs FY1 一致预期 +9.89%，裂口 −26.17pp；ROE(_ths) 半年 7.2→9.0）vs 估值刻度上沿（PE 6.5922 > 3 年样本 p75=6.5345，隐含回报表 FY1 全档隐含价 40.17–53.45 低于现价 58.00，FY2 p75 才持平）。限定：3 年样本含保险估值压制期 + PE 锚对保险业适配弱（P/EV 才行业标准，EV 未入库，卡 review_triggers 自认重锚事项）。
+- **财务稳健**（负债率六期 89.81–90.06% 稳定；有息负债 2346→2562 亿单边上行列为观察）；盈利质量按 incomplete（FCF null、OCF/净利对保险诊断力弱如实注明）。
+- **排期卡衔接**：收盘 58.00 入 T2 区 [57.80,60.80] 首日，同锚衰竭 0/2 不触发（tier_triggered pending_signals）；右侧状态机 v2 生效以来无任何状态行（卡内预案触发 56.50/判定 57.07 未被机器确认，09-01/09-03 两日 +2.4~2.5% 放量是否满足卡定义属人工核对观察点，本稿仅记事实不下结论）。
+- **skill 纪律实证**：ROE 引 roe_ths 标注口径；池内 BK1358 无同业如实写"仅自身"；禁用词/三分标注/证伪条件全覆盖。
+
+## 2026-09-03（续④：平安右侧状态机"零行"排查——非 bug，放量定义未满足）
+
+- **现象**：601318.SH signal_facts 中 right_side 历史行数为 0，而 v2 卡（153b6efc）right_side_trigger_json 结构化字段齐全（trigger 56.50/stop 54.60），且 09-01/09-03 收盘 57.23/58.00 均越过判定线 57.065。
+- **排查（systematic-debugging）**：①假设"无触发位"排除（字段在）；②复算突破条件：close ≥ trigger×1.01 **且** volume_adj ≥ 2.0×前 20 日均量（shift1）——两日量 10809/10871 万手，前 20 日均量约 7270 万手，量比约 1.49 < 2.0，**量能条件不满足**；③v1 窗口（触发线 56.56）无任何收盘达标日；④模块 CLI 权威复核：`right_side 601318.SH --as-of 2026-09-03` → status=ok，当前状态 idle，**转换 0 次**，与设计一致（"每次状态转换写行；idle 不落行；仅无卡/无触发位写 incomplete 行"）。
+- **根因**：非缺陷。平安两次越线均为"缩量版突破"（量比 ~1.5x），机器按 signals.yaml `right_side.vol_multiple=2.0` 的放量定义不予确认。与珀莱雅（08-26 放量→waiting_retest 行）口径自洽。
+- **是否调参**：vol_multiple=2.0 对低波动大盘股是否过严属参数问题——signals.yaml ⚠️ 参数处人工核对期内，不调整；如需调整待核对期结束后走 config_hash 可追溯变更。
+- **同步**：平安 fundamental draft §6 空方第 4 条已补量能复核明细。
+
+## 2026-09-03（续⑤：right_side vol_multiple 2.0→1.5 落地——用户指令，含参数回放依据）
+
+- **纠错**：002747.SZ = **埃斯顿**（机器人/自动化，池内创始成员，active 卡 002747SZ_6fd732f1），此前对话中误称"晨光"（晨光文具=603899，池外），特此更正。
+- **回放依据**（一次性脚本，复用 right_side.evaluate_segment 真实代码路径，按卡片版本窗口全池重放，脚本不入库）：2.0 基线 2 episode（恒力 +4.35% 持有中 / 珀莱雅换卡切断 −3.22% 标记）；1.5 新增平安（09-02 确认 @56.63→标记 +2.42%）与迈瑞（09-02 确认 @167.92→−0.15%），无止损；1.4 额外放入埃斯顿 08-19 假突破（@36.04→08-24 止损 @30.82，**−14.48%**）。结论：1.5 在样本内干净、1.4 已现噪声代价；样本仅 17 个交易日，不支持强统计结论，本质是滤波严格度取舍。
+- **变更**：`config/signals.yaml right_side.vol_multiple 2.0→1.5`（该参数不在 ⚠️ 冻结清单；yaml 注释记录调整日期与理由）。测试适配：`test_right_side_breakout_boundaries` 量能边界断言从硬编码 2 倍（200/199.99）改为按 `P["right_side"]["vol_multiple"]` 推导（配置相对化，兼容未来调参）。**522 项测试全绿**。
+- **全池重放**：34 只跑 `signals.right_side` CLI，32 ok + 2 设计内 `incomplete(no_trigger_level)`（美的/格力无触发位卡）。新增行：平安 601318（09-01 waiting_retest / **09-02 confirmed** / 09-03 holding）+ 迈瑞 300760（同构三行），与回放预测逐日一致；其余 32 只重放幂等无变化。
+- **报告 revision=2**：全池日报与单股报告重出。新增决策点：平安/迈瑞各两条——[右侧持仓跟踪]（止损 54.60/155.20，距止损 6.2%/8.0%）+ [右侧确认待执行]（09-02 触发无 executions，10 日窗内持续提醒，录入后消失）；珀莱雅 08-27 提醒照旧（09-07 自然过期）。
+- **注意**：新 config_hash 随本次 run 入库，旧 signal_facts 保留旧 hash 可追溯；未来每日管线自动按 1.5 判定。平安/迈瑞是否按右侧信号执行由人工决定（T2 衰竭闸门 0/2 未变，档位框架仍不触发）。
+
+## 2026-09-04（换手率 + 股东户数落地——§5.7 筹码集中度缺口闭合 2/3）
+
+- **背景**：用户问三类缺口数据源。探测结论：①换手率——sina 日线自带 `turnover`（小数）现有源即可；②股东户数——`ak.stock_zh_a_gdhs_detail_em`（东财 datacenter，实测珀莱雅 37 期全历史）当前网络可用；③筹码分布——`stock_cyq_em` 依赖 push2his 仍断连（与 price 切 sina 同因），且系东财模型估算值，缓办。用户指令"执行采集"。
+- **数据层（migration 0008/0009，真实库先备份 `market.db.bak_20260904`）**：①`daily_bars` 加 `turnover REAL` 列（**小数口径**，sina 原生/东财百分点采集侧归一；港股与 forward 行留空；**派生快照元数据，差异更新不记 data_revisions**——价格事实字段 revision 语义不变）；②新表 `holder_stats`（UNIQUE(symbol, stat_date)，delta_pct 存小数，announced_at=公告日期为 PIT 可见日；upsert 快照风格同 macro_factors，无 revision 链）。
+- **采集/adapter/ingest**：`collect_price` 三路径（sina/em/HH）写 turnover 列（em 换手率百分点 ÷100；港股、qfq forward 留空）；新 source `gdhs`（`collect_holder_stats` → `{symbol}_gdhs.csv`，手触发不进 daily 默认 sources）；`parse_price_csv` 透传 turnover + upsert 后差异 UPDATE（旧行兼容 9 列旧格式不清空）；新 `parse_holder_stats_csv`（文件名正则取 symbol，行级幂等/更新）；ingest 路由 ("akshare","gdhs")。
+- **回填实测**：turnover **25524/25524 CN bars 100%**（34 只，run_turnover_backfill，sina 全窗口重采）；holder_stats **1862 行/30 只**（2013 起全历史，run_gdhs_backfill）。**缺口 4 只**：601899 紫金 / 600029 南航 / 603993 洛钼 / 600115 东航——东财 RPT_HOLDERNUM_DET 源侧返回空（curl 手验 code=9201"返回数据为空"，非限流/非参数，稳定复现）；tdx quotes gdrs 字段为其备援（非序列）。**筹码分布**：cyq 探测仍被 push2his 阻断，如实记录。
+- **测试**：+5（adapter turnover 1 + holder_stats 2 + collector 2），量能边界断言改配置推导（上一节），**527 全绿**。数据库 schema 清单同步 0008/0009。
+- **文档**：database_schema（daily_bars.turnover 行 + holder_stats 表节 + 速查清单）+ 本日志 + handoff。
+- **未做**：①换手率/股东户数进报告 §7 快照与 UI 展示（数据已就位，展示层按需另做）；②4 只股东户数缺口的他源补采；③筹码分布待 push2his 恢复后评估（且需先定义模型估算数据的消费边界）。
+
+## 2026-09-04（续：自算筹码分布设计方案产出——待外部 Agent 评审）
+
+- **背景**：用户问筹码分布他源。实测：东财 cyq 直连与代理（127.0.0.1:7897）均被拒（RemoteDisconnected，东财对代理出口风控）；Tushare cyq_perf/cyq_chips 需新供应商；tdx 已探测不可得。提出自算路线（换手率衰减模型，输入=昨日回填的 3 年 OHLC+量+换手率已 100% 就位），用户选定"自算 + 出设计方案交其他 Agent 评审"。
+- **产出**：`docs/superpowers/specs/2026-09-04-chip-distribution-design.md`（draft 待评审）。要点：换手率衰减模型（A=1.0/k_cap=0.8/三角核）、复权域直算输出折回（除权无跳变）、burn_in=60 日打标、chip_distribution 表（migration 0010，不存网格）、golden+性质+除权连续性测试计划、东财恢复后秩相关交叉验证（ρ≥0.8 带宽比对非逐点）。**定位纪律不变：模型估算观察项，不进信号链**。
+- **给评审的 7 个开放问题**（分布核形状/A 与 cap/复权域直算假设/burn_in 松紧/网格不落库/网格外价格打标/命名）已列 §8，评审通过后按 §9 六步实施（~400 行，一次会话）。
+- **本条为文档产出，无代码/库变更，未跑 pytest。**
+
+## 2026-09-04（续②：筹码分布设计 v2——按评审意见修订完毕，可实施）
+
+- **评审**：用户提交外部 Agent 评审结论"conditional approve"（9 项修改清单），其中含对我 v1 两处实质纠错：①复权域直算的隐含假设——现金分红也会把历史成本平移，系统性低估真实股东成本（须显式声明且"不还原真实股东成本"入边界）；②burn-in 残留数学错误（v1 写"60 日 <20%"，实际 (1−0.02)^60≈30%，A=0.7 下 43%）。
+- **v2 修订**（全部采纳，映射表见文档 §0.1）：A=1.0→**0.7**（k_cap 重定位为异常护栏，A=0.7 下仅 turnover≥114% 触发）；burn_in=60→**90**+残差公式显式化+状态名 'ok'→'mature'；三角核 vwap 峰→**close 峰**（涨停日质量自然落板价、amount 缺口行免疫，vwap/均匀降为对照参数）；§2.3 补现金分红偏差声明+折回反向验证；表加 `amount_used`+rule_version 编码形状 `chip_v1_close_tri`；测试新增除权连续性/衰减截断/次新首日/折回反验 4 组；adjust.py 加 chip 重算 NOTE 提示（不耦合事务）；§6 交叉验证清单补 turnover 分母口径偏差源（sina 流通股本 vs 总股本）；开放问题 7→2（保留尖峰族与网格打标）。
+- **状态**：设计文档 `docs/superpowers/specs/2026-09-04-chip-distribution-design.md` v2 就绪，按 §9 七步实施（~550 行含测试）。本条为文档修订，无代码/库变更。
+
+## 2026-09-04（盘后 daily：ok=34 一次通过）
+
+- **采集**：单 run-id `run_daily_20260904`（price/forward/financials/index/telegraph/announcement/macro/flow，`--start 2023-08-01 --end 2026-09-04 --price-api sina`，后台无超时运行规避 15 分钟命令超时坑），**8 源全部 0 errors**：price/forward/financials/announcement 各 34/34，index 2、telegraph 1（7 条入库/13 行缺标题跳过）、macro 13/13、flow（lhb EMPTY 属正常、dzjy 1 笔入库）。**09-03 公告缺口回补**：海天 603288 的 09-02/09-03 共 6 条已随全窗口重采入库（采集 34/34 成功，cninfo 今日正常）；电信 601728 / 紫金 601899 09-03 源侧无公告（非缺口，采集窗口已全覆盖）。
+- **daily**：`--date 2026-09-04 --raw-dir data/raw/akshare` **ok=34 一次通过**，无 P1/P2（无证伪触发、无复核逾期、无 degraded 股）。34 只当日 bar 齐全；000300.SH 与 ^HSI 均至当日（恒指罕见未滞后）。
+- **603697 有友防御性因子重建**：除权落入检查窗（max_dev=0.1227% > 0.1%）触发全量重建 version_id=127，周线/指标（daily=752、pe_ttm 非空 746/752）/五信号同事务重算，报告 complete；adjust 阶段记 degraded=warnings（corporate_actions 空、平台切换日未交叉印证，已知缺口⑦同型，非错误）。美的/格力 right_side degraded=no_trigger_level（卡内无右侧触发位，设计内）。
+- **今日决策点（P3）9 只**：有友 603697 波段 sell_zone（9.93，贴 box_high 10.20 差 2.4%）；南航 600029 T1（5.03，v2 口径 Kelly=0 执行在人，连续第二日）；迈瑞 300760 T1（169.91）+右侧持仓跟踪（止损 155.20，距 9.5%）+右侧确认待执行（09-02 触发）；平安银行 000001 波段 sell_zone（11.89，贴 box_high 11.90 差 0.1%）；海油 600938 T1（33.41，连续）；西矿 601168 T1（38.79，昨日 P4 贴边 0.3% 今日转正）；陕煤 601225 T1（26.24，连续）；东航 600115 T1+buy_zone 双触发（3.49，连续第三日）；圣农 002299 波段 sell_zone（17.27）。
+- **P4 观察点 6 只**：洛钼距 T2 下沿 18.49 差 0.1%、美的距 T1 下沿 88.00 差 0.5%、恒瑞距 T2 下沿 46.44 差 0.9%、天赐距 T2 下沿 34.60 差 2.2%；珀莱雅 603605（08-27 触发，09-07 自然过期）与平安 601318（09-02 触发，同时"进区衰竭不足待确认"延续+右侧持仓跟踪距止损 6.7%）右侧确认待执行——**执行决策在人**。
+- **宏观因子**：OIL 布伦特 **95.32（-1.4%，五连涨中断）**，距航空双卡 ±15% 提醒线 103.5 约 8.6%，压力暂缓；CL WTI 90.83 同步回落；AU0 965.96 续涨（沃勒鹰派后金价未回头）；USDCNY 677.87、CU0 108780、LH0 11765 平稳。日历：09-09 CPI/PPI、09-11 社融。
+- **测试**：无代码改动，未跑 pytest。
+
+## 2026-09-04（续：盘后复盘）
+
+- **决策点复盘（P3，9 只）**：卖出侧 3 只箱体——平安银行 11.89 贴 box_high 11.90 仅 0.1%（连续两日贴边，卖区最紧）、有友 9.93（距箱顶 2.4%）、圣农 17.27（sell_zone 内 71% 位置）；买入侧 T1 6 只——迈瑞 169.91 / 西矿 38.79（昨日 P4 贴边 0.1%/0.3% 双双转正）、南航 5.03（连续，Kelly=0）、海油 33.41 / 陕煤 26.24（连续）、东航 3.49 T1+buy_zone 双触发连续三日。迈瑞另挂右侧持仓跟踪（止损 155.20，距 9.5%）+右侧确认待执行（09-02 触发）。
+- **昨日清单核对**：①珀莱雅右侧执行——昨日已闭环（不跟单），提醒 09-07 自然过期，今日仍在列属预期；②电信/紫金/海天公告簿回补——完成（cninfo 自愈，海天 6 条入库；电信/紫金当日源侧无公告）；③P4 贴边群——迈瑞/西矿转正，美的（0.5%）/恒瑞（0.9%）仍贴边，百济脱离贴边区；④油价——五连涨中断（96.68→95.32，-1.4%），距航空双卡提醒线 103.5 约 8.6%，暂缓但仍在 95+ 高位不解除预备。
+- **消息面**：电报 7 条全 tier4 不进决策链——花旗推迟美联储降息预期至 2027（与昨日沃勒鹰派同向，海外利率收紧主线延续）、非农大超预期后下周美国通胀数据成关键、中东航线运费大幅跳涨、合成橡胶夜盘 +5%。池内公告：恒瑞药品注册批准 + 上市许可受理（连续第二日管线进展）、南航转债到期兑付第二次提示、珀莱转债回售第二次提示、洽洽转债停止交易、电信中期分红实施、神华临时股东会通知、海天回购进展 + H 股中报。大宗：万华 2.32 亿元平价成交（折溢价 -0.004%，中信总部自国泰海通营业部接盘，tier3 静默入库）。
+- **宏观**：OIL 95.32 回落、CL 90.83 同步回落；AU0 965.96 续涨（鹰派言论未压回金价）；USDCNY 677.87 / CU0 108780 / LH0 11765 平稳。日历：09-09 CPI/PPI、09-11 社融。
+- **下周一清单**：①迈瑞/平安 601318 右侧确认待执行人工决定（距止损 9.5%/6.7%，不跟单也须明确闭环）；②P4 贴边群盯转正——洛钼距 T2 仅 0.1% 最优先，美的/恒瑞次之；③卖区三只人工复核（平安银行贴箱顶 0.1% 最紧）；④油价 95+ 高位，航空双卡锚复核预备不解除；⑤09-09 CPI/PPI 发布前留意。

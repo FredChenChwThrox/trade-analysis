@@ -58,12 +58,16 @@ _ROUTES = {
     ("akshare", "macro"): macro_factors_adapter.parse_macro_csv,         # r2 Phase 2：宏观因子快照
     ("akshare", "flow"): flow_events_adapter.parse_flow_csv,             # r2 Phase 2：龙虎榜/大宗 → events(scope='flow')
     ("akshare", "industry"): industry_adapter.parse_industry_csv,        # r2 Phase 3：全市场行业归属 → symbol_industry
+    ("akshare", "balance_sheet"): ak.parse_balance_sheet_csv,   # 基本面数据层：sina 资产负债表 → balance_sheet_facts
+    ("akshare", "cash_flow"): ak.parse_cash_flow_csv,           # 基本面数据层：sina 现金流量表 → cash_flow_facts
+    ("akshare", "fin_abstract"): ak.parse_fin_abstract_csv,     # 基本面数据层：THS 摘要 → 快照 + income 对账/回填
+    ("akshare", "gdhs"): ak.parse_holder_stats_csv,             # 股东户数（筹码集中度间接指标）→ holder_stats
 }
 
 
 def _symbol_from_filename(path: Path) -> str | None:
     stem = path.stem
-    for sep in ("_is_", "_bs_", "_cf_"):
+    for sep in ("_is_", "_bs_", "_cf_", "_abstract_", "_gdhs"):
         if sep in stem:
             return stem.split(sep)[0]
     return stem or None

@@ -1,7 +1,7 @@
 """D3.3 排期卡底稿导出器测试（设计 §5.6、§3.2）。
 
 锁定：
-- 底稿 JSON 九段结构齐全（meta/earnings/forecasts/valuation_scale/
+- 底稿 JSON 十段结构齐全（meta/earnings/forecasts/factor_snapshot/valuation_scale/
   market_snapshot/exhaustion_params/signal_status/daily_watch/config_params）；
 - pe_ttm 分位数为线性插值口径，样本区间（首末日期）强制标注（§3.2）；
 - 恐慌低点 pe_ttm 关联 = indicators_daily 当日值；
@@ -19,6 +19,7 @@ import pytest
 
 from scripts.pipeline import db
 from scripts.pipeline import card_inputs as ci
+from scripts.signals.common import RULE_VERSION
 
 SYM = "TEST.SH"
 
@@ -147,15 +148,16 @@ def conn(tmp_path):
     c.close()
 
 
-# ---------------------------------------------------------------- 九段结构
+# ---------------------------------------------------------------- 十段结构
 
-def test_nine_sections_complete(conn):
+def test_ten_sections_complete(conn):
     doc = ci.build_inputs(conn, SYM)
     assert list(doc.keys()) == [
-        "meta", "earnings", "forecasts", "valuation_scale", "market_snapshot",
-        "exhaustion_params", "signal_status", "daily_watch", "config_params"]
+        "meta", "earnings", "forecasts", "factor_snapshot", "valuation_scale",
+        "market_snapshot", "exhaustion_params", "signal_status", "daily_watch",
+        "config_params"]
     m = doc["meta"]
-    assert m["schema"] == "card_inputs_v1"
+    assert m["schema"] == "card_inputs_v2"
     assert m["data_cutoff"]["daily_bars"] == "2026-01-09"
     assert m["data_cutoff"]["financial_reports"] == "2026-03-31"
     e = doc["earnings"]
@@ -169,8 +171,11 @@ def test_nine_sections_complete(conn):
     assert {"week_end_date", "active_count", "min_active_signals", "meets_min",
             "signals"} <= set(doc["signal_status"])
     assert {"as_of", "active_card", "facts"} <= set(doc["daily_watch"])
-    assert doc["config_params"]["rule_version"] == "signals_v1"
+    fs = doc["factor_snapshot"]                        # fixture 无行业码 → 无映射
+    assert fs["factors"] == [] and "无因子映射" in fs["note"]
+    assert doc["config_params"]["rule_version"] == RULE_VERSION
     assert doc["config_params"]["config_hash"]
+    assert doc["config_params"]["industry_factors_hash"]
 
 
 # ---------------------------------------------------------------- 分位数与样本区间（§3.2）
@@ -271,7 +276,7 @@ def test_export_writes_file_and_readonly(conn, tmp_path):
     doc, path = ci.export_inputs(conn, SYM, tmp_path / "cards")
     assert path.name == "inputs_2026-01-09.json"
     on_disk = json.loads(path.read_text(encoding="utf-8"))
-    assert on_disk["meta"]["schema"] == "card_inputs_v1"
+    assert on_disk["meta"]["schema"] == "card_inputs_v2"
     assert list(on_disk.keys()) == list(doc.keys())
     for t, n in counts_before.items():                   # 纯读取，不写库
         assert conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] == n

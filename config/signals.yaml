@@ -33,7 +33,9 @@ defaults:
   right_side:
     breakout_pct: 0.01        # 收盘突破关键位 1%
     vol_ma_days: 20
-    vol_multiple: 2.0         # 成交量 ≥ 前 20 日均量 2 倍
+    vol_multiple: 1.5         # 成交量 ≥ 前 20 日均量 1.5 倍（2026-09-03 由 2.0 调整：
+                              # 全池回放显示 2.0 对低波动大盘股过严漏接平安/迈瑞，
+                              # 1.4 则放入埃斯顿 -14.5% 假突破，样本详见执行日志）
     retest_window_days: 10    # 10 个交易日内回踩
     retest_band_pct: 0.02     # 回踩关键位上下 2%
     retest_hold_pct: 0.01     # 收盘不低于关键位 1%

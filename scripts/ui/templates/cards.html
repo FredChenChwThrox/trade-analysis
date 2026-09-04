@@ -38,10 +38,10 @@
     <div class="card overflow-x-auto">
       <table class="data-table">
         <thead><tr>
-          <th>card_version_id</th>
+          <th>卡片版本</th>
           <th>股票</th><th>状态</th>
           <th>生效起</th><th>生效止</th>
-          <th>替代</th><th>价区摘要</th><th>下次复核</th><th>操作</th>
+          <th>价区摘要</th><th>下次复核</th><th>操作</th>
         </tr></thead>
         <tbody id="card-tbody"></tbody>
       </table>
@@ -58,5 +58,6 @@
 </div>
 {% endblock %}
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/card_detail.js') }}"></script>
 <script src="{{ url_for('static', filename='js/cards.js') }}"></script>
 {% endblock %}

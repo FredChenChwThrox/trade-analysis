@@ -234,3 +234,87 @@ stocks:
     timezone: Asia/Shanghai
     industry_code: BK1605  # 医疗设备
     themes: [医疗器械, 体外诊断, 监护仪]
+  # 2026-08-29 加入：油气三巨头 + 电信运营商双龙头（采集 price/forward/financials/announcement/forecast/stock_info）
+  - symbol: 601857.SH
+    market: CN
+    name: 中国石油
+    aliases: [中国石油, 中石油, PetroChina]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+    industry_code: BK1569  # 炼油化工
+    themes: [石油, 油气, 油价]
+  - symbol: 600028.SH
+    market: CN
+    name: 中国石化
+    aliases: [中国石化, 中石化, Sinopec]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+    industry_code: BK1569  # 炼油化工
+    themes: [石油, 炼化, 油价]
+  - symbol: 600938.SH
+    market: CN
+    name: 中国海油
+    aliases: [中国海油, 中海油, CNOOC]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+    industry_code: BK1574  # 油气开采Ⅲ
+    themes: [石油, 油气开采, 油价]
+  - symbol: 600941.SH
+    market: CN
+    name: 中国移动
+    aliases: [中国移动, China Mobile]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+    industry_code: BK1587  # 电信运营商
+    themes: [电信运营商, 通信, 算力]
+  - symbol: 601728.SH
+    market: CN
+    name: 中国电信
+    aliases: [中国电信, China Telecom]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+    industry_code: BK1587  # 电信运营商
+    themes: [电信运营商, 通信, 算力]
+  # 2026-08-30 加入：创新药双龙头 + CXO 龙头（采集 price/forward/financials/announcement/forecast/stock_info）
+  - symbol: 688235.SH
+    market: CN
+    name: 百济神州
+    aliases: [百济神州, 百济, BeiGene, BeOne]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+    industry_code: BK1594  # 化学制剂
+    themes: [创新药, 肿瘤, 出海]
+  - symbol: 600276.SH
+    market: CN
+    name: 恒瑞医药
+    aliases: [恒瑞医药, 恒瑞, Hengrui]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+    industry_code: BK1594  # 化学制剂
+    themes: [创新药, 肿瘤, 出海]
+  - symbol: 603259.SH
+    market: CN
+    name: 药明康德
+    aliases: [药明康德, 药明, WuXi AppTec]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+    industry_code: BK1600  # 医疗研发外包
+    themes: [CXO, 医药外包, 创新药]
+  # 2026-09-02 加入：航空（采集 price/forward/financials/announcement/forecast）
+  - symbol: 600115.SH
+    market: CN
+    name: 东方航空
+    aliases: [东方航空, 中国东航, 东航, China Eastern]
+    benchmark_code: 000300.SH
+    currency: CNY
+    timezone: Asia/Shanghai
+    industry_code: BK1479  # 航空（与南航同业）
+    themes: [航空, 出行, C919]
