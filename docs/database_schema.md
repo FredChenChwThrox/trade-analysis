@@ -43,6 +43,8 @@
 | cash_flow_facts | [事实] | report_id（引用） | 现金流量表事实（0007；FCF 为派生不落库） | adapters/akshare.py |
 | financial_indicator_snapshots | [事实] | snapshot_id；UNIQUE(symbol, period_end, source) | THS 源算指标全量快照，仅交叉核对（0007） | adapters/akshare.py |
 | holder_stats | [事实] | id；UNIQUE(symbol, stat_date) | 股东户数序列（筹码集中度间接指标，0009） | adapters/akshare.py（--sources gdhs，手触发） |
+| paper_decisions | [事实] | id；UNIQUE(symbol, decision_date, decision_type, signal_source) | 模拟盘决策流水（append-only，0011） | scripts/paper/decide.py（手触发） |
+| paper_positions | [事实] | id；UNIQUE(symbol) 开仓期 | 虚拟仓位状态机（open/closed，0011） | scripts/paper/settle.py |
 | chip_distribution | [派生] | id；UNIQUE(symbol, trade_date) | 自算筹码分布四项快照（0010，模型估算观察项） | indicators/chip_distribution.py（手触发/--all） |
 | share_capital_events | [事实] | sce_id | 股本变动事件/快照 | indicators/valuation.py |
 | fx_rates | [事实] | (from, to, rate_date) | 财务币种→交易币种日汇率 | adapters/yahoo_finance.py |
@@ -217,6 +219,14 @@ report_id PK 引用 financial_reports。字段（TEXT 定点、元）：ocf（�
 ### chip_distribution — 自算筹码分布快照 [派生]（0010，2026-09-04）
 
 主键 UNIQUE(symbol, trade_date)。换手率衰减模型（chip_v1_close_tri，A=0.7/k_cap=0.8/close 峰三角核/网格 2000，参数固化 `params_json` + `config_hash`，设计 `docs/superpowers/specs/2026-09-04-chip-distribution-design.md` v2）。字段：winner_ratio（获利比例 [0,1]）/ avg_cost、cost_5、cost_95（**不复权口径**，复权域计算后 ÷ 当日 factor 折回）/ concentration_90（=(c95−c5)/(c95+c5)）/ estimation_status（**burn_in 前 90 日 / mature**；初始化偏差残差见设计 §3）/ turnover_used、amount_used（输入快照审计）。**定位纪律：模型估算观察项，不进信号链/daily 默认链/卡片触发（§2.5）**；现金分红在前复权口径下平移历史成本，不还原真实股东成本（偏差声明，设计 §2.3/§7）。幂等 DELETE+重插+pipeline_runs（stage='chip_distribution'），--all 单一全局 run_id。CLI：`uv run python -m scripts.indicators.chip_distribution <symbol|--all>`。**2026-09-04 首算 25558 行/34 只**；adjust.py 因子重建后须全量重算（adjust 结果 notes 已加提示）。
+
+### paper_decisions — 模拟盘决策流水 [事实]（0011，2026-09-05）
+
+主键 UNIQUE(symbol, decision_date, decision_type, signal_source)，**一点一决**。设计 `docs/superpowers/specs/2026-09-05-paper-trading-design.md` v2。字段：decision_type（entry/exit）/ signal_source（tier_triggered、right_side、falsification_breach、box_entry、deep_exit、timeout、manual、reversal）/ decision（follow/skip/counter）/ close_used（**TEXT 定点**，系统取决策日收盘不可自填）/ quantity（整百股）/ notional（固定名义）/ constraint_tag（'single_position'=一股一仓结构性 skip）/ late（超 T+1 收盘窗口）/ reversed_by（冲正行 id，append-only 冲正模式）/ signal_snapshot_json（决策语境冻结）。与 executions 完全隔离，不进信号链。
+
+### paper_positions — 模拟盘虚拟仓位 [事实]（0011，2026-09-05）
+
+状态机 open/closed。字段：entry_decision_id（FK）/ entry_date、entry_close（TEXT 定点）/ quantity / notional / deep_exit_line（entry 时冻结）/ exit_date、exit_close、exit_source（falsification/stopped_out/deep_exit/timeout/manual/reversal）/ hold_days（交易日历含停牌）/ ret、pnl（REAL，**结算时点库内因子现取**——因子版本变化会重算 open 仓位收益，已知偏差声明设计 §3.3）。CLI：`scripts.paper.decide / settle / stats`；全池日报"模拟盘"段 + 单股 §3 提示行（纯读）。
 
 ### financial_indicator_snapshots — THS 源算指标快照 [事实]（0007）
 

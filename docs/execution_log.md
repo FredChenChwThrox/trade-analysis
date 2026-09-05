@@ -1770,3 +1770,12 @@
 - **评审四问采纳**：结构性 skip 打标 `constraint='single_position'` 统计分层（防一股一仓污染自主 skip）；late 默认含+标注数、恒备剔除口径；新增 **deep_exit 档位深度脱离退出**（zone_low×(1−5%)，防 timeout 静默吸收大多数仓位）；机械基线退出全跟确认；scripts/paper/ docstring 声明与 backtest 边界。
 - **自审补漏**：同日多 exit 信号 → 任一 follow 平仓、其余 superseded。
 - **状态**：设计 v2 就绪，按 §9 八步实施（~1400 行含测试）。本条为文档修订，无代码/库变更。
+
+## 2026-09-05（续②：模拟盘落地——migration 0011 + scripts/paper/ 全链路）
+
+- **实施（设计 v2 §9 八步，计划 docs/superpowers/plans/2026-09-05-paper-trading.md）**：①0011 两表（paper_decisions 一点一决 append-only / paper_positions 状态机）；②config/paper.yaml（名义 10 万/笔、max_hold 60、窗口 T+1、box 去抖 5、deep_exit 5%）；③`scripts/paper/common.py` 决策点枚举（tier 前日状态扫描、falsification 确认日、box 滚动冷却去抖、deep_exit 首破日、结构性 skip 打标、已决去重）；④`decide.py` 录入（三态校验/窗口 late/单仓拒绝/整百股/deep_exit_line 冻结/exit-follow 即时落账）；⑤`settle.py`（timeout 目标日停牌顺延、manual 单列、reversal 冲正强平——已结算仓位拒绝冲正）；⑥`stats.py`（follow/skip 分层/counter 正确率/机械基线全点全跟/判断力差值/late 双口径/样本 <30 警告）；⑦report.py 全池日报"模拟盘"段（当日待决+浮盈+累计，纯读 degraded 不拖垮）+ 单股 §3 提示行。
+- **实现期抓虫两处**：①三角 CDF 无关——本轮为 timeout 顺延逻辑 next_bar_date 严格大于导致目标日自带 bar 被跳过（exit_date 错一天），改"目标日有 bar 即用，无则顺延"；②box 去抖初版只数已录决策，漏数未决候选——改枚举内滚动冷却基准。
+- **测试**：新增 20 项（枚举 6/录入 6/结算 5/统计 3/报告 2 中含省略态），**559 全绿**。
+- **真实库**：migrate 0011；`decide --pending` 冒烟列出 26 个真实待决点（09-02~09-04 触发：东航/海油/西矿/陕煤 T1、平安 right_side confirmed、迈瑞/西矿 09-04 T1 等，均将被标 late 如实记录）；09-04 日报重出 revision=3，模拟盘段列出当日迈瑞/西矿两个待决点。
+- **已知限制（如实）**：①上线首日机械基线含全部历史点，"判断力差值"自用户首笔决策起才有解释力；②结构性 skip 占比/deep_exit 与 timeout 触发频率——首月回看调参（设计 §8 遗留）。
+- **文档**：database_schema（paper 两表节+速查）、system_design（§7 表清单加"实验"类）、handoff、本日志。

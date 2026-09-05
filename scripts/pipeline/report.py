@@ -459,6 +459,9 @@ def build_symbol_report(conn: sqlite3.Connection, symbol: str, trade_date: str,
             a(f"- {d}")
     else:
         a("- 今日无决策点。")
+    paper_line = _paper_symbol_line(conn, symbol, trade_date)
+    if paper_line:
+        a(f"- 模拟盘: {paper_line}")
     a("")
 
     # ---- 4. 观察点
@@ -887,6 +890,26 @@ def render_daily_report(reps: list[SymbolReport], skipped: list[tuple[str, str]]
     return "\n".join(L)
 
 
+def _paper_symbol_line(conn: sqlite3.Connection, symbol: str,
+                       trade_date: str) -> str | None:
+    """单股报告 §3 的模拟盘提示行（无任何记录 → None 不显示）。"""
+    try:
+        rows = conn.execute(
+            "SELECT decision, decision_date, close_used FROM paper_decisions "
+            "WHERE symbol=? AND decision_type='entry' AND reversed_by IS NULL "
+            "ORDER BY decision_date DESC LIMIT 1", (symbol,)).fetchone()
+        open_pos = conn.execute(
+            "SELECT status FROM paper_positions WHERE symbol=? AND status='open'",
+            (symbol,)).fetchone()
+        if open_pos:
+            return f"持仓中（entry 决策见 {rows['decision_date'] if rows else '—'}）"
+        if rows:
+            return f"最近 entry 决策 {rows['decision_date']} → {rows['decision']}"
+        return None
+    except Exception:  # noqa: BLE001 — 表不存在等场景静默（功能未启用）
+        return None
+
+
 def _paper_section(conn: sqlite3.Connection, trade_date: str) -> list[str]:
     """全池日报"模拟盘"段：未决点/待平仓/浮盈/累计摘要。任何异常由调用方 degraded。"""
     from scripts.paper import common as pc
@@ -894,8 +917,10 @@ def _paper_section(conn: sqlite3.Connection, trade_date: str) -> list[str]:
     cfg = pc.load_config()
     lines: list[str] = []
     points = pc.enumerate_decision_points(conn, trade_date, cfg)
-    pending_entry = [p for p in points if p["decision_type"] == "entry"]
-    pending_exit = [p for p in points if p["decision_type"] == "exit"]
+    pending_entry = [p for p in points if p["decision_type"] == "entry"
+                     and p["decision_date"] == trade_date]
+    pending_exit = [p for p in points if p["decision_type"] == "exit"
+                    and p["decision_date"] == trade_date]
     a = lines.append
     if pending_entry:
         a("### 待决策（entry，超 T+1 收盘标 late）")

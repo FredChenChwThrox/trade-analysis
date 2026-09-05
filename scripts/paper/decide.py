@@ -111,6 +111,11 @@ def main(argv: list[str] | None = None) -> int:
         now_dt = _now_bj()
         as_of = args.as_of or now_dt[:10]
         points = pc.enumerate_decision_points(conn, as_of, cfg)
+        # 默认只列近 10 个交易日的未决点（更早的属漏录，不作为可行动清单；
+        # 报告段仅列当日——设计 §6）
+        points = [p for p in points
+                  if pc.trading_days_between(conn, p["decision_date"],
+                                             as_of) <= 10]
         if args.pending or args.pick is None:
             if not points:
                 print("（无待决策点）")

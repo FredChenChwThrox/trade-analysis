@@ -547,6 +547,8 @@ reverses_execution_id, created_at
 | 财务 | `forecasts` | 分析师预测历史快照 |
 | 派生 | `indicators_daily` / `indicators_weekly` | 当前口径指标，可重算 |
 | 派生 | `chip_distribution` | 自算筹码分布快照（0010，模型估算观察项，不进信号链；设计 specs/2026-09-04-chip-distribution-design.md） |
+| 派生 | `chip_distribution` | 自算筹码分布快照（0010，模型估算观察项，不进信号链） |
+| 实验 | `paper_decisions` / `paper_positions` | 模拟盘决策流水与虚拟仓位（0011，与 executions 隔离） |
 | 派生 | `signal_facts` | 当前口径信号事实，可重算 |
 | 策略 | `strategy_card_versions` | 不可变卡片版本及当前状态 |
 | 策略 | `executions` | 不可变实际执行与冲正 |
