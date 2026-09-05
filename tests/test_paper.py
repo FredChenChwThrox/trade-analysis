@@ -269,3 +269,107 @@ class TestDecide:
         assert pos["ret"] == pytest.approx(60.0 / 62.0 - 1, abs=1e-9)
         assert pos["pnl"] == pytest.approx(100000 * (60.0 / 62.0 - 1), abs=1e-6)
         assert pos["hold_days"] == 2
+
+
+# ---------------------------------------------------------------- 结算
+
+
+def _entry_follow(conn, symbol, date, close, factor=1.0, deep_line=None):
+    pt = _mk_point(conn, symbol=symbol, date=date, close=str(close))
+    if pt is None:
+        pt = _mk_point(conn, symbol=symbol, date=date, close=str(close))
+    with conn:
+        did = pd.record_decision(conn, pt, "follow", "",
+                                 f"{date}T21:00:00+08:00", CFG)
+    if deep_line is not None:
+        conn.execute("UPDATE paper_positions SET deep_exit_line=? "
+                     "WHERE symbol=?", (str(deep_line), symbol))
+    return did
+
+
+class TestSettle:
+    def test_exdiv_factor_ret(self, conn):
+        # 送股除权：entry 62@1.0 → exit 30@2.0 → 复权 ret = 60/62-1（非 -51%）
+        add_bar(conn, "603605.SH", "2026-09-01", 62.0, factor=1.0)
+        add_bar(conn, "603605.SH", "2026-09-02", 30.0, factor=2.0)
+        add_fact(conn, "603605.SH", "2026-09-02", "falsification_breach",
+                 "active", 1)
+        open_pos(conn, "603605.SH", "2026-09-01", 62.0, 20.0)
+        conn.commit()
+        pt = _mk_point(conn, date="2026-09-02", dtype="exit",
+                       source="falsification_breach", close="30.0")
+        with conn:
+            pd.record_decision(conn, pt, "follow", "",
+                               "2026-09-02T21:00:00+08:00", CFG)
+        pos = conn.execute("SELECT * FROM paper_positions").fetchone()
+        assert pos["ret"] == pytest.approx(60.0 / 62.0 - 1, abs=1e-9)
+
+    def test_timeout_with_suspension_deferral(self, conn):
+        cfg = dict(CFG, max_hold_days=5)
+        # entry 09-01（周二）；09-02 有 bar；09-03/09-04 停牌无 bar；09-07 复牌
+        for td, c in [("2026-09-01", 62.0), ("2026-09-02", 62.0),
+                      ("2026-09-07", 61.0), ("2026-09-08", 61.5)]:
+            add_bar(conn, "603605.SH", td, c)
+        pt = _mk_point(conn, date="2026-09-01", close="62.0")
+        with conn:
+            pd.record_decision(conn, pt, "follow", "",
+                               "2026-09-01T21:00:00+08:00", cfg)
+        # now=09-05（周六）：5 个交易日目标日=09-07，但 09-05 < 09-07 → 未到期
+        settled = ps.run_settle(conn, cfg, "2026-09-05")
+        assert settled == []
+        # now=09-08：目标日 09-07 有 bar → 按 09-07 结算
+        settled = ps.run_settle(conn, cfg, "2026-09-08")
+        assert len(settled) == 1
+        pos = conn.execute("SELECT * FROM paper_positions").fetchone()
+        assert pos["status"] == "closed" and pos["exit_source"] == "timeout"
+        assert pos["exit_date"] == "2026-09-07"
+        assert pos["hold_days"] == 5
+        # 已结算不重复
+        assert ps.run_settle(conn, cfg, "2026-09-08") == []
+
+    def test_timeout_suspension_pushes_exit_date(self, conn):
+        cfg = dict(CFG, max_hold_days=3)
+        # entry 09-01；目标日=09-03 停牌（无 bar）→ 顺延至下一有 bar 日 09-04
+        for td, c in [("2026-09-01", 62.0), ("2026-09-02", 62.0),
+                      ("2026-09-04", 61.0)]:
+            add_bar(conn, "603605.SH", td, c)
+        pt = _mk_point(conn, date="2026-09-01", close="62.0")
+        with conn:
+            pd.record_decision(conn, pt, "follow", "",
+                               "2026-09-01T21:00:00+08:00", cfg)
+        settled = ps.run_settle(conn, cfg, "2026-09-06")
+        assert len(settled) == 1
+        pos = conn.execute("SELECT * FROM paper_positions").fetchone()
+        assert pos["exit_date"] == "2026-09-04"
+        assert pos["hold_days"] == 4  # 09-01→09-04 含停牌（09-03）
+
+    def test_manual_close(self, conn):
+        for td, c in [("2026-09-01", 62.0), ("2026-09-02", 63.0)]:
+            add_bar(conn, "603605.SH", td, c)
+        _entry_follow(conn, "603605.SH", "2026-09-01", 62.0)
+        with conn:
+            ps.manual_close(conn, "603605.SH", "情绪化想卖，记录一下",
+                            "2026-09-02", CFG, "2026-09-02T21:00:00+08:00")
+        pos = conn.execute("SELECT * FROM paper_positions").fetchone()
+        assert pos["status"] == "closed" and pos["exit_source"] == "manual"
+        assert pos["ret"] == pytest.approx(63.0 / 62.0 - 1, abs=1e-9)
+        dec = conn.execute(
+            "SELECT * FROM paper_decisions WHERE signal_source='manual'"
+        ).fetchone()
+        assert "情绪化" in dec["note"]
+
+    def test_reversal_closes_open_position(self, conn):
+        for td, c in [("2026-09-01", 62.0), ("2026-09-02", 63.0)]:
+            add_bar(conn, "603605.SH", td, c)
+        did = _entry_follow(conn, "603605.SH", "2026-09-01", 62.0)
+        with conn:
+            rid = ps.reversal(conn, did, "录错了，其实是想 skip",
+                              "2026-09-02", CFG, "2026-09-02T22:00:00+08:00")
+        orig = conn.execute("SELECT * FROM paper_decisions WHERE id=?",
+                            (did,)).fetchone()
+        assert orig["reversed_by"] == rid
+        pos = conn.execute("SELECT * FROM paper_positions").fetchone()
+        assert pos["status"] == "closed" and pos["exit_source"] == "reversal"
+        with pytest.raises(ValueError, match="已被冲正"):
+            ps.reversal(conn, did, "再冲一次", "2026-09-02", CFG,
+                        "2026-09-02T23:00:00+08:00")

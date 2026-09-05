@@ -75,10 +75,15 @@ def run_settle(conn: sqlite3.Connection, cfg: dict, now_date: str) -> list[dict]
         if target_idx >= len(days):
             continue
         target = days[target_idx]
-        actual = pc.next_bar_date(conn, pos["symbol"], target) or target
-        # actual 当日须有 bar 且已到时点
-        bar = pc.get_bar(conn, pos["symbol"], actual)
-        if bar is None or bar["close_raw"] is None or actual > now_date:
+        # 目标日有 bar → 当日结算；停牌无 bar → 顺延至下一有 bar 日
+        bar = pc.get_bar(conn, pos["symbol"], target)
+        if bar is not None and bar["close_raw"] is not None:
+            actual = target
+        else:
+            actual = pc.next_bar_date(conn, pos["symbol"], target) or ""
+            bar = pc.get_bar(conn, pos["symbol"], actual) if actual else None
+        if actual is None or actual == "" or actual > now_date or bar is None \
+                or bar["close_raw"] is None:
             continue  # 停牌顺延中 / 未到期
         _settle_position(conn, pos, actual, str(bar["close_raw"]), "timeout",
                          None)
