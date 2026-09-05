@@ -44,7 +44,7 @@ uv run python -m scripts.pipeline.db seed
 
 ```bash
 uv run pytest -q
-# 当前 400 项测试应全绿
+# 当前 559 项测试应全绿
 ```
 
 ---
@@ -54,7 +54,7 @@ uv run pytest -q
 数据从来源采集到报告生成，经过以下环节，每个环节都是幂等的，可重复重跑：
 
 ```
-采集（Skill：tdx-collect / stock-collect；Python 脚本：akshare_collect / init_collect）
+采集（akshare_collect 每日主源；tdx-collect / stock-collect Skill 备选）
   → 落盘 data/raw/{source}/{data_type}/
   → adapter 解析/校验/入库（scripts/adapters/）
   → 复权因子计算（scripts/pipeline/adjust.py）
@@ -66,14 +66,23 @@ uv run pytest -q
   → 吸筹形态（scripts/signals/accumulation.py）
   → 公司行为处置（scripts/signals/corporate_action.py）
   → 排期卡管理（scripts/pipeline/card.py）
-  → 报告生成（scripts/pipeline/report.py）
+  → 报告生成（scripts/pipeline/report.py，含日报"模拟盘"段）
+  → [可选观察项] 自算筹码分布（scripts/indicators/chip_distribution.py）
+  → [模拟盘] 决策录入/结算/统计（scripts/paper/）
 ```
 
-**每日例行主入口**（推荐）：
+**每日例行主入口**（盘后先采集再跑管线）：
 
 ```bash
-uv run python -m scripts.pipeline.daily --date 2026-08-27 --raw-dir data/raw/tdx/2026-08-27
+uv run python -m scripts.collect.akshare_collect \
+  --sources price,forward,financials,index,telegraph,announcement,macro,flow \
+  --start 2023-08-01 --end 2026-09-05 --date 2026-09-05 \
+  --price-api sina --run-id run_daily_20260905
+uv run python -m scripts.pipeline.daily --date 2026-09-05 --raw-dir data/raw/akshare
 ```
+
+> ⚠️ akshare 采集 `--end` 默认值不随日期更新，**必须显式传当日**；price 主用 sina 源
+> （东财 push2his 域名有间歇性风控）。
 
 ---
 
@@ -109,7 +118,7 @@ uv run python -m scripts.pipeline.daily --date 2026-08-27 --raw-dir data/raw/tdx
 
 采集约定见 `skills/stock-collect/SKILL.md`。
 
-#### C. akshare 采集器（可选，纯 Python）
+#### C. akshare 采集器（每日主源，纯 Python）
 
 akshare 是 Python 第三方库，**不需要调用智能体/Skill**，直接跑脚本：
 
@@ -117,16 +126,20 @@ akshare 是 Python 第三方库，**不需要调用智能体/Skill**，直接跑
 # 先安装可选依赖
 uv sync --extra akshare
 
-# 全量或增量采集
+# 每日增量（八源，显式 --end 当日 + sina 价格源）
 uv run python -m scripts.collect.akshare_collect \
-  --symbols 603605.SH,601318.SH \
-  --indexes 000300.SH,^HSI \
-  --sources price,financials,index,telegraph \
-  --date 2026-08-27 \
-  --run-id run_ak_20260827
+  --sources price,forward,financials,index,telegraph,announcement,macro,flow \
+  --start 2023-08-01 --end 2026-09-05 --date 2026-09-05 \
+  --price-api sina --run-id run_daily_20260905
 ```
 
-支持 sources：`price`、`forward`、`financials`、`index`、`telegraph`、`forecast`、`stock_info`。
+支持 sources：`price`（含换手率列）、`forward`、`financials`、`index`、`telegraph`、
+`forecast`、`stock_info`、`announcement`（巨潮公告）、`macro`（商品/外汇宏观因子）、
+`flow`（龙虎榜/大宗）、`gdhs`（股东户数，手触发）、`balance_sheet`/`cash_flow`/
+`fin_abstract`（财务三表，手触发）、`calendar`（披露预约）、`industry`（行业归属）。
+
+> 踩坑提示：①`--end` 必须显式；②新入池首采后核对各源 CSV 实际落盘；③东财域名
+> （push2his/emweb）间歇性 SSL 抽风，冷却重试即可。
 
 ---
 
@@ -289,28 +302,94 @@ uv run python -m scripts.ui.app --port 5001
 
 ---
 
+### 5.9 模拟盘（信号决策力实验）
+
+在真实买卖之外，对每个信号触发点人工录"跟 / 不跟 / 看反"决策，收盘价成交、对称退出，
+统计**判断力差值 = 主观组合收益 − 机械基线收益**（同决策点集"信号即全跟"）。与
+`executions` 完全隔离。设计见 `docs/superpowers/specs/2026-09-05-paper-trading-design.md`。
+
+```bash
+# 列待决策点（来源=当日触发信号，带编号）
+uv run python -m scripts.paper.decide --pending
+
+# 录决策（follow 跟 / skip 不跟 / counter 看反；成交价系统取当日收盘，不可自填）
+uv run python -m scripts.paper.decide --pick 25 --decision follow --note "备注"
+
+# 兜底结算扫描 / 人工平仓 / 冲正
+uv run python -m scripts.paper.settle run
+uv run python -m scripts.paper.settle manual-close --symbol 603605.SH --reason "..."
+uv run python -m scripts.paper.reversal --id 12 --reason "录错了"
+
+# 统计（follow/skip/counter 三组 + 机械基线 + 差值；样本<30 仅描述统计）
+uv run python -m scripts.paper.stats [--exclude-late]
+```
+
+全池日报末尾有"模拟盘"段（当日待决/浮盈/累计）；反作弊：价格系统取、T+1 录入窗口
+（超窗标 late）、append-only 冲正、快照冻结。
+
+---
+
+### 5.10 自算筹码分布与扩展数据
+
+```bash
+# 自算筹码分布（换手率衰减模型；获利比例/平均成本/90%成本区间/集中度；
+# 模型估算观察项，不进信号链；adjust 因子重建后需重算）
+uv run python -m scripts.indicators.chip_distribution 603605.SH
+uv run python -m scripts.indicators.chip_distribution --all
+
+# 股东户数（东财，手触发；换手率已随 price 源自动采集）
+uv run python -m scripts.collect.akshare_collect --sources gdhs \
+  --date 2026-09-05 --run-id run_gdhs
+```
+
+落库：`chip_distribution`（0010）、`holder_stats`（0009）、`daily_bars.turnover`（0008）。
+
+---
+
+### 5.11 基本面深度分析（draft-only）
+
+```bash
+# 导出八段底稿（财报全历史+三表+派生指标+一致预期+估值刻度+池内对比）
+uv run python -m scripts.pipeline.fundamental_inputs 601318.SH
+# → reports/601318.SH/fundamental_inputs_*.json
+```
+
+随后由 `fundamental-analysis-skill` 按三模块（事实解读→定性研判→对抗呈现）产出
+`reports/{symbol}/fundamental_{date}_draft.md`，人工改写定稿。财务三表/财务摘要手触发：
+
+```bash
+uv run python -m scripts.collect.akshare_collect --sources balance_sheet,cash_flow,fin_abstract \
+  --date 2026-09-05 --run-id run_fin
+```
+
+---
+
 ## 6. 核心智能体 / Skill 分工
 
 | 智能体 / Skill | 职责 | 禁止事项 |
 |---|---|---|
 | `tdx-collect` Skill | 通达信数据源采集；落盘 `data/raw/tdx/` | 不加工、不入库、不评价消息 |
 | `stock-collect` Skill | kimi/yahoo 数据源采集；落盘 `data/raw/` | 不加工、不入库、不评价消息 |
-| `akshare_collect` Python 脚本 | akshare 数据源采集；落盘 `data/raw/akshare/` | 不加工、不入库、不评价消息 |
+| `akshare_collect` Python 脚本 | akshare 数据源采集（每日主源）；落盘 `data/raw/akshare/` | 不加工、不入库、不评价消息 |
 | `fred-valuation-card-skill` | 消费系统底稿，生成估值排期卡 Markdown + 卡片 JSON draft | 不直接 `activate/reject` 卡片；不计算指标 |
+| `fundamental-analysis-skill` | 消费 fundamental_inputs 底稿，产出基本面分析 draft（三模块） | 不产规范化数字；不做买卖建议；不进日报/信号链 |
+| `message-tag-skill` | 消息面事件打标（LLM 通道） | 不产规范化数字；标签须人审生效 |
 | `trade-winrate-odds` Skill | 胜率打分辅助（如调用） | 不直接改变仓位或执行记录 |
 | `earnings-surge-screener` | 财报异动筛选 | 不替代完整估值排期流程 |
 | Python 管线 | 所有规范化数字、指标、信号、报告 | — |
-| 人工 | 卡片激活/拒绝、执行确认 | — |
+| 人工 | 卡片激活/拒绝、执行确认、模拟盘决策、draft 定稿 | — |
 
 ---
 
 ## 7. 关键目录结构
 
 ```
-config/              # 配置：watchlist、信号阈值、指标参数、日历、UI
+config/              # 配置：watchlist、信号阈值、指标参数、宏观因子、日历、paper、UI
   watchlist.yaml
   signals.yaml
   indicators.yaml
+  macro_factors.yaml
+  paper.yaml         # 模拟盘参数（名义/持有期/窗口）
   calendar_cn_*.yaml
 
 data/
@@ -320,19 +399,25 @@ data/
 scripts/
   adapters/          # 数据源解析适配器
   collect/           # 采集客户端与 akshare 采集器
-  indicators/        # 指标公式与计算
-  pipeline/          # 主管线：daily、db、adjust、weekly、ingest、report、card、execution
-  signals/           # 各类信号：weekly、daily_watch、right_side、accumulation、corporate_action
+  indicators/        # 指标公式与计算 + 自算筹码分布（chip_distribution）
+  pipeline/          # 主管线：daily、db、adjust、weekly、ingest、report、card、execution、
+                     #   card_inputs、fundamental_inputs、pit_backfill、calendar_check
+  signals/           # 各类信号：weekly、daily_watch、right_side、accumulation、
+                     #   corporate_action、factor_watch
+  paper/             # 模拟盘：决策点枚举/录入/结算/统计（与 backtest、executions 隔离）
+  backtest/          # AKQuant 回测子包（与管线完全隔离）
   ui/                # Flask 只读 Web UI
 
 skills/
-  fred-valuation-card-skill/   # 排期卡 Skill（draft-only）
-  tdx-collect/                 # 通达信采集 Skill
-  stock-collect/               # kimi/yahoo 采集 Skill
+  fred-valuation-card-skill/    # 排期卡 Skill（draft-only）
+  fundamental-analysis-skill/   # 基本面深度分析 Skill（draft-only）
+  message-tag-skill/            # 消息面打标 Skill
+  tdx-collect/                  # 通达信采集 Skill
+  stock-collect/                # kimi/yahoo 采集 Skill
 
 cards/{symbol}/      # 排期卡存档（current.md、版本、inputs、draft）
-reports/             # 单股报告 + 全池日报
-docs/                # 设计、计划、执行日志、数据库说明
+reports/             # 单股报告 + 全池日报 + 基本面 draft/底稿
+docs/                # 设计、计划、执行日志、数据库说明、specs/plans
 tests/               # pytest 测试集
 ```
 
@@ -341,23 +426,33 @@ tests/               # pytest 测试集
 ## 8. 常用命令速查
 
 ```bash
-# 每日盘后主入口
-uv run python -m scripts.pipeline.daily --date 2026-08-27 --raw-dir data/raw/tdx/2026-08-27
+# 每日盘后主入口（先采集后管线）
+uv run python -m scripts.collect.akshare_collect --sources price,forward,financials,index,telegraph,announcement,macro,flow --start 2023-08-01 --end 2026-09-05 --date 2026-09-05 --price-api sina --run-id run_daily_20260905
+uv run python -m scripts.pipeline.daily --date 2026-09-05 --raw-dir data/raw/akshare
 
 # 导出排期卡底稿
 uv run python -m scripts.pipeline.card_inputs 603605.SH
 
 # 卡片管理
-uv run python -m scripts.pipeline.card create-draft 603605.SH --json cards/603605.SH/draft_2026-08-27.json
-uv run python -m scripts.pipeline.card activate 603605SH_xxxx --effective-from 2026-08-27
+uv run python -m scripts.pipeline.card create-draft 603605.SH --json cards/603605.SH/draft_2026-09-05.json
+uv run python -m scripts.pipeline.card activate 603605SH_xxxx --effective-from 2026-09-05
 uv run python -m scripts.pipeline.card reject 603605SH_xxxx
 
 # 执行记录
-uv run python -m scripts.pipeline.execution add --symbol 603605.SH --action buy --price 55.00 --quantity 1000 --fees 5.50 --tier 1 --executed-at 2026-08-27
+uv run python -m scripts.pipeline.execution add --symbol 603605.SH --action buy --price 55.00 --quantity 1000 --fees 5.50 --tier 1 --executed-at 2026-09-05
+
+# 模拟盘
+uv run python -m scripts.paper.decide --pending
+uv run python -m scripts.paper.decide --pick 25 --decision follow
+uv run python -m scripts.paper.settle run
+uv run python -m scripts.paper.stats
+
+# 自算筹码分布
+uv run python -m scripts.indicators.chip_distribution --all
 
 # 报告
-uv run python -m scripts.pipeline.report --date 2026-08-27 --symbol 603605.SH
-uv run python -m scripts.pipeline.report --date 2026-08-27
+uv run python -m scripts.pipeline.report --date 2026-09-05 --symbol 603605.SH
+uv run python -m scripts.pipeline.report --date 2026-09-05
 
 # UI
 uv run python -m scripts.ui.app
@@ -373,7 +468,8 @@ uv run pytest -q
 - **复权 vs 不复权**：指标/周线用复权；排期卡价区/证伪线/箱体/现价用不复权。两边比较前必须 ÷ 当日因子折回。
 - **不猜**：关键数据缺失输出 `incomplete/degraded` 及原因码，禁止伪装成“条件满足”。
 - **无未来函数**：信号只使用当时可见数据，均量基数 `shift(1)`，样本不足不判定。
-- **LLM 边界**：LLM 只消费 card_inputs 底稿，产出排期卡 draft；`activate/reject` 必须人工。
+- **LLM 边界**：LLM 只消费系统底稿（card_inputs / fundamental_inputs / 事件清单），产出 draft；`activate/reject` 必须人工。
+- **模拟盘隔离**：模拟决策与真实执行（executions）完全隔离；成交价系统取不可自填；决策 append-only。
 - **文档同步**：任何改动追加 `docs/execution_log.md`；设计变更同步 `docs/system_design.md`。
 - **幂等重跑**：所有派生表采用 DELETE + 重插 + `pipeline_runs` 记录。
 
@@ -402,4 +498,4 @@ uv run pytest -q
 
 ---
 
-*项目版本：0.1.0 · trade-analysis*
+*项目版本：0.2.0 · trade-analysis*
