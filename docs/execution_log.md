@@ -1745,3 +1745,12 @@
 - **抽查**：①珀莱雅 09-04 winner=0.5468 而现价低于 avg_cost 65.38——成本分布右偏（低位密集+上方长尾）自洽；②turnover_used 与 daily_bars.turnover 全量一致（0 不一致）、NULL 语义一致；③concentration 公式全量自洽；④winner 全池 [0,1] 均值 0.5031；⑤burn_in 精确 3060=34×90。**回归锚**：golden 手算样例锁公式，真实数据锚=首算 run_id=chip_20260904T161228Z 可复算对照。
 - **文档**：database_schema（chip_distribution 节+速查）、system_design（§7 表清单）、handoff、本日志。
 - **提醒（非本任务）**：①09-04（周五）bars 已随 turnover 回填顺带入库（34 行，因子继承逻辑正常），但正式盘后 daily 未跑——indicators/signals/报告仍截止 09-03，需补跑 `daily --date 2026-09-04`；②报告 §7/UI 展示层接入筹码分布按需另做。
+
+## 2026-09-05（补跑 09-04 盘后 daily：ok=34；发现昨日深夜已有一轮）
+
+- **采集**：快七源（price/forward/index/telegraph/announcement/macro/flow，run_daily_20260904）一条命令 600s 超时但实际全部落盘（price 34/34 含 4 只 sina SSL 瞬断后重试成功记录、announcement **34/34——昨日电信/紫金/海天三只缺口随全窗口重采自动闭合**）；financials 东财 emweb 域 SSL 抽风（与 push2his 同族），三轮补采后 34/34 全齐（fin/fin2/fin3）。
+- **daily**：`--date 2026-09-04 --raw-dir data/raw/akshare` ok=34。**发现 report_runs revision=1 已于昨晚 23:46（北京）存在**（run_id=daily_2026-09-04，非本会话产出，推测用户手动跑过）——本次为幂等重跑 revision=2（§9.5），两次均 ok=34 无害。
+- **数据完整性**：bars 34/34、000300 至 09-04、macro 13/13（OIL 95.32 五连涨后首度回落、CL 90.83、USDCNY 677.87）。P1/P2 空。
+- **决策点（P3，9 只）**：**迈瑞 300760 T1 触发（167.9 区内）+右侧 holding+待执行三连**（昨日距 T1 0.1% 贴边转正，1.5 参数右侧确认首个完整信号）；**西矿 601168 T1 触发**（昨日距上沿 0.3% 转正）；南航 T1 5.03、海油 T1、陕煤 T1、东航 T1+buy_zone 延续；**有友 603697 转 sell_zone（9.93）**、圣农 002299 转 sell_zone、平安银行 sell_zone 延续。P4：洛钼距 T2 0.1%、美的距 T1 0.5%、恒瑞距 T2 0.9%、天赐距 T2 2.2%；**平安 601318"右侧确认待执行"首个提醒**（09-02 confirmed，1.5 参数产物，执行在人）；珀莱雅 08-27 待执行提醒最后两日（09-07 自然过期）。
+- **chip_distribution 无需重算**：09-04 bars 前日已随 turnover 回填入库且今日价格无修正，chip 已含 09-04 行。
+- **测试**：无代码改动，未跑 pytest。
