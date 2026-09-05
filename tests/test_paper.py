@@ -373,3 +373,91 @@ class TestSettle:
         with pytest.raises(ValueError, match="已被冲正"):
             ps.reversal(conn, did, "再冲一次", "2026-09-02", CFG,
                         "2026-09-02T23:00:00+08:00")
+
+
+# ---------------------------------------------------------------- 统计
+
+
+class TestStats:
+    def _scenario(self, conn):
+        """point1(09-01 tier) follow；point2(09-03 right_side) skip；
+        09-07 falsification 确认 → exit-follow 平仓。closes: 62,63,60,62,64。"""
+        closes = {"2026-09-01": 62.0, "2026-09-02": 63.0, "2026-09-03": 60.0,
+                  "2026-09-04": 62.0, "2026-09-07": 64.0}
+        for td, c in closes.items():
+            add_bar(conn, "603605.SH", td, c)
+        add_fact(conn, "603605.SH", "2026-09-01", "tier_triggered", "triggered", 1)
+        add_fact(conn, "603605.SH", "2026-09-03", "right_side", "confirmed", 1)
+        add_fact(conn, "603605.SH", "2026-09-07", "falsification_breach",
+                 "active", 1)
+        conn.commit()
+        pts = pc.enumerate_decision_points(conn, "2026-09-07", CFG)
+        p1 = next(p for p in pts if p["signal_source"] == "tier_triggered")
+        p2 = next(p for p in pts if p["signal_source"] == "right_side")
+        with conn:
+            pd.record_decision(conn, p1, "follow", "",
+                               "2026-09-01T21:00:00+08:00", CFG)
+            pd.record_decision(conn, p2, "skip", "",
+                               "2026-09-03T21:00:00+08:00", CFG)
+        pe = next(p for p in pc.enumerate_decision_points(conn, "2026-09-07", CFG)
+                  if p["decision_type"] == "exit")
+        with conn:
+            pd.record_decision(conn, pe, "follow", "",
+                               "2026-09-07T21:00:00+08:00", CFG)
+
+    def test_follow_skip_baseline_diff(self, conn):
+        self._scenario(conn)
+        s = pst.compute_stats(conn, CFG)
+        # follow：64/62-1 → +3.2258%，pnl +3225.8
+        assert s["follow"]["n"] == 1
+        assert s["follow"]["winrate"] == 1.0
+        assert s["follow"]["cum_pnl"] == pytest.approx(100000 * (64 / 62 - 1),
+                                                       abs=1)
+        # skip point2：09-03 close 60 入 → 09-07 close 64 出 = +6.667%（错过盈利）
+        assert s["skip"]["n"] == 1
+        assert s["skip"]["missed_profit_pnl"] == pytest.approx(
+            100000 * (64 / 60 - 1), abs=1)
+        assert s["skip"]["structural_n"] == 0
+        # 基线：三事件全跟——point1 64/62-1、point2 64/60-1、
+        # falsification 确认日（09-07）entry 双角色当日 MTM = 0
+        assert s["baseline"]["n"] == 3
+        assert s["baseline"]["cum_pnl"] == pytest.approx(
+            100000 * ((64 / 62 - 1) + (64 / 60 - 1)), abs=1)
+        # 判断力差值 = 主观 − 基线 = −skip 掉的盈利
+        assert s["judgement_diff"] == pytest.approx(
+            -100000 * (64 / 60 - 1), abs=2)
+        assert s["sample_warning"] is True
+        assert s["late_count"] == 0
+
+    def test_counter_correct_when_signal_fails(self, conn):
+        closes = {"2026-09-01": 62.0, "2026-09-02": 63.0, "2026-09-03": 60.0,
+                  "2026-09-04": 62.0, "2026-09-07": 58.0}
+        for td, c in closes.items():
+            add_bar(conn, "603605.SH", td, c)
+        add_fact(conn, "603605.SH", "2026-09-01", "tier_triggered", "triggered", 1)
+        add_fact(conn, "603605.SH", "2026-09-03", "right_side", "confirmed", 1)
+        conn.commit()
+        pts = pc.enumerate_decision_points(conn, "2026-09-07", CFG)
+        p2 = next(p for p in pts if p["signal_source"] == "right_side")
+        with conn:
+            pd.record_decision(conn, p2, "counter", "",
+                               "2026-09-03T21:00:00+08:00", CFG)
+        s = pst.compute_stats(conn, CFG)
+        # point2 虚拟：63 入（09-03）→ MTM 58（09-07，无退出事件）= -7.94% → 看反正确
+        assert s["counter"]["n"] == 1 and s["counter"]["correct_n"] == 1
+
+    def test_structural_skip_layered(self, conn):
+        closes = {"2026-09-01": 62.0, "2026-09-02": 62.0, "2026-09-03": 62.5}
+        for td, c in closes.items():
+            add_bar(conn, "603605.SH", td, c)
+        open_pos(conn, "603605.SH", "2026-09-01", 62.0, 55.0)
+        add_fact(conn, "603605.SH", "2026-09-03", "tier_triggered", "triggered", 1)
+        conn.commit()
+        pt = next(p for p in pc.enumerate_decision_points(conn, "2026-09-03", CFG)
+                  if p["signal_source"] == "tier_triggered")
+        with conn:
+            pd.record_decision(conn, pt, "skip", "",
+                               "2026-09-03T21:00:00+08:00", CFG)
+        s = pst.compute_stats(conn, CFG)
+        assert s["skip"]["structural_n"] == 1
+        assert s["skip"]["autonomous_n"] == 0
