@@ -1761,3 +1761,12 @@
 - **产出**：`docs/superpowers/specs/2026-09-05-paper-trading-design.md`。核心框架：**判断力 = 主观组合收益（follow 仓实际盈亏）− 机械基线收益（同决策点集信号即全跟的朴素机械化）**；skip/counter 虚拟评价单列；反作弊五防线（价格系统取/T+1 录入窗口 late 双口径/append-only 冲正/快照冻结/漏录可见）。migration 0011 两表（paper_decisions append-only + paper_positions 状态机）；机械基线自算不依赖 backtest 包（隔离纪律）。
 - **自审抓漏**：tier_triggered 连续在区期间每日 triggered=1（南航连四日），不事件化会每天重复生成决策点——已修：状态型信号仅转变日产生决策点 + box 5 日去抖 + open 期间同股新 entry 点仅允许 skip（一股一仓）。
 - **给评审的 7 个开放问题**：并发名义无上限/late 窗口长度/box 去抖参数/exit 信号集充分性/skip 评价窗口语义/late 默认口径/命名。通过后按 §9 八步实施（~1100 行含测试）。
+
+## 2026-09-05（续：模拟盘设计 v2——按外部评审修订完毕，可实施）
+
+- **评审**：外部 Agent 结论"设计整体扎实、conditional approve"——三项阻断（B1/B2/B3）、四项重要（I1–I4）、三项非阻断全部采纳，映射表见文档 §0.1。
+- **阻断项修复**：①**B1** falsification 事件字段用错——`breached_today=true` 在 watch 态（run<confirm_days）即为真，会产出双决策点且撞"一点一决"唯一键；v2 改为确认日 `state='active' AND triggered=1`（run==confirm_days），entry/exit 同口径。②**B2** 复权因子版本错配——v1 entry 冻结因子 + exit 结算现算，adjust 重建因子后两日 origin 不一致扭曲 ret；v2 改 entry_adj/exit_adj 不落库、结算时按结算时点库内因子两日现取（同版本），"因子版本变化会重算"列为已知偏差声明。③**B3** 停牌处理：信号日必有 bar（信号前提）、结算/timeout 顺延至下一有 bar 日、hold_days 按交易日历含停牌（timeout 口径诚实选择）。
+- **重要项修复**：I1 价格列 TEXT 定点（同 executions）；I2 tier 决策点改"当日 state='triggered' 且前日≠triggered"（pending_signals 已算在区，前日状态扫描实现）；I3 box 去抖精确定义"决策点后 5 交易日冷却期"+仅 buy_zone 计 entry；I4 §2.5 引用改 system_design 显式外部引用。
+- **评审四问采纳**：结构性 skip 打标 `constraint='single_position'` 统计分层（防一股一仓污染自主 skip）；late 默认含+标注数、恒备剔除口径；新增 **deep_exit 档位深度脱离退出**（zone_low×(1−5%)，防 timeout 静默吸收大多数仓位）；机械基线退出全跟确认；scripts/paper/ docstring 声明与 backtest 边界。
+- **自审补漏**：同日多 exit 信号 → 任一 follow 平仓、其余 superseded。
+- **状态**：设计 v2 就绪，按 §9 八步实施（~1400 行含测试）。本条为文档修订，无代码/库变更。
