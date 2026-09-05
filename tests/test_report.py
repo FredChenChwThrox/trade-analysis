@@ -659,3 +659,29 @@ def test_right_side_holding_observation(conn, tmp_path):
     # 1.2：holding 跟踪行出现在决策点（多日持仓期不静默）
     assert any("[右侧持仓跟踪]" in d and "止损位 100.00" in d and "4.0%" in d
                and "已跟踪 2 日" in d for d in rep.decision_points)
+
+
+# ---------------------------------------------------------------- 模拟盘段（paper，2026-09-05）
+
+def test_daily_report_paper_section_lists_pending(conn, tmp_path):
+    """TRIG.SH tier_triggered 未决 → 日报模拟盘段列出该待决点。"""
+    res = _run(conn, tmp_path)
+    daily_md = Path(res.daily_path)
+    if not daily_md.is_absolute():
+        daily_md = tmp_path / "reports" / "daily" / f"{RUN_DATE}.md"
+    text = daily_md.read_text(encoding="utf-8")
+    assert "## 模拟盘" in text
+    assert "待决策" in text
+    trig_line = [ln for ln in text.splitlines()
+                 if "TRIG.SH" in ln and "tier_triggered" in ln]
+    assert trig_line, text
+
+
+def test_daily_report_paper_section_omitted_when_empty(tmp_path):
+    """库内无任何记录 → 模拟盘段整段省略。"""
+    c = db.connect(tmp_path / "empty.db")
+    db.migrate(c)
+    md = report_mod.render_daily_report([], [], RUN_DATE, "r1", 1, "h" * 16,
+                                        conn=c)
+    c.close()
+    assert "## 模拟盘" not in md

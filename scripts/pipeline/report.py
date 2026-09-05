@@ -827,7 +827,8 @@ PRIORITY_TITLES = {
 
 def render_daily_report(reps: list[SymbolReport], skipped: list[tuple[str, str]],
                         trade_date: str, run_id: str, revision: int,
-                        config_hash: str) -> str:
+                        config_hash: str, conn: sqlite3.Connection | None = None
+                        ) -> str:
     L: list[str] = []
     a = L.append
     a(f"# 全池日报 — {trade_date}")
@@ -869,7 +870,87 @@ def render_daily_report(reps: list[SymbolReport], skipped: list[tuple[str, str]]
     else:
         a("（无）")
     a("")
+    # ---- 模拟盘段（纯读；design specs/2026-09-05-paper-trading-design.md §6）
+    if conn is not None:
+        try:
+            paper_lines = _paper_section(conn, trade_date)
+            if paper_lines:
+                a("## 模拟盘")
+                a("")
+                a("\n".join(paper_lines))
+                a("")
+        except Exception as exc:  # noqa: BLE001 — 模拟盘段故障不拖垮日报（§4.1 degraded）
+            a("## 模拟盘")
+            a("")
+            a(f"- degraded: {type(exc).__name__}: {exc}")
+            a("")
     return "\n".join(L)
+
+
+def _paper_section(conn: sqlite3.Connection, trade_date: str) -> list[str]:
+    """全池日报"模拟盘"段：未决点/待平仓/浮盈/累计摘要。任何异常由调用方 degraded。"""
+    from scripts.paper import common as pc
+    from scripts.paper import stats as pst
+    cfg = pc.load_config()
+    lines: list[str] = []
+    points = pc.enumerate_decision_points(conn, trade_date, cfg)
+    pending_entry = [p for p in points if p["decision_type"] == "entry"]
+    pending_exit = [p for p in points if p["decision_type"] == "exit"]
+    a = lines.append
+    if pending_entry:
+        a("### 待决策（entry，超 T+1 收盘标 late）")
+        a("")
+        for p in pending_entry:
+            tag = f" [{p['constraint_tag']}]" if p["constraint_tag"] else ""
+            a(f"- #{p['pick_id']} {p['decision_date']} {p['symbol']} "
+              f"{p['signal_source']} close={p['close_used']}{tag}")
+        a("")
+    if pending_exit:
+        a("### 待平仓决策（exit）")
+        a("")
+        for p in pending_exit:
+            a(f"- #{p['pick_id']} {p['decision_date']} {p['symbol']} "
+              f"{p['signal_source']} close={p['close_used']}")
+        a("")
+    poss = conn.execute(
+        "SELECT * FROM paper_positions WHERE status='open' ORDER BY symbol"
+    ).fetchall()
+    if poss:
+        a("### 持仓中（逐日盯市，不复权口径）")
+        a("")
+        for pos in poss:
+            bar = conn.execute(
+                "SELECT close_raw FROM daily_bars WHERE symbol=? AND trade_date<=?"
+                " ORDER BY trade_date DESC LIMIT 1",
+                (pos["symbol"], trade_date)).fetchone()
+            close = float(bar["close_raw"]) if bar and bar["close_raw"] else None
+            if close:
+                mtm = close / float(pos["entry_close"]) - 1.0
+                a(f"- {pos['symbol']} entry {pos['entry_date']}@"
+                  f"{pos['entry_close']} → {close}（{mtm:+.2%}）")
+            else:
+                a(f"- {pos['symbol']} entry {pos['entry_date']}@"
+                  f"{pos['entry_close']}（无最新价）")
+        a("")
+    closed = conn.execute("SELECT COUNT(*) FROM paper_positions WHERE status='closed'"
+                          ).fetchone()[0]
+    open_n = len(poss)
+    if pending_entry or pending_exit or poss or closed:
+        s = pst.compute_stats(conn, cfg, as_of=trade_date)
+        a("### 累计")
+        a("")
+        wr = (f"{s['follow']['winrate']:.0%}"
+              if s["follow"]["winrate"] is not None else "—")
+        a(f"- follow {s['follow']['n']} 笔（胜率 {wr}）"
+          f" 累计 pnl {s['follow']['cum_pnl']:+,.0f}；"
+          f"判断力差值（主观−基线）{s['judgement_diff']:+,.0f}")
+        a(f"- late {s['late_count']} 条；"
+          + ("⚠️ 样本不足 30 笔，仅描述统计（system_design §2.5）"
+             if s["sample_warning"] else "样本 ≥30 笔"))
+        a("")
+    else:
+        lines.clear()  # 全无记录 → 整段省略
+    return lines
 
 
 # ---------------------------------------------------------------- 主流程
@@ -923,7 +1004,7 @@ def run_reports(conn: sqlite3.Connection, trade_date: str,
     # ---- 全池日报
     daily_revision = _next_revision(conn, "daily", None, trade_date)
     daily_md = render_daily_report(reps, result.skipped, trade_date, run_id,
-                                   daily_revision, config_hash)
+                                   daily_revision, config_hash, conn=conn)
     daily_path = root / "daily" / f"{trade_date}.md"
     daily_path.parent.mkdir(parents=True, exist_ok=True)
     daily_path.write_text(daily_md, encoding="utf-8")
