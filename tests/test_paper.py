@@ -34,6 +34,7 @@ def add_bar(conn, symbol, td, close, factor=1.0, turnover=None):
             source, updated_at)
         VALUES (?, ?, 'CN', ?, ?, ?, ?, 1000000, 5000000, 'CNY', ?, 1.0,
                 'normal', ?, 'test', ?)
+        ON CONFLICT(symbol, trade_date) DO UPDATE SET close_raw=excluded.close_raw
         """,
         (symbol, td, close, close * 1.02, close * 0.98, close, factor,
          turnover, db_utc_now()))
@@ -45,6 +46,7 @@ def add_fact(conn, symbol, td, signal, state, triggered=0, details="{}"):
         INSERT INTO signal_facts (symbol, observed_on, signal, state, triggered,
             details_json, run_id, rule_version, config_hash, created_at)
         VALUES (?, ?, ?, ?, ?, ?, 'test', 'signals_v2', 'h', ?)
+        ON CONFLICT(symbol, signal, observed_on) DO NOTHING
         """,
         (symbol, td, signal, state, triggered, details, db_utc_now()))
 
@@ -154,3 +156,116 @@ class TestEnumerate:
                if p["signal_source"] == "tier_triggered"]
         assert len(pts) == 1
         assert pts[0]["constraint_tag"] == "single_position"
+
+
+# ---------------------------------------------------------------- 录入
+
+
+def _mk_point(conn, symbol="603605.SH", date="2026-09-02", dtype="entry",
+              source="tier_triggered", close="62.0", constraint=None):
+    conn.execute(
+        """
+        INSERT INTO daily_bars (symbol, trade_date, market, open_raw, high_raw,
+            low_raw, close_raw, volume_raw, amount_raw, currency,
+            price_adj_factor, share_factor, trading_status, turnover,
+            source, updated_at)
+        VALUES (?, ?, 'CN', ?, ?, ?, ?, 1000000, 5000000, 'CNY', 1.0, 1.0,
+                'normal', NULL, 'test', ?)
+        ON CONFLICT(symbol, trade_date) DO NOTHING
+        """,
+        (symbol, date, close, float(close) * 1.02, float(close) * 0.98,
+         close, db_utc_now()))
+    if source == "tier_triggered":
+        add_fact(conn, symbol, date, source, "triggered", 1)
+    elif source == "falsification_breach":
+        add_fact(conn, symbol, date, source, "active", 1)
+    elif source == "right_side":
+        add_fact(conn, symbol, date, source, "confirmed", 1)
+    conn.commit()
+    pts = pc.enumerate_decision_points(conn, date, CFG)
+    pts = [p for p in pts if p["symbol"] == symbol
+           and p["decision_type"] == dtype]
+    return pts[0] if pts else None
+
+
+class TestDecide:
+    def test_follow_entry_creates_position_lots(self, conn):
+        pt = _mk_point(conn)  # close 62.0 → 100000//62=1612 → 1600 股
+        assert pt is not None
+        with conn:
+            did = pd.record_decision(conn, pt, "follow", "", 
+                                     "2026-09-02T21:00:00+08:00", CFG)
+        dec = conn.execute("SELECT * FROM paper_decisions").fetchone()
+        assert dec["quantity"] == 1600 and dec["late"] == 0
+        pos = conn.execute("SELECT * FROM paper_positions").fetchone()
+        assert pos["status"] == "open"
+        assert float(pos["deep_exit_line"]) == pytest.approx(62.0 * 0.95,
+                                                             abs=1e-3)
+
+    def test_counter_on_exit_rejected(self, conn):
+        pt = _mk_point(conn, dtype="exit", source="falsification_breach",
+                       close="61.0")
+        if pt is None:  # exit 点需要 open position 才枚举
+            open_pos(conn, "603605.SH", "2026-09-01", 62.0, 55.0)
+            conn.commit()
+            pt = _mk_point(conn, dtype="exit", source="falsification_breach",
+                           close="61.0")
+        with pytest.raises(ValueError, match="exit 决策点"):
+            pd.record_decision(conn, pt, "counter", "",
+                               "2026-09-02T21:00:00+08:00", CFG)
+
+    def test_single_position_rejects_follow_skip_tagged(self, conn):
+        pt = _mk_point(conn, date="2026-09-03", close="62.5")
+        open_pos(conn, "603605.SH", "2026-09-01", 62.0, 55.0)
+        conn.commit()
+        pt = _mk_point(conn, date="2026-09-03", close="62.5")
+        assert pt and pt["constraint_tag"] == "single_position"
+        with pytest.raises(ValueError, match="一股一仓"):
+            pd.record_decision(conn, pt, "follow", "",
+                               "2026-09-03T21:00:00+08:00", CFG)
+        with conn:
+            pd.record_decision(conn, pt, "skip", "",
+                               "2026-09-03T21:00:00+08:00", CFG)
+        dec = conn.execute(
+            "SELECT * FROM paper_decisions WHERE decision='skip'").fetchone()
+        assert dec["constraint_tag"] == "single_position"
+        assert dec["decision"] == "skip"
+
+    def test_late_flag_t_plus_2(self, conn):
+        pt = _mk_point(conn, date="2026-09-01", close="62.0")
+        # 决策日 09-01（周二），now=09-03（周四，T+2 交易日）→ late
+        with conn:
+            pd.record_decision(conn, pt, "skip", "",
+                               "2026-09-03T21:00:00+08:00", CFG)
+        dec = conn.execute("SELECT late FROM paper_decisions").fetchone()
+        assert dec["late"] == 1
+
+    def test_duplicate_rejected(self, conn):
+        pt = _mk_point(conn)
+        with conn:
+            pd.record_decision(conn, pt, "follow", "",
+                               "2026-09-02T21:00:00+08:00", CFG)
+        with pytest.raises(ValueError, match="一点一决"):
+            pd.record_decision(conn, pt, "skip", "",
+                               "2026-09-02T21:00:00+08:00", CFG)
+
+    def test_exit_follow_closes_position(self, conn):
+        add_bar(conn, "603605.SH", "2026-09-02", 62.0, factor=1.0)
+        add_bar(conn, "603605.SH", "2026-09-03", 60.0, factor=1.0)
+        add_fact(conn, "603605.SH", "2026-09-03", "falsification_breach",
+                 "active", 1)
+        open_pos(conn, "603605.SH", "2026-09-02", 62.0, 55.0)
+        conn.commit()
+        pt = _mk_point(conn, date="2026-09-03", dtype="exit",
+                       source="falsification_breach", close="60.0")
+        assert pt is not None
+        with conn:
+            pd.record_decision(conn, pt, "follow", "",
+                               "2026-09-03T21:00:00+08:00", CFG)
+        pos = conn.execute("SELECT * FROM paper_positions").fetchone()
+        assert pos["status"] == "closed"
+        assert pos["exit_source"] == "falsification_breach"
+        # ret = 60/62 - 1（同因子）
+        assert pos["ret"] == pytest.approx(60.0 / 62.0 - 1, abs=1e-9)
+        assert pos["pnl"] == pytest.approx(100000 * (60.0 / 62.0 - 1), abs=1e-6)
+        assert pos["hold_days"] == 2

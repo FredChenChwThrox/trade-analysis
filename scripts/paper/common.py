@@ -59,8 +59,9 @@ def next_trading_day(conn: sqlite3.Connection, d: str) -> str | None:
 
 def is_late(conn: sqlite3.Connection, decision_date: str, now_date: str,
             window_days: int) -> bool:
-    """now_date 距 decision_date 超过 window_days 个交易日 → late（§2.3 防线 2）。"""
-    return trading_days_between(conn, decision_date, now_date) > window_days
+    """录入窗口：T 当日 / T+1 合法（trading_days_between 含端点 = 1 或 2），
+    T+2 起 late。window_days=1 即"距 T 不超过 2 个交易日"。"""
+    return trading_days_between(conn, decision_date, now_date) > window_days + 1
 
 
 def get_bar(conn: sqlite3.Connection, symbol: str, date: str):
