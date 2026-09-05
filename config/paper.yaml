@@ -1,0 +1,9 @@
+# 模拟盘（信号决策力实验）参数——设计 docs/superpowers/specs/2026-09-05-paper-trading-design.md v2
+# ⚠️ 以下参数为第一版默认值，首月运行后按数据回看再调（box 去抖/deep_exit/timeout 占比，
+#    设计 §8 遗留开放问题）；人工核对期纪律同 signals.yaml。
+notional_per_trade: 100000   # 每笔固定名义（元）
+max_hold_days: 60            # 兜底结算持有期（交易日历日，含停牌）
+decision_window_days: 1      # 决策录入窗口：T 盘后 → T+1 收盘（超窗 late）
+box_entry_debounce_days: 5   # 箱体 buy_zone 决策点冷却期（交易日）
+deep_exit_pct: 0.05          # 档位深度脱离线（zone_low 或 entry_close 下方 5%）
+baseline: naive_follow_all   # 机械基线口径（v1 唯一：同决策点集信号即全跟）
