@@ -381,7 +381,60 @@ uv run python -m scripts.collect.akshare_collect --sources balance_sheet,cash_fl
 
 ---
 
-## 7. 关键目录结构
+## 7. 桌面 Agent 使用指南（opencode / Claude Code / Codex CLI 等）
+
+本项目的日常运维与开发大量由桌面编码智能体完成（本仓库的执行日志即人机协作记录）。
+以下是用桌面 Agent 驱动本项目的实践方法。
+
+### 7.1 启动与入口
+
+```bash
+cd ~/path/to/trade
+opencode        # 或 claude / codex 等，在项目根目录启动
+```
+
+- Agent 启动后**自动读取 `AGENTS.md`**（硬性约定精简版：uv 管理、pytest 全绿、
+  文档同步、LLM 边界、卡片人工激活等）——无需口头重复。
+- 首次会话先让它读交接文档：**「先读 docs/handoff.md」**——内含环境、常用命令、
+  约定、当前状态（截至最近一次执行的补记）。
+- 深入开发前按 `docs/handoff.md` 开头的阅读顺序走：`system_design.md` →
+  `execution_log.md` → `database_schema.md`。
+
+### 7.2 典型任务一句话驱动
+
+| 任务 | 对 Agent 说 |
+|---|---|
+| 每日盘后例行 | 「跑一下盘后 daily」（自动：八源采集 → daily 管线 → 报告 → 执行日志） |
+| 数据疑问排查 | 「查一下 xx 股票 09-05 为什么 degraded，先看报告第 8 段和 signal_facts」 |
+| Bug 修复 | 「修复 xxx，先在 execution_log 找类似案例」 |
+| 新功能 | 「做一个 xx 的设计」→ Agent 走 brainstorming → 设计文档写入
+  `docs/superpowers/specs/` → 交外部 Agent 评审 → 修订 → writing-plans → 分任务实施
+  （本项目模拟盘/筹码分布均按此流程演练） |
+| 消息面研判 | 粘贴新闻/电报 → 按 message-tag-skill 纪律打标（不产数字、事实推断观点三分） |
+| 基本面深查 | 「分析一下 xx 股票」→ fundamental-analysis-skill 产 draft，人工定稿 |
+
+### 7.3 环境注意事项
+
+- **所有命令前缀 `uv run`**；包下载失败走系统代理（macOS/zsh）。
+- Agent 每次改动会**追加 `docs/execution_log.md`**、同步设计文档、跑 `pytest -q`
+  全绿才算完成——这是 AGENTS.md 的硬性约定，不要让它跳过。
+- **提交规范**：小步提交、中文 conventional commits（`feat(paper): ...` /
+  `fix(llm): ...` / `docs: ...`），见 `git log`。
+- **数据与密钥不入库**：`data/`（数据库/原始 CSV）在 `.gitignore`；API key 走
+  环境变量；推送前先 `git grep` 扫敏感串。
+- **保留人工决断**：卡片 `activate/reject`、真实执行录入、模拟盘决策、draft 定稿
+  都必须由人完成——Agent 可以准备一切，但按钮在人手上。
+
+### 7.4 项目内 Skills（Agent 可调用的专项能力）
+
+`skills/` 目录下的 Skill 是给 Agent 用的专项提示词与流程约束：
+`fred-valuation-card-skill`（排期卡 draft）、`fundamental-analysis-skill`（基本面
+三模块分析）、`message-tag-skill`（消息打标）、`tdx-collect`/`stock-collect`
+（采集）。Agent 会按各 SKILL.md 的铁律执行（draft-only、不产规范化数字等）。
+
+---
+
+## 8. 关键目录结构
 
 ```
 config/              # 配置：watchlist、信号阈值、指标参数、宏观因子、日历、paper、UI
@@ -423,7 +476,7 @@ tests/               # pytest 测试集
 
 ---
 
-## 8. 常用命令速查
+## 9. 常用命令速查
 
 ```bash
 # 每日盘后主入口（先采集后管线）
@@ -463,7 +516,7 @@ uv run pytest -q
 
 ---
 
-## 9. 关键设计约束（违反会出错）
+## 10. 关键设计约束（违反会出错）
 
 - **复权 vs 不复权**：指标/周线用复权；排期卡价区/证伪线/箱体/现价用不复权。两边比较前必须 ÷ 当日因子折回。
 - **不猜**：关键数据缺失输出 `incomplete/degraded` 及原因码，禁止伪装成“条件满足”。
@@ -475,7 +528,7 @@ uv run pytest -q
 
 ---
 
-## 10. 必读文档
+## 11. 必读文档
 
 开发或维护前，请按以下顺序阅读：
 
@@ -488,7 +541,7 @@ uv run pytest -q
 
 ---
 
-## 11. 故障排查
+## 12. 故障排查
 
 - **测试失败**：先运行 `uv run pytest -q`，定位后查看 `docs/execution_log.md` 是否已有类似记录。
 - **因子重建误报/每日全量重建**：参见 `docs/execution_log.md` 2026-08-10 晚间记录；根因是新 bar 因子占位 1.0 进入重叠窗口。当前 workaround 是使用 3 年 full forward 文件。
